@@ -67,10 +67,11 @@ npm run dev
 Se desideri contribuire al progetto:
 
 1. Clona il repository
-2. Crea un branch per la tua feature (`git checkout -b feature/nome-feature`)
+2. Crea un branch per la tua feature (`git checkout -b feature/nome-feature`) o per la correzione di un bug (`git checkout -b bugfix/nome-bugfix`)
 3. Fai commit delle tue modifiche (`git commit -am 'Aggiungi una feature'`)
 4. Pusha il branch (`git push origin feature/nome-feature`)
-5. Apri una Pull Request
+5. Apri una Pull Request verso il branch `develop`
+6. Dopo la review, le modifiche verranno integrate in `develop` e successivamente in `main` per il rilascio
 
 ## Licenza
 
