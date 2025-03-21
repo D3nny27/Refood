@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Alert } from 'react-native';
 import { Searchbar, Button, Chip, Text, IconButton, FAB, Card, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -15,6 +15,7 @@ const STATI_LOTTI = ['Verde', 'Arancione', 'Rosso'];
 export default function LottiScreen() {
   const { user } = useAuth();
   const [lotti, setLotti] = useState<Lotto[]>([]);
+  const [filteredLotti, setFilteredLotti] = useState<Lotto[]>([]);
   const [filtri, setFiltri] = useState<LottoFiltri>({});
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -32,6 +33,30 @@ export default function LottiScreen() {
     loadLotti();
   }, [filtri]);
 
+  // Filtra e ordina i lotti in base alla ricerca
+  useEffect(() => {
+    if (lotti.length === 0) {
+      setFilteredLotti([]);
+      return;
+    }
+
+    // Filtra i lotti in base alla ricerca locale
+    let result = [...lotti];
+    
+    // Filtra in base al testo di ricerca (instantaneo)
+    if (searchQuery.trim() !== '') {
+      const searchLower = searchQuery.toLowerCase().trim();
+      result = result.filter(lotto => 
+        lotto.nome.toLowerCase().includes(searchLower)
+      );
+    }
+
+    // Ordina i lotti in ordine alfabetico per nome
+    result.sort((a, b) => a.nome.localeCompare(b.nome));
+    
+    setFilteredLotti(result);
+  }, [lotti, searchQuery]);
+
   // Funzione per caricare i lotti
   const loadLotti = async (forceRefresh = false) => {
     setLoading(true);
@@ -41,7 +66,11 @@ export default function LottiScreen() {
       
       // Verifica che response.lotti esista
       if (response && Array.isArray(response.lotti)) {
-        setLotti(response.lotti);
+        // Salva i lotti ordinati per nome
+        const lottiOrdinati = [...response.lotti].sort((a, b) => 
+          a.nome.localeCompare(b.nome)
+        );
+        setLotti(lottiOrdinati);
         console.log(`Caricati ${response.lotti.length} lotti con successo`);
       } else {
         console.warn('La risposta non contiene un array di lotti valido:', response);
@@ -80,7 +109,7 @@ export default function LottiScreen() {
     loadLotti(true);
   };
 
-  // Applica la ricerca ai filtri
+  // Applica la ricerca ai filtri (per la ricerca server-side)
   const onSearch = () => {
     setFiltri({ ...filtri, cerca: searchQuery });
   };
@@ -144,7 +173,7 @@ export default function LottiScreen() {
       <Card style={styles.headerCard} elevation={4}>
         <Card.Content style={styles.searchContainer}>
           <Searchbar
-            placeholder="Cerca lotti"
+            placeholder="Cerca lotti per nome"
             onChangeText={setSearchQuery}
             value={searchQuery}
             onSubmitEditing={onSearch}
@@ -204,12 +233,17 @@ export default function LottiScreen() {
       
       {/* Descrizione dei filtri */}
       <View style={styles.listHeader}>
-        <Text style={styles.listHeaderText}>{getFilterDescription()}</Text>
+        <Text style={styles.listHeaderText}>
+          {searchQuery ? 
+            `Ricerca: "${searchQuery}" - ${filteredLotti.length} risultati` : 
+            getFilterDescription()
+          }
+        </Text>
       </View>
       
       {/* Lista dei lotti */}
       <FlatList
-        data={lotti}
+        data={searchQuery ? filteredLotti : lotti}
         renderItem={({ item }) => (
           <LottoCard lotto={item} onPress={() => navigateToLottoDetail(item)} />
         )}
@@ -233,11 +267,14 @@ export default function LottiScreen() {
               <MaterialCommunityIcons name="package-variant-closed" size={64} color="#888" />
               <Text style={styles.emptyText}>Nessun lotto trovato</Text>
               <Text style={styles.emptySubText}>
-                {filtri.stato || filtri.cerca 
-                  ? 'Prova a modificare i filtri di ricerca' 
-                  : 'I lotti saranno visualizzati qui quando disponibili'}
+                {searchQuery ? 
+                  'Nessun risultato trovato per questa ricerca' :
+                  filtri.stato || filtri.cerca 
+                    ? 'Prova a modificare i filtri di ricerca' 
+                    : 'I lotti saranno visualizzati qui quando disponibili'
+                }
               </Text>
-              {(filtri.stato || filtri.cerca) && (
+              {(filtri.stato || filtri.cerca || searchQuery) && (
                 <Button 
                   mode="outlined"
                   onPress={resetFiltri}

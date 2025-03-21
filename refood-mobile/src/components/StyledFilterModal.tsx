@@ -61,9 +61,16 @@ const StyledFilterModal: React.FC<StyledFilterModalProps> = ({
                       <Chip
                         selected={selectedStato === 'Verde'}
                         onPress={() => setSelectedStato(selectedStato === 'Verde' ? null : 'Verde')}
-                        style={[styles.stateChip, {borderColor: STATUS_COLORS.SUCCESS}, selectedStato === 'Verde' ? {backgroundColor: STATUS_COLORS.SUCCESS} : {}]}
+                        style={[
+                          styles.stateChip, 
+                          {
+                            backgroundColor: STATUS_COLORS.SUCCESS,
+                            borderColor: STATUS_COLORS.SUCCESS
+                          }
+                        ]}
                         selectedColor="#fff"
-                        mode="outlined"
+                        textStyle={{color: '#fff', fontWeight: 'bold'}}
+                        mode="flat"
                         showSelectedCheck
                       >
                         Verde
@@ -71,9 +78,16 @@ const StyledFilterModal: React.FC<StyledFilterModalProps> = ({
                       <Chip
                         selected={selectedStato === 'Arancione'}
                         onPress={() => setSelectedStato(selectedStato === 'Arancione' ? null : 'Arancione')}
-                        style={[styles.stateChip, {borderColor: STATUS_COLORS.WARNING}, selectedStato === 'Arancione' ? {backgroundColor: STATUS_COLORS.WARNING} : {}]}
+                        style={[
+                          styles.stateChip, 
+                          {
+                            backgroundColor: STATUS_COLORS.WARNING,
+                            borderColor: STATUS_COLORS.WARNING
+                          }
+                        ]}
                         selectedColor="#fff"
-                        mode="outlined"
+                        textStyle={{color: '#fff', fontWeight: 'bold'}}
+                        mode="flat"
                         showSelectedCheck
                       >
                         Arancione
@@ -81,9 +95,16 @@ const StyledFilterModal: React.FC<StyledFilterModalProps> = ({
                       <Chip
                         selected={selectedStato === 'Rosso'}
                         onPress={() => setSelectedStato(selectedStato === 'Rosso' ? null : 'Rosso')}
-                        style={[styles.stateChip, {borderColor: STATUS_COLORS.ERROR}, selectedStato === 'Rosso' ? {backgroundColor: STATUS_COLORS.ERROR} : {}]}
+                        style={[
+                          styles.stateChip, 
+                          {
+                            backgroundColor: STATUS_COLORS.ERROR,
+                            borderColor: STATUS_COLORS.ERROR
+                          }
+                        ]}
                         selectedColor="#fff"
-                        mode="outlined"
+                        textStyle={{color: '#fff', fontWeight: 'bold'}}
+                        mode="flat"
                         showSelectedCheck
                       >
                         Rosso

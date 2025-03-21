@@ -16,6 +16,7 @@ interface Centro {
   email: string;
   tipo: string;
   operatori_assegnati?: number;
+  tipo_descrizione?: string;
 }
 
 export default function GestioneCentriScreen() {
@@ -52,6 +53,8 @@ export default function GestioneCentriScreen() {
     try {
       const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
       
+      console.log('Richiesta centri in corso all\'API:', `${API_URL}/centri`);
+      
       const response = await fetch(`${API_URL}/centri`, {
         headers: {
           'Authorization': `Bearer ${token}`
@@ -59,18 +62,29 @@ export default function GestioneCentriScreen() {
       });
 
       if (!response.ok) {
+        console.error('Risposta non valida:', response.status, response.statusText);
         throw new Error(`Errore nel caricamento dei centri (${response.status})`);
       }
 
       const data = await response.json();
       
+      console.log('Risposta ricevuta:', JSON.stringify(data).substring(0, 200) + '...');
+      
+      // Gestisci diversi formati possibili della risposta
+      let centriData = [];
       if (data && Array.isArray(data.centri)) {
-        setCentri(data.centri);
-        setFilteredCentri(data.centri);
+        centriData = data.centri;
+      } else if (data && Array.isArray(data.data)) {
+        centriData = data.data;
+      } else if (Array.isArray(data)) {
+        centriData = data;
       } else {
-        setCentri([]);
-        setFilteredCentri([]);
+        console.error('Formato risposta non riconosciuto:', data);
       }
+      
+      console.log(`Trovati ${centriData.length} centri`);
+      setCentri(centriData);
+      setFilteredCentri(centriData);
     } catch (error) {
       console.error('Errore nel caricamento dei centri:', error);
       Alert.alert('Errore', 'Impossibile caricare i centri. Verifica la connessione e riprova.');
@@ -103,12 +117,22 @@ export default function GestioneCentriScreen() {
   };
 
   // Renderizza un item della lista dei centri
-  const renderCentroItem = ({ item }: { item: Centro }) => (
+  const renderCentroItem = ({ item }: { item: Centro }) => {
+    // Assicurati che tutti i campi siano presenti o usa valori di fallback
+    const nome = item.nome || 'Centro senza nome';
+    const indirizzo = item.indirizzo || 'Indirizzo non specificato';
+    const telefono = item.telefono || '';
+    const email = item.email || '';
+    
+    // Gestisci diversi formati del campo tipo
+    const tipoDisplay = item.tipo || item.tipo_descrizione || 'Generico';
+
+    return (
     <Card style={styles.card}>
       <Card.Content>
         <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>{item.nome}</Text>
-          <Chip icon="domain" style={styles.typeChip}>{item.tipo}</Chip>
+          <Text style={styles.cardTitle}>{nome}</Text>
+          <Chip icon="domain" style={styles.typeChip}>{tipoDisplay}</Chip>
         </View>
         
         <Divider style={styles.divider} />
@@ -116,20 +140,20 @@ export default function GestioneCentriScreen() {
         <View style={styles.cardBody}>
           <View style={styles.infoRow}>
             <MaterialCommunityIcons name="map-marker" size={16} color="#666" />
-            <Text style={styles.infoText}>{item.indirizzo}</Text>
+            <Text style={styles.infoText}>{indirizzo}</Text>
           </View>
           
-          {item.telefono && (
+          {telefono && (
             <View style={styles.infoRow}>
               <MaterialCommunityIcons name="phone" size={16} color="#666" />
-              <Text style={styles.infoText}>{item.telefono}</Text>
+              <Text style={styles.infoText}>{telefono}</Text>
             </View>
           )}
           
-          {item.email && (
+          {email && (
             <View style={styles.infoRow}>
               <MaterialCommunityIcons name="email" size={16} color="#666" />
-              <Text style={styles.infoText}>{item.email}</Text>
+              <Text style={styles.infoText}>{email}</Text>
             </View>
           )}
           
@@ -162,8 +186,9 @@ export default function GestioneCentriScreen() {
       </Card.Actions>
     </Card>
   );
+}
 
-  return (
+return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Searchbar
@@ -172,6 +197,14 @@ export default function GestioneCentriScreen() {
           value={searchQuery}
           style={styles.searchBar}
         />
+        <Button 
+          mode="text" 
+          onPress={onRefresh}
+          icon="refresh"
+          style={{ marginTop: 8 }}
+        >
+          Ricarica
+        </Button>
       </View>
       
       {loading && !refreshing ? (
@@ -183,7 +216,7 @@ export default function GestioneCentriScreen() {
         <FlatList
           data={filteredCentri}
           renderItem={renderCentroItem}
-          keyExtractor={(item) => item.id.toString()}
+          keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
           contentContainerStyle={styles.listContent}
           refreshControl={
             <RefreshControl
