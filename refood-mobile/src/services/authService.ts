@@ -1,17 +1,11 @@
 import axios from 'axios';
-import { API_URL } from '../config/constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { STORAGE_KEYS } from '../config/constants';
+import { STORAGE_KEYS, API_URL, API_TIMEOUT } from '../config/constants';
+import { Platform } from 'react-native';
+import { setAuthToken } from './api';
+import { Utente } from '../types/user';
 
 // Definiamo le interfacce per i dati utente e le risposte API
-export interface Utente {
-  id: number;
-  email: string;
-  nome: string;
-  cognome: string;
-  ruolo: string;
-}
-
 export interface LoginResponse {
   token: string;
   utente: Utente;
@@ -20,232 +14,233 @@ export interface LoginResponse {
 // Configurazione globale di axios per il timeout
 axios.defaults.timeout = 15000; // 15 secondi
 
-// Configurazione di axios con intercettore per il token
-export const setAuthToken = (token: string | null) => {
-  if (token) {
-    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-  } else {
-    delete axios.defaults.headers.common['Authorization'];
+// Verifica se siamo in un ambiente SSR (Server-Side Rendering)
+const isSSR = (): boolean => {
+  return typeof window === 'undefined' || Platform.OS === 'web' && typeof document === 'undefined';
+};
+
+// Funzione per salvare il token nell'AsyncStorage
+export const saveToken = async (token: string): Promise<boolean> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.USER_TOKEN, token);
+    // Aggiorna l'header di autenticazione
+    setAuthToken(token);
+    console.log('Token salvato con successo in AsyncStorage');
+    return true;
+  } catch (error) {
+    console.error('Errore durante il salvataggio del token:', error);
+    return false;
   }
 };
 
-// Funzione per verificare se siamo in un ambiente server-side
-const isSSR = () => {
-  return typeof window === 'undefined' || typeof navigator === 'undefined';
+// Funzione per salvare il refresh token nell'AsyncStorage
+export const saveRefreshToken = async (refreshToken: string): Promise<boolean> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, refreshToken);
+    console.log('Refresh token salvato con successo in AsyncStorage');
+    return true;
+  } catch (error) {
+    console.error('Errore durante il salvataggio del refresh token:', error);
+    return false;
+  }
 };
 
-// Funzione per ottenere il token in modo sicuro
+// Funzione per ottenere il token attivo dall'AsyncStorage
 export const getActiveToken = async (): Promise<string | null> => {
   try {
-    // Skip AsyncStorage in ambienti SSR
-    if (isSSR()) {
-      console.log('SSR environment detected, skipping AsyncStorage');
-      return null;
-    }
-    
     const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+    console.log('Token recuperato da AsyncStorage:', token ? 'presente' : 'assente');
     return token;
   } catch (error) {
-    console.error('Errore nel caricamento del token:', error);
+    console.error('Errore durante il recupero del token:', error);
     return null;
   }
 };
 
-// Funzione per salvare il token in modo sicuro
-export const saveToken = async (token: string): Promise<boolean> => {
+// Funzione per verificare lo stato di autenticazione dell'utente
+export const checkUserAuth = async (): Promise<Utente | null> => {
+  const token = await getActiveToken();
+  if (!token) {
+    console.log('Nessun token trovato durante il checkUserAuth');
+    return null;
+  }
+
   try {
-    // Skip AsyncStorage in ambienti SSR
-    if (isSSR()) {
-      console.log('SSR environment detected, skipping AsyncStorage');
-      return false;
+    // Imposta l'header di autenticazione
+    setAuthToken(token);
+    
+    // Effettua la richiesta al server per verificare l'autenticazione
+    const response = await axios.get(`${API_URL}/auth/me`);
+    
+    if (response.status === 200 && response.data) {
+      console.log('Autenticazione verificata con successo:', response.data.email);
+      return response.data;
+    } else {
+      console.log('Risposta di verifica autenticazione non valida:', response.status);
+      return null;
+    }
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response) {
+      console.error('Errore durante la verifica dell\'autenticazione:', error.response.status);
+      
+      // Se il token è scaduto (401), prova a fare il refresh
+      if (error.response.status === 401) {
+        console.log('Token scaduto, tentativo di refresh...');
+        const newToken = await refreshToken();
+        if (newToken) {
+          // Riprova la verifica con il nuovo token
+          return checkUserAuth();
+        }
+      } 
+      // Se l'endpoint non esiste (404), consideriamo valida l'autenticazione locale
+      else if (error.response.status === 404) {
+        console.log('Endpoint /auth/me non trovato (404) - l\'API potrebbe non supportare la verifica token');
+        console.log('Manteniamo l\'autenticazione basata sul token locale');
+        
+        // Verifica nella cache locale se abbiamo i dati utente
+        try {
+          const userDataStr = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+          if (userDataStr) {
+            const userData = JSON.parse(userDataStr);
+            console.log('Autenticazione mantenuta usando dati locali per:', userData.email);
+            return userData;
+          }
+        } catch (cacheErr) {
+          console.error('Errore nel recupero dati utente dalla cache:', cacheErr);
+        }
+      }
+    } else {
+      console.error('Errore di rete durante la verifica dell\'autenticazione:', error);
+    }
+    return null;
+  }
+};
+
+// Funzione per rinnovare il token usando il refresh token
+export const refreshToken = async (): Promise<string | null> => {
+  try {
+    const refreshToken = await AsyncStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
+    if (!refreshToken) {
+      console.log('Nessun refresh token trovato');
+      return null;
     }
     
-    await AsyncStorage.setItem(STORAGE_KEYS.USER_TOKEN, token);
-    setAuthToken(token);
-    return true;
+    console.log('Tentativo di refresh del token...');
+    const response = await axios.post(`${API_URL}/auth/refresh`, { refreshToken });
+    
+    if (response.status === 200 && response.data.token) {
+      // Salva il nuovo token
+      await saveToken(response.data.token);
+      console.log('Token rinnovato con successo');
+      
+      // Se c'è un nuovo refresh token, salvalo
+      if (response.data.refreshToken) {
+        await saveRefreshToken(response.data.refreshToken);
+      }
+      
+      return response.data.token;
+    } else {
+      console.log('Risposta non valida durante il refresh del token');
+      return null;
+    }
   } catch (error) {
-    console.error('Errore nel salvataggio del token:', error);
-    return false;
+    console.error('Errore durante il refresh del token:', error);
+    return null;
   }
 };
 
 // Funzione per effettuare il login
 export const loginUser = async (email: string, password: string): Promise<LoginResponse> => {
+  console.log('Tentativo di login per:', email);
+  
   try {
-    console.log(`Tentativo di login per ${email} su ${API_URL}/auth/login`);
+    const response = await axios.post(`${API_URL}/auth/login`, { email, password });
     
-    const response = await axios.post(`${API_URL}/auth/login`, {
-      email,
-      password
-    });
+    console.log('Status risposta login:', response.status);
+    console.log('Chiavi risposta:', Object.keys(response.data || {}));
     
-    console.log('Login response status:', response.status);
-    console.log('Login response data:', JSON.stringify(response.data, null, 2));
+    // Supporto per vari formati di risposta dal server
+    let userData = null;
+    let authToken = null;
+    let refreshTokenValue = null;
     
-    // Controllo per il formato di risposta
-    let token: string | null = null;
-    let utente = null;
-    
-    // Tenta di estrarre token e utente dalla risposta
-    if (response.data) {
-      // Controllo per il nuovo formato (diretto)
-      if (response.data.token && response.data.utente) {
-        token = response.data.token;
-        utente = response.data.utente;
-      } 
-      // Controllo per il vecchio formato (annidato)
-      else if (response.data.tokens && response.data.tokens.access && response.data.user) {
-        token = response.data.tokens.access;
-        utente = response.data.user;
-      }
+    // Formato 1: { token, utente }
+    if (response.data.token && response.data.utente) {
+      console.log('Formato risposta: token + utente');
+      userData = response.data.utente;
+      authToken = response.data.token;
+      refreshTokenValue = response.data.refreshToken;
+    } 
+    // Formato 2: { access_token, user }
+    else if (response.data.access_token && response.data.user) {
+      console.log('Formato risposta: access_token + user');
+      userData = response.data.user;
+      authToken = response.data.access_token;
+      refreshTokenValue = response.data.refresh_token;
+    } 
+    // Formato 3: { tokens: { access, refresh }, user }
+    else if (response.data.tokens && response.data.user) {
+      console.log('Formato risposta: tokens (access,refresh) + user');
+      userData = response.data.user;
+      authToken = response.data.tokens.access;
+      refreshTokenValue = response.data.tokens.refresh;
+    }
+    // Se disponibile, salva il refresh token
+    if (refreshTokenValue) {
+      await saveRefreshToken(refreshTokenValue);
+      console.log('Refresh token salvato dopo login');
     }
     
-    // Verifica che abbiamo ottenuto sia token che utente
-    if (token && utente) {
-      console.log('Login successful, token received');
+    // Se abbiamo ottenuto i dati necessari, restituisci un oggetto normalizzato
+    if (userData && authToken) {
+      console.log('Login completato con successo per:', email);
+      
+      // Salva il token in modo sicuro
+      await saveToken(authToken);
+      
+      // Restituisci un risultato normalizzato
       return {
-        token: token,
-        utente: {
-          id: utente.id,
-          email: utente.email,
-          nome: utente.nome,
-          cognome: utente.cognome,
-          ruolo: utente.ruolo
-        }
+        token: authToken,
+        utente: userData
       };
     } else {
-      console.error('Login response formato non valido:', response.data);
-      throw new Error('Formato risposta non valido');
+      console.error('Formato risposta non riconosciuto:', response.data);
+      throw new Error('Risposta dal server non valida durante il login');
     }
-  } catch (error: any) {
-    console.error('Login error:', error.message);
+  } catch (error) {
+    console.error('Errore durante il login:', error);
     
-    if (error.response) {
-      // Il server ha restituito una risposta con un codice di errore
-      const statusCode = error.response.status;
-      let errorMessage = '';
-      
-      switch (statusCode) {
-        case 401:
-          errorMessage = 'Credenziali non valide';
-          break;
-        case 404:
-          errorMessage = 'Utente non trovato';
-          break;
-        case 500:
-          errorMessage = 'Errore del server';
-          break;
-        default:
-          errorMessage = `Errore durante il login (${statusCode})`;
-      }
-      
-      throw new Error(errorMessage);
-    } else if (error.request) {
-      // La richiesta è stata effettuata ma non è stata ricevuta risposta
-      console.error('Nessuna risposta dal server:', error.request);
-      throw new Error('Il server non risponde. Verifica la tua connessione.');
+    // Logga dettagli aggiuntivi per debug
+    if (axios.isAxiosError(error) && error.response) {
+      console.error('Status code:', error.response.status);
+      console.error('Dati risposta errore:', error.response.data);
     }
     
-    // Errore durante l'impostazione della richiesta
     throw error;
   }
 };
 
 // Funzione per effettuare il logout
-export const logoutUser = async (): Promise<void> => {
+export const logoutUser = async (): Promise<boolean> => {
   try {
-    // Ottieni il token prima della richiesta
+    // Chiama l'endpoint di logout sul server (se esiste)
     const token = await getActiveToken();
-    
     if (token) {
-      console.log('Invio richiesta di logout al server...');
-      
+      setAuthToken(token);
       try {
-        // Configura gli header con il token
-        const config = {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          },
-          timeout: 5000 // Timeout più breve per la richiesta di logout
-        };
-        
-        // Effettua la richiesta di logout al backend
-        await axios.post(`${API_URL}/auth/logout`, {}, config);
-        console.log('Logout dal server completato con successo');
-      } catch (requestError) {
-        console.warn('Errore nella richiesta di logout al server:', requestError);
-        // Non blocchiamo il processo di logout per errori di rete
+        await axios.post(`${API_URL}/auth/logout`);
+        console.log('Logout effettuato sul server');
+      } catch (err) {
+        console.log('Nessun endpoint di logout disponibile o errore server');
       }
-    } else {
-      console.log('Nessun token disponibile per il logout lato server');
     }
     
-    // Sempre pulisci il token locale
-    delete axios.defaults.headers.common['Authorization'];
-    console.log('Token rimosso dagli header di default');
-    
-    return Promise.resolve();
+    // Rimuovi tutti i token locali indipendentemente dalla risposta del server
+    return true;
   } catch (error) {
-    console.error('Errore critico durante il processo di logout:', error);
-    // Continuiamo con il logout anche in caso di errore
-    return Promise.resolve();
-  }
-};
-
-// Funzione per verificare se l'utente è autenticato
-export const checkUserAuth = async (): Promise<Utente | null> => {
-  try {
-    // Ottieni il token
-    const token = await getActiveToken();
-    
-    if (!token) {
-      console.log('Nessun token trovato durante il check auth');
-      return null;
-    }
-    
-    // Configura gli header con il token
-    const config = {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    };
-    
-    // Verifica il token con il backend
-    const response = await axios.get(`${API_URL}/auth/me`, config);
-    console.log('Auth check response:', JSON.stringify(response.data, null, 2));
-    
-    // Tenta di estrarre i dati utente dalla risposta
-    let utente = null;
-    
-    if (response.data) {
-      // Formato: { utente: {...} }
-      if (response.data.utente) {
-        utente = response.data.utente;
-      } 
-      // Formato: { user: {...} }
-      else if (response.data.user) {
-        utente = response.data.user;
-      }
-      // Formato: response.data è direttamente l'utente
-      else if (response.data.id && response.data.email) {
-        utente = response.data;
-      }
-    }
-    
-    if (utente) {
-      return {
-        id: utente.id,
-        email: utente.email,
-        nome: utente.nome,
-        cognome: utente.cognome,
-        ruolo: utente.ruolo
-      };
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('Errore durante la verifica del token:', error);
-    return null;
+    console.error('Errore durante il logout:', error);
+    // Ritorna true comunque, permettiamo il logout anche in caso di errori
+    return true;
   }
 };
 

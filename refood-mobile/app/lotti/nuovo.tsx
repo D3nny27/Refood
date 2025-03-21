@@ -1,15 +1,36 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, Alert, KeyboardAvoidingView, Platform, Pressable, TouchableOpacity } from 'react-native';
-import { TextInput, Button, Text, HelperText, Appbar, Card, Divider, Portal, Modal, Surface, List, useTheme, Title } from 'react-native-paper';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import {
+  View, 
+  StyleSheet, 
+  ScrollView, 
+  Alert, 
+  KeyboardAvoidingView, 
+  Platform, 
+  Pressable,
+  TouchableOpacity,
+  ActivityIndicator
+} from 'react-native';
+import {
+  Button,
+  Text,
+  TextInput,
+  HelperText,
+  Appbar,
+  Card,
+  Divider,
+  Portal,
+  Modal,
+  Surface,
+  List,
+  useTheme,
+  Title
+} from 'react-native-paper';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../src/context/AuthContext';
 import { createLotto, invalidateCache } from '../../src/services/lottiService';
 import { PRIMARY_COLOR, RUOLI, STORAGE_KEYS, API_URL } from '../../src/config/constants';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { DatePickerModal } from 'react-native-paper-dates';
-import SelectDialog from '../../src/components/SelectDialog';
 import Toast from 'react-native-toast-message';
 import { it } from 'date-fns/locale';
 
@@ -32,7 +53,7 @@ const UNITA_MISURA_OPTIONS = [
   { label: 'Pezzi (pz)', value: 'pz' },
 ];
 
-export default function NuovoLottoScreen() {
+const NuovoLottoScreen = () => {
   const theme = useTheme();
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
@@ -112,6 +133,18 @@ export default function NuovoLottoScreen() {
       setDataScadenza(selectedDate);
       validateField('dataScadenza', selectedDate);
     }
+  };
+
+  // Funzione per incrementare la data del numero di giorni specificato
+  const incrementDate = (days: number) => {
+    const currentDate = dataScadenza || new Date();
+    const newDate = new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth(),
+      currentDate.getDate() + days
+    );
+    setDataScadenza(newDate);
+    validateField('dataScadenza', newDate);
   };
 
   // Valida un campo specifico
@@ -498,14 +531,56 @@ export default function NuovoLottoScreen() {
                   }}
                 />
               ) : (
-                <DateTimePicker
-                  value={dataScadenza || new Date()}
-                  mode="date"
-                  display="default"
-                  onChange={handleDateChange}
-                  minimumDate={new Date()}
-                  style={styles.datePicker}
-                />
+                <View style={styles.dateButtonsContainer}>
+                  <Text style={styles.dateSelectionText}>
+                    Data selezionata: {formatDate(dataScadenza || new Date())}
+                  </Text>
+                  <View style={styles.dateButtonsRow}>
+                    <Button 
+                      mode="outlined" 
+                      icon="arrow-left" 
+                      onPress={() => incrementDate(-1)}
+                      style={styles.dateButton}
+                    >
+                      -1 giorno
+                    </Button>
+                    <Button 
+                      mode="outlined" 
+                      icon="calendar-today" 
+                      onPress={() => {
+                        setDataScadenza(new Date());
+                        validateField('dataScadenza', new Date());
+                      }}
+                      style={styles.dateButton}
+                    >
+                      Oggi
+                    </Button>
+                    <Button 
+                      mode="outlined" 
+                      icon="arrow-right" 
+                      onPress={() => incrementDate(1)}
+                      style={styles.dateButton}
+                    >
+                      +1 giorno
+                    </Button>
+                  </View>
+                  <View style={styles.dateButtonsRow}>
+                    <Button 
+                      mode="outlined" 
+                      onPress={() => incrementDate(7)}
+                      style={styles.dateButton}
+                    >
+                      +1 settimana
+                    </Button>
+                    <Button 
+                      mode="outlined" 
+                      onPress={() => incrementDate(30)}
+                      style={styles.dateButton}
+                    >
+                      +1 mese
+                    </Button>
+                  </View>
+                </View>
               )}
             </View>
             <Divider />
@@ -574,7 +649,10 @@ export default function NuovoLottoScreen() {
       </Portal>
     </KeyboardAvoidingView>
   );
-}
+};
+
+// Aggiunta dell'esportazione predefinita richiesta
+export default NuovoLottoScreen;
 
 const styles = StyleSheet.create({
   container: {
@@ -784,4 +862,22 @@ const styles = StyleSheet.create({
     marginVertical: 20,
     color: '#666',
   },
+  dateButtonsContainer: {
+    padding: 16,
+    alignItems: 'center',
+  } as any,
+  dateSelectionText: {
+    fontSize: 16,
+    marginBottom: 16,
+    textAlign: 'center',
+  } as any,
+  dateButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 16,
+    width: '100%',
+  } as any,
+  dateButton: {
+    marginHorizontal: 4,
+  } as any,
 }); 

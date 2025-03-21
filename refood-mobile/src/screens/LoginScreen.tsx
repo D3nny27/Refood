@@ -11,7 +11,14 @@ const LoginScreen = () => {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
-  const { login, error, clearError, isLoading } = useAuth();
+  const { login, error, clearError, isLoading, isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    console.log('LoginScreen - isAuthenticated cambiato:', isAuthenticated);
+    if (isAuthenticated) {
+      console.log('LoginScreen - Utente autenticato, dovrebbe reindirizzare automaticamente');
+    }
+  }, [isAuthenticated]);
 
   useEffect(() => {
     // Pulisci gli errori quando il componente viene montato
@@ -51,7 +58,9 @@ const LoginScreen = () => {
     const isPasswordValid = validatePassword();
 
     if (isEmailValid && isPasswordValid) {
-      await login(email, password);
+      console.log('LoginScreen - Tentativo di login con:', email);
+      const success = await login(email, password);
+      console.log('LoginScreen - Risultato login:', success ? 'successo' : 'fallito');
     }
   };
 

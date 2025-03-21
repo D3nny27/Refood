@@ -8,7 +8,7 @@ import { Platform } from 'react-native';
 
 // Imposta qui l'IP del tuo computer nella rete locale per i test su dispositivi fisici
 // Ad esempio: 192.168.1.5 o 10.0.0.4 ecc.
-const LOCAL_IP = '172.16.16.247'; // Sostituisci con il tuo IP effettivo
+const LOCAL_IP = '192.168.123.160'; // Indirizzo IP aggiornato
 
 // Porta del server backend
 const SERVER_PORT = '3000';
@@ -37,6 +37,7 @@ export const STORAGE_KEYS = {
   USER_TOKEN: 'userToken',
   USER_DATA: 'userData',
   LAST_SYNC: 'lastSync',  // Per tenere traccia dell'ultima sincronizzazione
+  REFRESH_TOKEN: 'refreshToken', // Per il token di refresh
 };
 
 // Ruoli utente

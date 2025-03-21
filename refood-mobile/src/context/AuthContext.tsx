@@ -1,9 +1,11 @@
 import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { loginUser, logoutUser, checkUserAuth, Utente } from '../services/authService';
-import { getActiveToken, saveToken, setAuthToken } from '../services/authService';
+import { loginUser, logoutUser, checkUserAuth } from '../services/authService';
+import { getActiveToken } from '../services/authService';
 import { STORAGE_KEYS } from '../config/constants';
 import { Platform, AppState, AppStateStatus } from 'react-native';
+import { Utente } from '../types/user';
+import { setAuthToken } from '../services/api';
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -25,52 +27,150 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [error, setError] = useState<string | null>(null);
   const [initialCheckDone, setInitialCheckDone] = useState<boolean>(false);
   
+  // Log di stato per aiutare il debug
+  useEffect(() => {
+    console.log('AuthProvider - Stato autenticazione:', isAuthenticated ? 'autenticato' : 'non autenticato');
+    console.log('AuthProvider - User:', user ? `${user.email} (${user.ruolo})` : 'null');
+    
+    // Verifica rapida che lo stato sia coerente
+    const checkState = async () => {
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      const userDataString = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+      
+      // Se abbiamo token e dati utente in storage ma isAuthenticated è false, ripristiniamo
+      if (token && userDataString && !isAuthenticated) {
+        console.log('CORREZIONE STATO: trovati dati in storage ma stato non autenticato');
+        try {
+          const userData = JSON.parse(userDataString);
+          setUser(userData);
+          setIsAuthenticated(true);
+          setAuthToken(token);
+        } catch (error) {
+          console.error('Errore durante la correzione dello stato:', error);
+        }
+      }
+      
+      // Se non abbiamo né token né dati utente ma isAuthenticated è true, correggiamo
+      if (!token && !userDataString && isAuthenticated) {
+        console.log('CORREZIONE STATO: nessun dato in storage ma stato autenticato');
+        setUser(null);
+        setIsAuthenticated(false);
+      }
+    };
+    
+    checkState();
+  }, [isAuthenticated, user]);
+
   // Funzione per aggiornare lo stato dell'autenticazione
   const refreshUserStatus = useCallback(async () => {
     try {
       setIsLoading(true);
+      console.log('AuthProvider - Inizio refresh dello stato utente');
+      
       // Ottieni il token in modo sicuro
       const token = await getActiveToken();
+      console.log('AuthProvider - Token trovato:', token ? 'presente' : 'assente');
       
-      // Se abbiamo un token, verifica l'autenticazione
+      // Prima prova a ripristinare i dati utente locali, poi verifica con il server
+      let localDataRestored = false;
+      
+      if (!Platform.isTV && typeof window !== 'undefined') {
+        try {
+          const userDataString = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+          if (userDataString && token) {
+            const userData = JSON.parse(userDataString);
+            console.log('Dati utente trovati in storage locale:', userData.email);
+            
+            // Imposta immediatamente lo stato con i dati locali
+            setUser(userData);
+            setIsAuthenticated(true);
+            localDataRestored = true;
+            
+            // Configura l'header con il token
+            setAuthToken(token);
+          }
+        } catch (storageError) {
+          console.error('Errore nel ripristino dei dati locali:', storageError);
+        }
+      }
+      
+      // Se abbiamo un token, verifica l'autenticazione con il server
       if (token) {
         setAuthToken(token);
-        console.log('Token esistente trovato, verifico autenticazione...');
-        const userData = await checkUserAuth();
-        
-        if (userData) {
-          console.log('Utente autenticato:', userData.email);
-          setUser(userData);
-          setIsAuthenticated(true);
+        console.log('Token esistente trovato, verifico autenticazione con il server...');
+        try {
+          const userData = await checkUserAuth();
           
-          // Assicurati che i dati utente siano salvati in AsyncStorage
-          if (!Platform.isTV && typeof window !== 'undefined') {
-            await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(userData));
+          if (userData) {
+            console.log('Utente autenticato confermato dal server:', userData.email);
+            setUser(userData);
+            setIsAuthenticated(true);
+            
+            // Aggiorna i dati utente in AsyncStorage
+            if (!Platform.isTV && typeof window !== 'undefined') {
+              await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(userData));
+              console.log('Dati utente aggiornati in AsyncStorage dopo verifica server');
+            }
+          } else {
+            // Solo se non abbiamo ripristinato dati locali, considera l'utente non autenticato
+            if (!localDataRestored) {
+              console.log('Server non conferma autenticazione e nessun dato locale valido');
+              setUser(null);
+              setIsAuthenticated(false);
+              
+              // Pulisci lo storage solo se non ci sono dati locali validi
+              if (!Platform.isTV && typeof window !== 'undefined') {
+                await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
+                await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
+                await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+              }
+            } else {
+              console.log('Server non conferma autenticazione ma manteniamo i dati locali');
+            }
           }
-        } else {
-          // Token non valido, puliamo tutto
-          console.log('Token non valido o scaduto');
-          setUser(null);
-          setIsAuthenticated(false);
-          setAuthToken(null);
-          if (!Platform.isTV && typeof window !== 'undefined') {
-            await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
-            await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
+        } catch (apiError) {
+          console.error('Errore API durante checkUserAuth:', apiError);
+          // Se il server non è raggiungibile, manteniamo comunque i dati locali
+          if (!localDataRestored) {
+            try {
+              const userDataString = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+              if (userDataString) {
+                console.log('Server non raggiungibile, uso dati locali come fallback');
+                setUser(JSON.parse(userDataString));
+                setIsAuthenticated(true);
+              }
+            } catch (storageError) {
+              console.error('Errore nel fallback a dati locali:', storageError);
+            }
           }
         }
-      } else {
-        console.log('Nessun token trovato, utente non autenticato');
+      } else if (!localDataRestored) {
+        console.log('Nessun token trovato e nessun dato locale valido');
         setUser(null);
         setIsAuthenticated(false);
       }
     } catch (err: any) {
-      console.error('Errore durante il refresh dello stato utente:', err);
-      setUser(null);
-      setIsAuthenticated(false);
+      console.error('Errore critico durante il refresh dello stato utente:', err);
       setError(err.message || 'Errore durante la verifica dell\'autenticazione');
+      
+      // Tentativo finale di ripristino da dati locali in caso di errore critico
+      try {
+        const userDataString = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+        const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+        
+        if (userDataString && token) {
+          console.log('Ripristino di emergenza dai dati locali');
+          setUser(JSON.parse(userDataString));
+          setIsAuthenticated(true);
+          setAuthToken(token);
+        }
+      } catch (finalError) {
+        console.error('Fallimento ripristino di emergenza:', finalError);
+      }
     } finally {
       setIsLoading(false);
       setInitialCheckDone(true);
+      console.log('AuthProvider - Fine refresh dello stato utente, autenticato:', isAuthenticated);
     }
   }, []);
 
@@ -93,6 +193,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await Promise.race([refreshUserStatus(), timeoutPromise]);
       } catch (error) {
         console.error('Errore o timeout durante il check iniziale:', error);
+        // In caso di timeout, tenta comunque di ripristinare i dati locali
+        if (!Platform.isTV && typeof window !== 'undefined') {
+          try {
+            const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+            if (userData) {
+              console.log('Ripristino dati utente da storage dopo timeout');
+              setUser(JSON.parse(userData));
+              setIsAuthenticated(true);
+            }
+          } catch (localErr) {
+            console.error('Errore durante il ripristino locale:', localErr);
+          }
+        }
         setIsLoading(false);
         setInitialCheckDone(true);
       }
@@ -173,16 +286,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       if (response.token && response.utente) {
         // Salva il token in modo sicuro
-        await saveToken(response.token);
+        setAuthToken(response.token);
+        await AsyncStorage.setItem(STORAGE_KEYS.USER_TOKEN, response.token);
         
         // Salva i dati utente
         if (!Platform.isTV && typeof window !== 'undefined') {
           await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(response.utente));
         }
         
+        // Aggiorna lo stato dell'autenticazione
         setUser(response.utente);
         setIsAuthenticated(true);
-        console.log('Login successful for:', email);
+        console.log('Login completato con successo per:', email);
+        console.log('Stato autenticazione aggiornato - isAuthenticated:', true);
+        console.log('Stato autenticazione aggiornato - user:', JSON.stringify(response.utente));
         return true;
       } else {
         throw new Error('Credenziali non valide');
@@ -198,10 +315,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Funzione di logout
   const logout = async (): Promise<void> => {
+    console.log('AuthContext - Avvio processo di logout...');
     setIsLoading(true);
     
     try {
       console.log('Inizio processo di logout...');
+      
+      // Prima imposta lo stato di autenticazione a false immediatamente
+      setIsAuthenticated(false);
+      setUser(null);
+      console.log('Stato di autenticazione impostato a false');
+      
+      // Rimuovi token e dati utente
+      setAuthToken(null);
+      console.log('Token di autenticazione rimosso dai default headers');
+      
+      // Pulizia dello storage in modo protetto
+      if (!Platform.isTV && typeof window !== 'undefined') {
+        try {
+          // Pulizia sincronizzata per assicurarsi che venga completata
+          await Promise.all([
+            AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN),
+            AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA),
+            AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN)
+          ]);
+          console.log('Token e dati utente rimossi da AsyncStorage');
+        } catch (storageErr) {
+          console.error('Errore durante la pulizia di AsyncStorage:', storageErr);
+        }
+      }
       
       // Chiama il servizio di logout (in modo sicuro, catturo errori)
       try {
@@ -212,33 +354,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Continuiamo con il logout locale anche se il server dà errore
       }
       
-      // Rimuovi token e dati utente
-      setAuthToken(null);
-      console.log('Token di autenticazione rimosso dai default headers');
+      console.log('Logout completato con successo');
       
-      // Pulizia dello storage in modo protetto
+    } catch (err: any) {
+      console.error('Errore critico durante il logout:', err);
+      
+      // Forza comunque lo stato di logout in caso di errore
+      setIsAuthenticated(false);
+      setUser(null);
+      setAuthToken(null);
+      
+      // Tenta ancora di pulire lo storage in caso di errore
       if (!Platform.isTV && typeof window !== 'undefined') {
         try {
           await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
           await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
-          console.log('Token e dati utente rimossi da AsyncStorage');
-        } catch (storageErr) {
-          console.error('Errore durante la pulizia di AsyncStorage:', storageErr);
+          await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+        } catch (e) {
+          console.error('Secondo tentativo di pulizia storage fallito:', e);
         }
       }
       
-      // Aggiorna lo stato dell'applicazione
-      setUser(null);
-      setIsAuthenticated(false);
-      
-      console.log('Logout completato con successo');
-      
-      // Reindirizza alla schermata di login se necessario
-      // Questo avverrà automaticamente grazie ai protected routes
-    } catch (err) {
-      console.error('Errore critico durante il logout:', err);
     } finally {
       setIsLoading(false);
+      console.log('AuthContext - Impostato isLoading a false dopo logout');
     }
   };
 
@@ -271,5 +410,30 @@ export const useAuth = () => {
   if (!context) {
     throw new Error('useAuth deve essere utilizzato all\'interno di un AuthProvider');
   }
-  return context;
+  
+  // Verifica che le funzioni esistano e siano valide
+  if (typeof context.logout !== 'function') {
+    console.error('ERRORE CRITICO: context.logout non è una funzione valida!');
+  }
+  
+  if (typeof context.refreshUserStatus !== 'function') {
+    console.error('ERRORE CRITICO: context.refreshUserStatus non è una funzione valida!');
+  }
+  
+  // Aggiungere una funzione di forceAuthUpdate per forzare l'aggiornamento dell'interfaccia
+  const forceAuthUpdate = () => {
+    console.log('useAuth - forceAuthUpdate chiamata');
+    // Usa direttamente il refresh per forzare un aggiornamento dello stato
+    if (typeof context.refreshUserStatus === 'function') {
+      context.refreshUserStatus();
+    } else {
+      console.error('Impossibile forzare aggiornamento: refreshUserStatus non disponibile');
+    }
+  };
+  
+  // Estendi il context con le funzioni utili aggiuntive
+  return {
+    ...context,
+    forceAuthUpdate
+  };
 }; 

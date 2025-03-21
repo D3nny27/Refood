@@ -5,29 +5,87 @@ import { useAuth } from '../../src/context/AuthContext';
 import { RUOLI, PRIMARY_COLOR } from '../../src/config/constants';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { STORAGE_KEYS } from '../../src/config/constants';
 
 export default function ProfiloScreen() {
-  const { user, logout } = useAuth();
+  const { user, logout, forceAuthUpdate } = useAuth();
   const theme = useTheme();
 
-  // Gestisce il logout
-  const handleLogout = async () => {
+  // Funzione di logout forzata che pulisce tutto
+  const forceLogout = async () => {
+    console.log('ProfiloScreen - forceLogout: INIZIO pulizia manuale di tutti i dati');
+    
+    // Verifica disponibilità delle funzioni prima di chiamarle
+    const logoutFnAvailable = typeof logout === 'function';
+    const forceUpdateAvailable = typeof forceAuthUpdate === 'function';
+    console.log(`ProfiloScreen - forceLogout: funzioni disponibili? logout: ${logoutFnAvailable ? 'SÌ' : 'NO'} forceAuthUpdate: ${forceUpdateAvailable ? 'SÌ' : 'NO'}`);
+    
+    try {
+      // Pulizia AsyncStorage
+      console.log('ProfiloScreen - forceLogout: pulizia AsyncStorage');
+      await AsyncStorage.multiRemove([
+        STORAGE_KEYS.USER_TOKEN,
+        STORAGE_KEYS.USER_DATA,
+        STORAGE_KEYS.REFRESH_TOKEN
+      ]).then(() => {
+        console.log('ProfiloScreen - forceLogout: AsyncStorage pulito con successo');
+      }).catch(err => {
+        console.error('ProfiloScreen - forceLogout: ERRORE pulizia AsyncStorage', err);
+      });
+      
+      // Chiama logout() se disponibile
+      if (logoutFnAvailable) {
+        console.log('ProfiloScreen - forceLogout: chiamata funzione logout()');
+        await logout().then(() => {
+          console.log('ProfiloScreen - forceLogout: chiamata logout() completata');
+        }).catch(err => {
+          console.error('ProfiloScreen - forceLogout: ERRORE chiamata logout()', err);
+        });
+      }
+      
+      // Forza aggiornamento contesto auth se disponibile
+      if (forceUpdateAvailable) {
+        console.log('ProfiloScreen - forceLogout: aggiornamento contesto auth');
+        try {
+          forceAuthUpdate();
+        } catch (err) {
+          console.error('ProfiloScreen - forceLogout: ERRORE aggiornamento contesto auth', err);
+        }
+      }
+      
+      // Non eseguiamo più un reindirizzamento diretto qui
+      // ma lasciamo che sia il sistema di autenticazione a occuparsene
+      console.log('ProfiloScreen - forceLogout: completato, attendo il reindirizzamento automatico');
+      
+    } catch (criticalError) {
+      console.error('ProfiloScreen - forceLogout: ERRORE CRITICO', criticalError);
+      // Non tentare di navigare in caso di errore critico
+    }
+  };
+
+  // Funzione di gestione del logout con Alert di conferma
+  const handleLogout = () => {
+    console.log('ProfiloScreen - handleLogout: mostrando Alert di conferma');
+    
     Alert.alert(
-      'Conferma logout',
+      'Conferma Logout',
       'Sei sicuro di voler effettuare il logout?',
       [
         {
           text: 'Annulla',
-          style: 'cancel'
+          style: 'cancel',
+          onPress: () => console.log('ProfiloScreen - handleLogout: annullato dall\'utente')
         },
         {
           text: 'Logout',
           style: 'destructive',
-          onPress: async () => {
-            await logout();
+          onPress: () => {
+            console.log('ProfiloScreen - handleLogout: confermato, avvio forceLogout');
+            forceLogout();
           }
         }
-      ]
+      ],
+      { cancelable: false }
     );
   };
 
@@ -127,6 +185,9 @@ export default function ProfiloScreen() {
         style={styles.logoutButton}
         contentStyle={styles.logoutButtonContent}
         icon="logout"
+        labelStyle={{ fontSize: 16 }}
+        accessibilityLabel="Logout"
+        testID="logout-button"
       >
         Logout
       </Button>
