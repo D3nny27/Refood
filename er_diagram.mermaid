@@ -1,0 +1,200 @@
+erDiagram
+    Utenti ||--o{ Lotti : "inserisce"
+    Utenti ||--o{ LogCambioStato : "effettua"
+    Utenti ||--o{ Notifiche : "riceve"
+    Utenti ||--o{ UtentiCentri : "appartiene"
+    Utenti ||--o{ TokenAutenticazione : "possiede"
+    Utenti ||--o{ TokenRevocati : "revoca"
+    
+    TokenAutenticazione ||--o{ TokenRevocati : "incluso_in"
+    
+    Centri ||--o{ Lotti : "origine"
+    Centri ||--o{ Prenotazioni : "riceve"
+    Centri ||--o{ UtentiCentri : "contiene"
+    Centri ||--o{ StatisticheSettimanali : "genera"
+    Centri ||--o{ Trasformazioni : "effettua"
+    
+    Lotti ||--o{ Prenotazioni : "prenotato_in"
+    Lotti ||--o{ LogCambioStato : "subisce"
+    Lotti ||--o{ LottiCategorie : "categorizzato_in"
+    Lotti ||--o{ OriginiProdotti : "tracciato_in"
+    Lotti ||--o{ ImpattoCO2 : "misurato_in"
+    Lotti ||--o{ Trasformazioni : "trasformato_in"
+    
+    CategorieProdotti ||--o{ LottiCategorie : "classifica"
+    
+    Prenotazioni ||--o{ Trasporti : "trasportato_con"
+    
+    Utenti {
+        int id PK
+        string email UK
+        string password
+        string nome
+        string cognome
+        string ruolo
+        timestamp ultimo_accesso
+        timestamp creato_il
+    }
+    
+    TokenAutenticazione {
+        int id PK
+        int utente_id FK
+        string access_token
+        string refresh_token
+        timestamp access_token_scadenza
+        timestamp refresh_token_scadenza
+        string device_info
+        string ip_address
+        boolean revocato
+        timestamp revocato_il
+        timestamp creato_il
+    }
+    
+    TokenRevocati {
+        int id PK
+        string token_hash UK
+        timestamp revocato_il
+        string motivo
+        int revocato_da FK
+        timestamp scadenza_originale
+    }
+    
+    ParametriSistema {
+        int id PK
+        string chiave UK
+        string valore
+        string descrizione
+        boolean modificabile
+        int modificato_da FK
+        timestamp modificato_il
+        timestamp creato_il
+    }
+    
+    Centri {
+        int id PK
+        string nome
+        string tipo
+        string indirizzo
+        real latitudine
+        real longitudine
+        string telefono
+        string email
+        timestamp creato_il
+    }
+    
+    Lotti {
+        int id PK
+        string prodotto
+        real quantita
+        string unita_misura
+        date data_scadenza
+        int giorni_permanenza
+        string stato
+        int centro_origine_id FK
+        int inserito_da FK
+        timestamp creato_il
+        timestamp aggiornato_il
+    }
+    
+    Prenotazioni {
+        int id PK
+        int lotto_id FK
+        int centro_ricevente_id FK
+        string stato
+        timestamp data_prenotazione
+        timestamp data_ritiro
+        timestamp data_consegna
+        string note
+    }
+    
+    Notifiche {
+        int id PK
+        string tipo
+        string messaggio
+        int destinatario_id FK
+        boolean letto
+        timestamp creato_il
+    }
+    
+    LogCambioStato {
+        int id PK
+        int lotto_id FK
+        string stato_precedente
+        string stato_nuovo
+        timestamp cambiato_il
+        int cambiato_da FK
+    }
+    
+    CategorieProdotti {
+        int id PK
+        string nome UK
+        string descrizione
+        int tempo_medio_permanenza
+        timestamp creato_il
+    }
+    
+    LottiCategorie {
+        int lotto_id PK,FK
+        int categoria_id PK,FK
+    }
+    
+    OriginiProdotti {
+        int id PK
+        int lotto_id FK
+        string produttore
+        string localita_origine
+        int km_percorsi
+        string metodo_produzione
+    }
+    
+    UtentiCentri {
+        int utente_id PK,FK
+        int centro_id PK,FK
+        string ruolo_specifico
+        timestamp data_inizio
+    }
+    
+    ImpattoCO2 {
+        int id PK
+        int lotto_id FK
+        real co2_risparmiata_kg
+        real valore_economico
+        string metodo_calcolo
+        timestamp data_calcolo
+    }
+    
+    Trasformazioni {
+        int id PK
+        int lotto_origine_id FK
+        string tipo_trasformazione
+        int centro_trasformazione_id FK
+        real quantita_trasformata
+        timestamp data_trasformazione
+        string note
+    }
+    
+    Trasporti {
+        int id PK
+        int prenotazione_id FK
+        string mezzo
+        real distanza_km
+        real emissioni_co2
+        real costo
+        string autista
+        string telefono_autista
+        timestamp orario_partenza
+        timestamp orario_arrivo
+        string stato
+    }
+    
+    StatisticheSettimanali {
+        int id PK
+        int centro_id FK
+        int settimana
+        int anno
+        real quantita_salvata
+        real peso_totale_kg
+        real co2_risparmiata_kg
+        real valore_economico
+        int numero_lotti
+    } 

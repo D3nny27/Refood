@@ -1,0 +1,64 @@
+# Dipendenze
+node_modules/
+*/node_modules/
+
+# File di costruzione
+dist/
+build/
+*/dist/
+*/build/
+
+# File di cache
+.cache/
+.expo/
+.next/
+web-build/
+*.tsbuildinfo
+
+# File di ambiente
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env*.local
+
+# File di log
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Cartelle di sistema
+.DS_Store
+Thumbs.db
+
+# File specifici di Expo
+expo-env.d.ts
+
+# File di Android/iOS
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+*.apk
+*.aab
+*.ipa
+
+# File di IDE e editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Altri file binari o generati
+coverage/
+*.sqlite
+*.db
+
+# Cartelle specifiche del progetto
+/app-example/
+/.serverless/ 
