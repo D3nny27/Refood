@@ -1,94 +1,77 @@
-# Refood Mobile App
+# ReFood
 
-App mobile React Native per il progetto Refood, una piattaforma contro lo spreco alimentare.
-
-## Caratteristiche Principali
-
-- **Gestione Utenti:** Login, logout e gestione sessioni
-- **Dashboard Personalizzata:** Visualizzazione dati in base al ruolo dell'utente
-- **Gestione Lotti:** Visualizzazione, creazione e modifica dei lotti di cibo
-- **Prenotazioni:** Sistema per prenotare e gestire il ciclo di vita dei lotti
-- **Statistiche:** Visualizzazione dell'impatto ambientale ed economico
-
-## Ruoli Utente
-
-- **Operatore:** Gestisce l'inserimento e la modifica dei lotti
-- **Amministratore:** Accesso completo a statistiche e gestione utenti
-- **Centro Sociale:** Prenota e gestisce i lotti disponibili
-- **Centro Riciclaggio:** Gestisce i lotti in stato rosso per il riciclaggio
-
-## Tecnologie Utilizzate
-
-- **React Native:** Framework per lo sviluppo mobile
-- **Expo:** Toolchain per semplificare lo sviluppo
-- **React Navigation:** Navigazione tra schermate
-- **React Native Paper:** Componenti UI
-- **AsyncStorage:** Persistenza dati locale
-- **Axios:** Client HTTP per le chiamate API
-
-## Prerequisiti
-
-- Node.js (versione 12 o superiore)
-- npm o yarn
-- Expo CLI
-
-## Installazione
-
-1. Clona il repository:
-   ```
-   git clone https://github.com/username/refood-mobile.git
-   cd refood-mobile
-   ```
-
-2. Installa le dipendenze:
-   ```
-   npm install
-   ```
-
-3. Avvia l'app:
-   ```
-   npm start
-   ```
-
-4. Scansiona il codice QR con l'app Expo Go (Android) o la fotocamera (iOS)
-
-## Connessione al Backend
-
-L'app si connette al backend tramite API REST. Per impostazione predefinita, utilizza l'indirizzo `http://10.0.2.2:3000/api/v1` per l'emulatore Android.
-
-Per dispositivi fisici o iOS, modifica l'URL nel file `src/services/authService.ts` con l'indirizzo IP del tuo computer.
+ReFood è un'applicazione per la gestione e la distribuzione di alimenti in eccedenza, con l'obiettivo di ridurre lo spreco alimentare e aiutare chi ne ha bisogno.
 
 ## Struttura del Progetto
 
+Il progetto è diviso in due parti principali:
+
+- **refood-mobile**: Applicazione mobile sviluppata con React Native e Expo
+- **backend**: API REST sviluppata con Node.js
+
+## Funzionalità Principali
+
+- Gestione dei centri di distribuzione
+- Tracciamento dei lotti alimentari
+- Sistema di prenotazione
+- Dashboard amministrativa
+- Monitoraggio delle scadenze
+
+## Documentazione
+
+Il progetto include documentazione dettagliata:
+
+### Panoramica Tecnica
+- [Panoramica Tecnica Generale](docs/technical_overview.md) - Visione d'insieme del progetto
+
+### Documentazione Backend
+- [Architettura Backend](docs/backend_architecture.md) - Struttura e componenti del backend
+- [API Endpoints](docs/api_endpoints.md) - Descrizione dettagliata delle API
+- [JWT Authentication](docs/jwt_authentication.md) - Sistema di autenticazione
+- [Schema Database](docs/schema_description.md) - Struttura del database
+
+### Documentazione Frontend
+- [Architettura Frontend](docs/frontend/architecture.md) - Struttura e componenti del frontend
+- [Guida alle Schermate](docs/frontend/screens.md) - Descrizione delle principali schermate
+- [Servizi API](docs/frontend/api-services.md) - Interazione con il backend
+
+## Requisiti Tecnici
+
+### Applicazione Mobile
+- Node.js v16+
+- Expo CLI
+- React Native
+
+### Backend
+- Node.js v16+
+- SQLite
+
+## Installazione e Avvio
+
+### Applicazione Mobile
+```bash
+cd refood-mobile
+npm install
+npx expo start
 ```
-refood-mobile/
-├── App.js                  # Punto di ingresso dell'applicazione
-├── app.json                # Configurazione Expo
-├── package.json            # Dipendenze del progetto
-├── assets/                 # Risorse statiche (immagini, font)
-└── src/
-    ├── components/         # Componenti riutilizzabili
-    ├── context/            # Context API per la gestione dello stato
-    ├── navigation/         # Configurazione della navigazione
-    ├── screens/            # Schermate dell'applicazione
-    ├── services/           # Servizi per l'interazione con il backend
-    ├── types/              # Definizioni TypeScript
-    └── utils/              # Funzioni di utilità
+
+### Backend
+```bash
+cd backend
+npm install
+npm run dev
 ```
 
-## Flusso di Utilizzo
+## Contribuire al Progetto
 
-1. **Login:** L'utente accede all'app con le sue credenziali
-2. **Dashboard:** Visualizza i dati rilevanti per il suo ruolo
-3. **Funzionalità:**
-   - Operatore: Inserisce nuovi lotti, monitora le prenotazioni
-   - Centro Sociale: Prenota lotti disponibili
-   - Centro Riciclaggio: Gestisce lotti in stato rosso
-   - Amministratore: Visualizza statistiche, gestisce utenti
+Se desideri contribuire al progetto:
 
-## Note per lo Sviluppo
+1. Clona il repository
+2. Crea un branch per la tua feature (`git checkout -b feature/nome-feature`)
+3. Fai commit delle tue modifiche (`git commit -am 'Aggiungi una feature'`)
+4. Pusha il branch (`git push origin feature/nome-feature`)
+5. Apri una Pull Request
 
-- L'app è configurata per utilizzare TypeScript
-- Il tema principale dell'app è verde (#4CAF50) in linea con i valori di sostenibilità
-- Il sistema di autenticazione utilizza JWT con refresh token
-- Le credenziali di accesso sono memorizzate in modo sicuro con AsyncStorage 
+## Licenza
+
+Questo progetto è stato sviluppato per scopi accademici. 
