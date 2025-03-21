@@ -311,6 +311,57 @@ router.get('/:id/utenti', [
 
 /**
  * @swagger
+ * /centri/{id}/operatori:
+ *   post:
+ *     summary: Associa operatori e amministratori a un centro
+ *     tags: [Centri]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID del centro
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               operatori_ids:
+ *                 type: array
+ *                 items:
+ *                   type: integer
+ *                 description: Array di ID degli operatori da associare al centro
+ *               amministratori_ids:
+ *                 type: array
+ *                 items:
+ *                   type: integer
+ *                 description: Array di ID degli amministratori da associare al centro (solo per SuperAdmin)
+ *     responses:
+ *       200:
+ *         description: Utenti associati con successo
+ *       403:
+ *         description: Non autorizzato (richiede SuperAdmin per aggiungere amministratori)
+ *       404:
+ *         description: Centro non trovato
+ */
+router.post('/:id/operatori', [
+  authenticate,
+  authorize(['Amministratore']),
+  param('id').isInt().withMessage('ID centro deve essere un numero intero'),
+  body('operatori_ids').optional().isArray().withMessage('operatori_ids deve essere un array'),
+  body('operatori_ids.*').optional().isInt().withMessage('ID operatore deve essere un numero intero'),
+  body('amministratori_ids').optional().isArray().withMessage('amministratori_ids deve essere un array'),
+  body('amministratori_ids.*').optional().isInt().withMessage('ID amministratore deve essere un numero intero'),
+  validator.validate
+], centriController.associaOperatori);
+
+/**
+ * @swagger
  * /centri/{id}/utenti/{utente_id}:
  *   post:
  *     summary: Associa un utente a un centro

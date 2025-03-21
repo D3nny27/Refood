@@ -7,8 +7,11 @@ const logger = require('../utils/logger');
  */
 const getCentri = async (req, res, next) => {
   try {
-    const { tipo, nome, raggio, lat, lng, page = 1, limit = 20 } = req.query;
+    const { tipo, nome, raggio, lat, lng, page = 1, limit = 20, associatiA } = req.query;
     const offset = (page - 1) * limit;
+    
+    // Filtra in base al ruolo dell'utente
+    const isAdmin = req.user.ruolo === 'Amministratore';
     
     // Costruisci la query di base
     let query = `
@@ -19,6 +22,40 @@ const getCentri = async (req, res, next) => {
     `;
     
     const params = [];
+    
+    // Se è specificato un ID utente per le associazioni
+    if (associatiA) {
+      query = `
+        SELECT c.*, ct.descrizione as tipo_descrizione
+        FROM Centri c
+        JOIN CentriTipi ct ON c.tipo_id = ct.id
+        JOIN UtentiCentri uc ON c.id = uc.centro_id
+        WHERE uc.utente_id = ?
+      `;
+      params.push(parseInt(associatiA));
+    }
+    // Se è un amministratore, filtra per i centri di sua competenza
+    else if (isAdmin) {
+      // Modifichiamo la query per ottenere solo i centri associati all'amministratore
+      query = `
+        SELECT c.*, ct.descrizione as tipo_descrizione
+        FROM Centri c
+        JOIN CentriTipi ct ON c.tipo_id = ct.id
+        WHERE 1=1
+        AND (
+          EXISTS (
+            SELECT 1 FROM UtentiCentri uc
+            WHERE uc.utente_id = ? AND uc.centro_id = c.id
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM UtentiCentri uc2
+            WHERE uc2.centro_id = c.id
+          )
+        )
+      `;
+      
+      params.push(req.user.id);
+    }
     
     // Applicazione dei filtri
     if (tipo) {
@@ -34,8 +71,41 @@ const getCentri = async (req, res, next) => {
     // Calcolo della distanza se sono fornite coordinate
     if (raggio && lat && lng) {
       // Aggiungi calcolo della distanza usando formula di Haversine
+      // Preserviamo la condizione di filtro dell'amministratore
+      let baseQuery = isAdmin && !associatiA ? 
+        `
+          SELECT c.*, ct.descrizione as tipo_descrizione
+          FROM Centri c
+          JOIN CentriTipi ct ON c.tipo_id = ct.id
+          WHERE 1=1
+          AND (
+            EXISTS (
+              SELECT 1 FROM UtentiCentri uc
+              WHERE uc.utente_id = ? AND uc.centro_id = c.id
+            )
+            OR NOT EXISTS (
+              SELECT 1 FROM UtentiCentri uc2
+              WHERE uc2.centro_id = c.id
+            )
+          )
+        ` : 
+        associatiA ? 
+        `
+          SELECT c.*, ct.descrizione as tipo_descrizione
+          FROM Centri c
+          JOIN CentriTipi ct ON c.tipo_id = ct.id
+          JOIN UtentiCentri uc ON c.id = uc.centro_id
+          WHERE uc.utente_id = ?
+        ` :
+        `
+          SELECT c.*, ct.descrizione as tipo_descrizione
+          FROM Centri c
+          JOIN CentriTipi ct ON c.tipo_id = ct.id
+          WHERE 1=1
+        `;
+      
       query = `
-        SELECT c.*, ct.descrizione as tipo_descrizione,
+        ${baseQuery},
         (
           6371 * acos(
             cos(radians(?)) * 
@@ -45,12 +115,15 @@ const getCentri = async (req, res, next) => {
             sin(radians(c.latitudine))
           )
         ) AS distanza
-        FROM Centri c
-        JOIN CentriTipi ct ON c.tipo_id = ct.id
-        WHERE 1=1
       `;
       
-      params.unshift(parseFloat(lat), parseFloat(lng), parseFloat(lat));
+      if (isAdmin && !associatiA) {
+        params.push(req.user.id);
+      } else if (associatiA) {
+        params.push(parseInt(associatiA));
+      }
+      
+      params.push(parseFloat(lat), parseFloat(lng), parseFloat(lat));
       
       // Filtra per raggio
       query += ` AND (
@@ -107,6 +180,29 @@ const getCentri = async (req, res, next) => {
 const getCentroById = async (req, res, next) => {
   try {
     const { id } = req.params;
+    const isAdmin = req.user.ruolo === 'Amministratore';
+    
+    // Se è un amministratore, verificare che abbia accesso a questo centro
+    if (isAdmin) {
+      const accessQuery = `
+        SELECT 1 FROM UtentiCentri 
+        WHERE utente_id = ? AND centro_id = ?
+      `;
+      
+      // Verifica se ci sono associazioni per questo centro
+      const existsQuery = `
+        SELECT 1 FROM UtentiCentri 
+        WHERE centro_id = ?
+      `;
+      
+      const hasAccess = await db.get(accessQuery, [req.user.id, id]);
+      const existsAssociations = await db.get(existsQuery, [id]);
+      
+      // Se ci sono associazioni ma l'amministratore non ha accesso, blocca la richiesta
+      if (existsAssociations && !hasAccess) {
+        throw new ApiError(403, 'Non hai accesso a questo centro');
+      }
+    }
     
     const query = `
       SELECT c.*, ct.descrizione as tipo_descrizione
@@ -245,6 +341,31 @@ const createCentro = async (req, res, next) => {
     
     if (!result.lastID) {
       throw new ApiError(500, 'Errore durante la creazione del centro');
+    }
+    
+    // Associa automaticamente l'amministratore che ha creato il centro
+    if (req.user && req.user.ruolo === 'Amministratore') {
+      logger.info(`Associazione automatica dell'amministratore ID ${req.user.id} al centro ID ${result.lastID}`);
+      
+      // Verifica che l'amministratore non sia già associato al centro (per sicurezza)
+      const associazioneEsistenteQuery = `
+        SELECT 1 FROM UtentiCentri
+        WHERE utente_id = ? AND centro_id = ?
+      `;
+      
+      const associazioneEsistente = await db.get(associazioneEsistenteQuery, [req.user.id, result.lastID]);
+      
+      if (!associazioneEsistente) {
+        // Crea l'associazione
+        const insertAssociazioneQuery = `
+          INSERT INTO UtentiCentri (
+            utente_id, centro_id, ruolo_specifico
+          ) VALUES (?, ?, ?)
+        `;
+        
+        await db.run(insertAssociazioneQuery, [req.user.id, result.lastID, 'SuperAdmin']);
+        logger.info(`Amministratore ID ${req.user.id} associato con successo al centro ID ${result.lastID}`);
+      }
     }
     
     // Recupera il centro appena creato - senza join per essere sicuri di ottenerlo
@@ -499,6 +620,7 @@ const getCentriTipi = async (req, res, next) => {
 const getCentroUtenti = async (req, res, next) => {
   try {
     const { id } = req.params;
+    const isAdmin = req.user.ruolo === 'Amministratore';
     
     // Verifica che il centro esista
     const centroQuery = `SELECT * FROM Centri WHERE id = ?`;
@@ -508,10 +630,31 @@ const getCentroUtenti = async (req, res, next) => {
       throw new ApiError(404, 'Centro non trovato');
     }
     
+    // Se è un amministratore, verificare che abbia accesso a questo centro
+    if (isAdmin) {
+      const accessQuery = `
+        SELECT 1 FROM UtentiCentri 
+        WHERE utente_id = ? AND centro_id = ?
+      `;
+      
+      // Verifica se ci sono associazioni per questo centro
+      const existsQuery = `
+        SELECT 1 FROM UtentiCentri 
+        WHERE centro_id = ?
+      `;
+      
+      const hasAccess = await db.get(accessQuery, [req.user.id, id]);
+      const existsAssociations = await db.get(existsQuery, [id]);
+      
+      // Se ci sono associazioni ma l'amministratore non ha accesso, blocca la richiesta
+      if (existsAssociations && !hasAccess) {
+        throw new ApiError(403, 'Non hai accesso a questo centro');
+      }
+    }
+    
     // Ottieni gli utenti associati
     const utentiQuery = `
-      SELECT u.id, u.nome, u.cognome, u.email, u.ruolo, 
-             uc.data_associazione
+      SELECT u.id, u.nome, u.cognome, u.email, u.ruolo
       FROM Utenti u
       JOIN UtentiCentri uc ON u.id = uc.utente_id
       WHERE uc.centro_id = ?
@@ -564,8 +707,8 @@ const associaUtente = async (req, res, next) => {
     // Crea l'associazione
     const insertQuery = `
       INSERT INTO UtentiCentri (
-        utente_id, centro_id, data_associazione
-      ) VALUES (?, ?, CURRENT_TIMESTAMP)
+        utente_id, centro_id
+      ) VALUES (?, ?)
     `;
     
     await db.run(insertQuery, [utente_id, id]);
@@ -780,6 +923,170 @@ const getCentroStatistiche = async (req, res, next) => {
   }
 };
 
+/**
+ * Associa più operatori e/o amministratori a un centro in una singola operazione
+ */
+const associaOperatori = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { operatori_ids = [], amministratori_ids = [] } = req.body;
+    const isAdmin = req.user.ruolo === 'Amministratore';
+    
+    // Verifica che il centro esista
+    const centroQuery = `SELECT * FROM Centri WHERE id = ?`;
+    const centro = await db.get(centroQuery, [id]);
+    
+    if (!centro) {
+      throw new ApiError(404, 'Centro non trovato');
+    }
+    
+    // Verifica che l'amministratore abbia i permessi necessari (deve essere SuperAdmin del centro)
+    const permessiQuery = `
+      SELECT ruolo_specifico 
+      FROM UtentiCentri 
+      WHERE utente_id = ? AND centro_id = ?
+    `;
+    
+    const permessi = await db.get(permessiQuery, [req.user.id, id]);
+    const isSuperAdmin = permessi && permessi.ruolo_specifico === 'SuperAdmin';
+    
+    // Solo il SuperAdmin può aggiungere altri amministratori
+    if (amministratori_ids.length > 0 && !isSuperAdmin) {
+      throw new ApiError(403, 'Solo il SuperAdmin del centro può aggiungere altri amministratori');
+    }
+    
+    // Se è un amministratore, verificare che abbia accesso a questo centro
+    if (isAdmin && !isSuperAdmin) {
+      const accessQuery = `
+        SELECT 1 FROM UtentiCentri 
+        WHERE utente_id = ? AND centro_id = ?
+      `;
+      
+      // Verifica se ci sono associazioni per questo centro
+      const existsQuery = `
+        SELECT 1 FROM UtentiCentri 
+        WHERE centro_id = ?
+      `;
+      
+      const hasAccess = await db.get(accessQuery, [req.user.id, id]);
+      const existsAssociations = await db.get(existsQuery, [id]);
+      
+      // Se ci sono associazioni ma l'amministratore non ha accesso, blocca la richiesta
+      if (existsAssociations && !hasAccess) {
+        throw new ApiError(403, 'Non hai accesso a questo centro');
+      }
+    }
+    
+    // Ottieni le associazioni esistenti, divise per ruolo specifico
+    const associazioniQuery = `
+      SELECT uc.utente_id, u.ruolo, uc.ruolo_specifico
+      FROM UtentiCentri uc
+      JOIN Utenti u ON uc.utente_id = u.id
+      WHERE uc.centro_id = ?
+    `;
+    
+    const associazioni = await db.all(associazioniQuery, [id]);
+    const superAdmin = associazioni
+      .filter(a => a.ruolo_specifico === 'SuperAdmin')
+      .map(a => a.utente_id);
+    
+    logger.info(`Centro ${id}: trovato ${superAdmin.length} SuperAdmin e ${associazioni.length - superAdmin.length} altre associazioni`);
+    
+    // Rimuovi solo le associazioni degli operatori e amministratori normali, preservando il SuperAdmin
+    const deleteOperatoriQuery = `
+      DELETE FROM UtentiCentri
+      WHERE centro_id = ? AND utente_id IN (
+        SELECT uc.utente_id
+        FROM UtentiCentri uc
+        JOIN Utenti u ON uc.utente_id = u.id
+        WHERE uc.centro_id = ? AND u.ruolo = 'Operatore'
+      )
+    `;
+    
+    const deleteAmministratoriQuery = `
+      DELETE FROM UtentiCentri
+      WHERE centro_id = ? AND utente_id IN (
+        SELECT uc.utente_id
+        FROM UtentiCentri uc
+        JOIN Utenti u ON uc.utente_id = u.id
+        WHERE uc.centro_id = ? AND u.ruolo = 'Amministratore' AND uc.ruolo_specifico IS NULL
+      )
+    `;
+    
+    // Esegui le query di eliminazione solo se l'utente è SuperAdmin
+    if (isSuperAdmin) {
+      await db.run(deleteOperatoriQuery, [id, id]);
+      await db.run(deleteAmministratoriQuery, [id, id]);
+    } else {
+      // Se non è SuperAdmin, può gestire solo gli operatori
+      await db.run(deleteOperatoriQuery, [id, id]);
+    }
+    
+    // Verifica che tutti gli utenti esistano e associali al centro
+    const operatoriPromises = operatori_ids.map(async (utente_id) => {
+      const utenteQuery = `SELECT * FROM Utenti WHERE id = ? AND ruolo = 'Operatore'`;
+      const utente = await db.get(utenteQuery, [utente_id]);
+      
+      if (!utente) {
+        logger.warn(`Utente ID ${utente_id} non trovato o non è un operatore, salto associazione`);
+        return null;
+      }
+      
+      // Crea la nuova associazione per l'operatore
+      const insertQuery = `
+        INSERT OR IGNORE INTO UtentiCentri (utente_id, centro_id)
+        VALUES (?, ?)
+      `;
+      
+      await db.run(insertQuery, [utente_id, id]);
+      return utente_id;
+    });
+    
+    // Se l'utente è SuperAdmin, può aggiungere anche amministratori
+    let amministratoriPromises = [];
+    if (isSuperAdmin && amministratori_ids.length > 0) {
+      amministratoriPromises = amministratori_ids.map(async (utente_id) => {
+        const utenteQuery = `SELECT * FROM Utenti WHERE id = ? AND ruolo = 'Amministratore'`;
+        const utente = await db.get(utenteQuery, [utente_id]);
+        
+        if (!utente) {
+          logger.warn(`Utente ID ${utente_id} non trovato o non è un amministratore, salto associazione`);
+          return null;
+        }
+        
+        // Non permettere di modificare il ruolo di SuperAdmin
+        if (superAdmin.includes(Number(utente_id))) {
+          logger.warn(`Utente ID ${utente_id} è già SuperAdmin, salto modifica`);
+          return utente_id;
+        }
+        
+        // Crea la nuova associazione per l'amministratore (senza ruolo_specifico)
+        const insertQuery = `
+          INSERT OR IGNORE INTO UtentiCentri (utente_id, centro_id)
+          VALUES (?, ?)
+        `;
+        
+        await db.run(insertQuery, [utente_id, id]);
+        return utente_id;
+      });
+    }
+    
+    // Attendi il completamento di tutte le associazioni
+    const operatoriAssociati = (await Promise.all(operatoriPromises)).filter(Boolean);
+    const amministratoriAssociati = (await Promise.all(amministratoriPromises)).filter(Boolean);
+    
+    res.json({
+      message: 'Utenti associati al centro con successo',
+      centro_id: parseInt(id),
+      operatori_ids: operatoriAssociati.map(id => parseInt(id)),
+      amministratori_ids: amministratoriAssociati.map(id => parseInt(id)),
+      super_admin_preservato: superAdmin.length > 0
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getCentri,
   getCentroById,
@@ -790,5 +1097,6 @@ module.exports = {
   getCentroUtenti,
   associaUtente,
   rimuoviUtente,
-  getCentroStatistiche
-}; 
+  getCentroStatistiche,
+  associaOperatori
+};

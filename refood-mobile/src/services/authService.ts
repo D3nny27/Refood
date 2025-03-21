@@ -214,6 +214,16 @@ export const loginUser = async (email: string, password: string): Promise<LoginR
     if (axios.isAxiosError(error) && error.response) {
       console.error('Status code:', error.response.status);
       console.error('Dati risposta errore:', error.response.data);
+      
+      // Gestisci specificamente gli errori 401 per credenziali errate
+      if (error.response.status === 401) {
+        throw new Error('Credenziali non valide');
+      }
+      
+      // Se il server ha fornito un messaggio di errore, usalo
+      if (error.response.data && error.response.data.message) {
+        throw new Error(error.response.data.message);
+      }
     }
     
     throw error;

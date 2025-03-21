@@ -303,7 +303,7 @@ export default function ModificaCentroScreen() {
           loading={submitting}
           disabled={submitting}
         >
-          Aggiorna Centro
+          <Text>Aggiorna Centro</Text>
         </Button>
         <Button
           mode="outlined"
@@ -311,7 +311,7 @@ export default function ModificaCentroScreen() {
           style={styles.cancelButton}
           disabled={submitting}
         >
-          Annulla
+          <Text>Annulla</Text>
         </Button>
       </View>
     </KeyboardAvoidingView>

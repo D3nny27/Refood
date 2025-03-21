@@ -147,39 +147,105 @@ exports.getAllUsers = async (req, res, next) => {
   try {
     const { ruolo, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
+    const currentUserId = req.user.id;
+    const isAdmin = req.user.ruolo === 'Amministratore';
     
-    // Costruzione della query base
-    let query = `
-      SELECT id, email, nome, cognome, ruolo, ultimo_accesso, creato_il
-      FROM Utenti
-    `;
-    
-    // Array per i parametri della query
+    // Costruzione della query base - diversa in base al ruolo
+    let query, countQuery;
     const params = [];
     
-    // Aggiunta dei filtri
+    if (isAdmin) {
+      // Per gli amministratori, mostra gli utenti che ha creato o associati ai suoi centri
+      query = `
+        SELECT DISTINCT u.id, u.email, u.nome, u.cognome, u.ruolo, u.ultimo_accesso, u.creato_il
+        FROM Utenti u
+        LEFT JOIN UtentiCentri uc1 ON u.id = uc1.utente_id
+        WHERE 1=1
+        AND (
+          -- Utenti associati ai centri dell'amministratore corrente
+          EXISTS (
+            SELECT 1 FROM UtentiCentri uc_admin
+            WHERE uc_admin.utente_id = ?
+            AND EXISTS (
+              SELECT 1 FROM UtentiCentri uc_user
+              WHERE uc_user.utente_id = u.id
+              AND uc_user.centro_id = uc_admin.centro_id
+            )
+          )
+          -- Oppure utenti creati dall'amministratore (qui si potrebbe aggiungere un campo creato_da nella tabella Utenti)
+          OR u.id = ? -- Include sempre l'amministratore stesso
+        )
+      `;
+      
+      params.push(currentUserId, currentUserId);
+      
+      // Query per contare il totale dei risultati
+      countQuery = `
+        SELECT COUNT(DISTINCT u.id) as total
+        FROM Utenti u
+        LEFT JOIN UtentiCentri uc1 ON u.id = uc1.utente_id
+        WHERE 1=1
+        AND (
+          EXISTS (
+            SELECT 1 FROM UtentiCentri uc_admin
+            WHERE uc_admin.utente_id = ?
+            AND EXISTS (
+              SELECT 1 FROM UtentiCentri uc_user
+              WHERE uc_user.utente_id = u.id
+              AND uc_user.centro_id = uc_admin.centro_id
+            )
+          )
+          OR u.id = ?
+        )
+      `;
+      
+      params.push(currentUserId, currentUserId);
+    } else {
+      // Per gli altri ruoli (non dovrebbe mai accadere dato il middleware authorize)
+      query = `
+        SELECT id, email, nome, cognome, ruolo, ultimo_accesso, creato_il
+        FROM Utenti
+        WHERE 1=1
+      `;
+      
+      countQuery = `SELECT COUNT(*) as total FROM Utenti WHERE 1=1`;
+    }
+    
+    // Aggiunta dei filtri per ruolo
     if (ruolo) {
-      query += ` WHERE ruolo = ?`;
+      query += ` AND u.ruolo = ?`;
+      countQuery += ` AND u.ruolo = ?`;
       params.push(ruolo);
     }
     
-    // Query per contare il totale dei risultati
-    const countQuery = `SELECT COUNT(*) as total FROM Utenti ${ruolo ? 'WHERE ruolo = ?' : ''}`;
-    
     // Aggiunta dell'ordinamento e della paginazione
-    query += ` ORDER BY creato_il DESC LIMIT ? OFFSET ?`;
+    query += ` ORDER BY u.creato_il DESC LIMIT ? OFFSET ?`;
     params.push(parseInt(limit), offset);
     
     // Esecuzione delle query
-    const countResult = await db.get(countQuery, ruolo ? [ruolo] : []);
+    const countParams = params.slice(0, params.length - 2); // Rimuovi i parametri di LIMIT e OFFSET
+    const countResult = await db.get(countQuery, countParams);
     const users = await db.all(query, params);
+    
+    // Per ogni utente, recupera i centri associati
+    const usersWithCentri = await Promise.all(users.map(async (user) => {
+      const centri = await db.all(
+        `SELECT c.id, c.nome, c.tipo
+         FROM Centri c
+         JOIN UtentiCentri uc ON c.id = uc.centro_id
+         WHERE uc.utente_id = ?`,
+        [user.id]
+      );
+      
+      return { ...user, centri };
+    }));
     
     // Calcolo info di paginazione
     const total = countResult.total;
     const pages = Math.ceil(total / limit);
     
     res.json({
-      data: users,
+      data: usersWithCentri,
       pagination: {
         total,
         pages,

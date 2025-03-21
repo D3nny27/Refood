@@ -195,27 +195,38 @@ export default function LottiScreen() {
             <Chip 
               style={[
                 styles.chip, 
-                { backgroundColor: filtri.stato === 'Verde' 
-                  ? STATUS_COLORS.SUCCESS 
-                  : filtri.stato === 'Arancione' 
-                    ? STATUS_COLORS.WARNING 
-                    : STATUS_COLORS.ERROR 
+                { 
+                  backgroundColor: (filtri.stato === 'Verde' 
+                    ? STATUS_COLORS.SUCCESS 
+                    : filtri.stato === 'Arancione' 
+                      ? STATUS_COLORS.WARNING 
+                      : STATUS_COLORS.ERROR) + '20',
                 }
               ]}
-              textStyle={styles.whiteChipText}
+              textStyle={[
+                styles.chipText,
+                {
+                  color: filtri.stato === 'Verde' 
+                    ? STATUS_COLORS.SUCCESS 
+                    : filtri.stato === 'Arancione' 
+                      ? STATUS_COLORS.WARNING 
+                      : STATUS_COLORS.ERROR
+                }
+              ]}
               onClose={() => setFiltri({ ...filtri, stato: undefined })}
             >
-              {filtri.stato}
+              Stato: {filtri.stato}
             </Chip>
           )}
           
           {filtri.cerca && (
             <Chip 
               style={styles.chip}
+              textStyle={styles.chipText}
               onClose={() => setFiltri({ ...filtri, cerca: undefined })}
               icon="magnify"
             >
-              "{filtri.cerca}"
+              Cerca: "{filtri.cerca}"
             </Chip>
           )}
           
@@ -224,8 +235,9 @@ export default function LottiScreen() {
               mode="text"
               onPress={resetFiltri}
               style={styles.resetButton}
+              labelStyle={styles.resetButtonLabel}
             >
-              Resetta
+              Resetta filtri
             </Button>
           )}
         </Card.Content>
@@ -355,19 +367,36 @@ const styles = StyleSheet.create({
   filterChips: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingTop: 8,
-    paddingBottom: 8,
-  } as any,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
   chip: {
-    margin: 4,
-  } as any,
+    marginRight: 8,
+    marginBottom: 8,
+    height: 36,
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chipText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
   whiteChipText: {
-    color: '#fff'
-  } as any,
+    color: 'white',
+    fontWeight: 'bold',
+  },
   resetButton: {
-    alignSelf: 'flex-end',
-    marginTop: 4,
-  } as any,
+    marginVertical: 0,
+    paddingVertical: 0,
+    height: 36,
+    alignSelf: 'center',
+  },
+  resetButtonLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',

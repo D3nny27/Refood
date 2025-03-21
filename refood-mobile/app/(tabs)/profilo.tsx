@@ -138,7 +138,7 @@ export default function ProfiloScreen() {
               description="Amministra gli account utente"
               left={props => <List.Icon {...props} icon="account-group" />}
               right={props => <List.Icon {...props} icon="chevron-right" />}
-              onPress={() => Alert.alert('Info', 'Funzionalità in sviluppo')}
+              onPress={() => router.push('/admin/utenti')}
               style={styles.listItem}
             />
           </Card.Content>

@@ -7,6 +7,8 @@ import { AuthProvider, useAuth } from '../src/context/AuthContext';
 import LoginScreen from '../src/screens/LoginScreen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../src/config/constants';
+import Toast from 'react-native-toast-message';
+import logger from '../src/utils/logger';
 
 // Definizione del tema personalizzato per react-native-paper
 const theme = {
@@ -25,6 +27,7 @@ export default function RootLayout() {
       <AuthProvider>
         <RootLayoutNav />
       </AuthProvider>
+      <Toast />
     </PaperProvider>
   );
 }
@@ -36,8 +39,8 @@ function RootLayoutNav() {
 
   // Log per debug
   useEffect(() => {
-    console.log('RootLayoutNav - isAuthenticated:', isAuthenticated);
-    console.log('RootLayoutNav - user:', user ? `${user.email} (${user.ruolo})` : 'null');
+    logger.log('RootLayoutNav - isAuthenticated:', isAuthenticated);
+    logger.log('RootLayoutNav - user:', user ? `${user.email} (${user.ruolo})` : 'null');
   }, [user, isAuthenticated]);
 
   // Effetto per gestire cambiamenti di stato dell'app
@@ -45,9 +48,9 @@ function RootLayoutNav() {
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
         // L'app è tornata in primo piano, aggiorna lo stato dell'utente
-        console.log('App tornata attiva, verifico autenticazione...');
+        logger.log('App tornata attiva, verifico autenticazione...');
         refreshUserStatus().catch(err => {
-          console.error('Errore durante il refresh al ritorno attivo:', err);
+          logger.error('Errore durante il refresh al ritorno attivo:', err);
         });
       }
     };
@@ -55,9 +58,9 @@ function RootLayoutNav() {
     // Per il web, aggiungiamo listener per visibilitychange
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        console.log('Documento tornato visibile, verifico autenticazione...');
+        logger.log('Documento tornato visibile, verifico autenticazione...');
         refreshUserStatus().catch(err => {
-          console.error('Errore durante il refresh dopo visibilitychange:', err);
+          logger.error('Errore durante il refresh dopo visibilitychange:', err);
         });
       }
     };
@@ -117,7 +120,7 @@ function RootLayoutNav() {
 
   // Se l'utente non è autenticato, mostra la schermata di login
   if (!isAuthenticated || !user) {
-    console.log('RootLayoutNav - Utente non autenticato, mostrando LoginScreen');
+    logger.log('RootLayoutNav - Utente non autenticato, mostrando LoginScreen');
     
     // Verifica aggiuntiva asincrona, ma senza bloccare il rendering
     if (!isLoading) {
@@ -129,11 +132,11 @@ function RootLayoutNav() {
           
           // Se abbiamo dati utente e token, ma lo stato è non autenticato, prova a forzare un refresh
           if (userData && token && !isAuthenticated) {
-            console.log('RootLayoutNav - Dati utente trovati in storage nonostante stato non autenticato, forzando refresh...');
+            logger.log('RootLayoutNav - Dati utente trovati in storage nonostante stato non autenticato, forzando refresh...');
             refreshUserStatus();
           }
         } catch (error) {
-          console.error('RootLayoutNav - Errore verifica supplementare:', error);
+          logger.error('RootLayoutNav - Errore verifica supplementare:', error);
         }
       })();
     }
@@ -147,7 +150,7 @@ function RootLayoutNav() {
   }
 
   // Se l'utente è autenticato, mostra il contenuto principale dell'app
-  console.log('RootLayoutNav - Utente autenticato, mostrando (tabs)');
+  logger.log('RootLayoutNav - Utente autenticato, mostrando (tabs)');
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />

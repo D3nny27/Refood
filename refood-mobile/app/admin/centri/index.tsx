@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, Alert } from 'react-native';
-import { Text, Card, Divider, FAB, Button, ActivityIndicator, Searchbar, Chip, IconButton } from 'react-native-paper';
+import { Text, Card, Divider, FAB, Button, ActivityIndicator, Searchbar, Chip, IconButton, Title, Paragraph, Badge } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { PRIMARY_COLOR, STORAGE_KEYS, API_URL } from '../../../src/config/constants';
 import { useAuth } from '../../../src/context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
+import Toast from 'react-native-toast-message';
 
 // Interfaccia per il tipo Centro
 interface Centro {
@@ -116,79 +117,99 @@ export default function GestioneCentriScreen() {
     });
   };
 
+  // Funzione per associare l'amministratore corrente al centro
+  const associaAmministratore = async (centro: Centro) => {
+    try {
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      const response = await fetch(`${API_URL}/centri/${centro.id}/utenti/${user?.id}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        if (response.status === 409) {
+          // Già associato, mostra un messaggio informativo
+          Toast.show({
+            type: 'info',
+            text1: 'Informazione',
+            text2: 'Sei già associato a questo centro',
+            visibilityTime: 3000,
+          });
+          return;
+        }
+        throw new Error(errorData.message || `Errore durante l'associazione (${response.status})`);
+      }
+      
+      Toast.show({
+        type: 'success',
+        text1: 'Associazione completata',
+        text2: `Sei stato associato al centro ${centro.nome}`,
+        visibilityTime: 3000,
+      });
+      
+      // Ricarica la lista
+      onRefresh();
+    } catch (error: any) {
+      console.error('Errore nell\'associazione dell\'amministratore:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Errore',
+        text2: error.message || 'Si è verificato un errore durante l\'associazione',
+        visibilityTime: 4000,
+      });
+    }
+  };
+
   // Renderizza un item della lista dei centri
   const renderCentroItem = ({ item }: { item: Centro }) => {
-    // Assicurati che tutti i campi siano presenti o usa valori di fallback
-    const nome = item.nome || 'Centro senza nome';
-    const indirizzo = item.indirizzo || 'Indirizzo non specificato';
-    const telefono = item.telefono || '';
-    const email = item.email || '';
-    
-    // Gestisci diversi formati del campo tipo
-    const tipoDisplay = item.tipo || item.tipo_descrizione || 'Generico';
-
     return (
-    <Card style={styles.card}>
-      <Card.Content>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>{nome}</Text>
-          <Chip icon="domain" style={styles.typeChip}>{tipoDisplay}</Chip>
-        </View>
-        
-        <Divider style={styles.divider} />
-        
-        <View style={styles.cardBody}>
-          <View style={styles.infoRow}>
-            <MaterialCommunityIcons name="map-marker" size={16} color="#666" />
-            <Text style={styles.infoText}>{indirizzo}</Text>
-          </View>
-          
-          {telefono && (
-            <View style={styles.infoRow}>
-              <MaterialCommunityIcons name="phone" size={16} color="#666" />
-              <Text style={styles.infoText}>{telefono}</Text>
+      <Card style={styles.card}>
+        <Card.Content>
+          <View style={styles.cardHeader}>
+            <View style={styles.titleContainer}>
+              <Title>{item.nome}</Title>
+              <Paragraph>{item.indirizzo}</Paragraph>
+              <Chip style={styles.tipoChip}>{item.tipo_descrizione || item.tipo}</Chip>
             </View>
-          )}
-          
-          {email && (
-            <View style={styles.infoRow}>
-              <MaterialCommunityIcons name="email" size={16} color="#666" />
-              <Text style={styles.infoText}>{email}</Text>
-            </View>
-          )}
-          
-          <View style={styles.infoRow}>
-            <MaterialCommunityIcons name="account-group" size={16} color="#666" />
-            <Text style={styles.infoText}>
-              {item.operatori_assegnati 
-                ? `${item.operatori_assegnati} operatori assegnati` 
-                : 'Nessun operatore assegnato'}
-            </Text>
+            {item.operatori_assegnati && (
+              <Badge style={styles.badge} size={24}>
+                {item.operatori_assegnati}
+              </Badge>
+            )}
           </View>
-        </View>
-      </Card.Content>
-      
-      <Card.Actions style={styles.cardActions}>
-        <Button 
-          mode="text" 
-          onPress={() => editCentro(item)}
-          icon="pencil"
-        >
-          Modifica
-        </Button>
-        <Button 
-          mode="outlined" 
-          onPress={() => manageOperatori(item)}
-          icon="account-multiple-plus"
-        >
-          Gestisci Operatori
-        </Button>
-      </Card.Actions>
-    </Card>
-  );
-}
+        </Card.Content>
+        <Card.Actions style={styles.cardActions}>
+          <Button 
+            icon="account-group" 
+            mode="text" 
+            onPress={() => manageOperatori(item)}
+          >
+            <Text>Operatori</Text>
+          </Button>
+          <Button 
+            icon="pencil" 
+            mode="text" 
+            onPress={() => editCentro(item)}
+          >
+            <Text>Modifica</Text>
+          </Button>
+          <Button 
+            icon="link-variant" 
+            mode="text" 
+            onPress={() => associaAmministratore(item)}
+          >
+            <Text>Associa</Text>
+          </Button>
+        </Card.Actions>
+      </Card>
+    );
+  };
 
-return (
+  return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Searchbar
@@ -203,7 +224,7 @@ return (
           icon="refresh"
           style={{ marginTop: 8 }}
         >
-          Ricarica
+          <Text>Ricarica</Text>
         </Button>
       </View>
       
@@ -237,7 +258,7 @@ return (
                   onPress={() => setSearchQuery('')}
                   style={styles.resetButton}
                 >
-                  Resetta ricerca
+                  <Text>Resetta ricerca</Text>
                 </Button>
               )}
             </View>
@@ -307,28 +328,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
+  titleContainer: {
+    flexDirection: 'column',
   },
-  typeChip: {
+  tipoChip: {
     backgroundColor: '#e8f5e9',
   },
   divider: {
     marginVertical: 8,
-  },
-  cardBody: {
-    marginTop: 8,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  infoText: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: '#666',
   },
   cardActions: {
     justifyContent: 'flex-end',
@@ -341,5 +348,9 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: PRIMARY_COLOR,
+  },
+  badge: {
+    backgroundColor: '#4caf50',
+    marginLeft: 8,
   },
 }); 

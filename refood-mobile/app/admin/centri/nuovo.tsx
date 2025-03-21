@@ -249,7 +249,7 @@ export default function NuovoCentroScreen() {
           contentStyle={styles.buttonContent}
           icon="close"
         >
-          Annulla
+          <Text>Annulla</Text>
         </Button>
         <Button
           mode="contained"
@@ -260,7 +260,7 @@ export default function NuovoCentroScreen() {
           disabled={loading}
           icon="check"
         >
-          Salva
+          <Text>Salva</Text>
         </Button>
       </View>
     </KeyboardAvoidingView>

@@ -306,7 +306,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch (err: any) {
       console.error('Errore durante il login:', err);
-      setError(err.message || 'Errore durante il login');
+      
+      // Gestione migliorata degli errori
+      if (err.response && err.response.status === 401) {
+        setError('Email o password non corretti. Riprova.');
+      } else if (err.message && err.message.includes('Network Error')) {
+        setError('Impossibile connettersi al server. Verifica la tua connessione internet.');
+      } else if (err.code === 'ECONNABORTED') {
+        setError('La richiesta è scaduta. Il server potrebbe essere sovraccarico.');
+      } else if (err.message && err.message.toLowerCase().includes('credenziali')) {
+        setError('Email o password non corretti. Riprova.');
+      } else {
+        setError('Si è verificato un errore durante il login. Riprova più tardi.');
+      }
+      
       return false;
     } finally {
       setIsLoading(false);

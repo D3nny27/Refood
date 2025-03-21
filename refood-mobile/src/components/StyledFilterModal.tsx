@@ -64,12 +64,16 @@ const StyledFilterModal: React.FC<StyledFilterModalProps> = ({
                         style={[
                           styles.stateChip, 
                           {
-                            backgroundColor: STATUS_COLORS.SUCCESS,
+                            backgroundColor: selectedStato === 'Verde' ? STATUS_COLORS.SUCCESS : STATUS_COLORS.SUCCESS + '20',
                             borderColor: STATUS_COLORS.SUCCESS
                           }
                         ]}
                         selectedColor="#fff"
-                        textStyle={{color: '#fff', fontWeight: 'bold'}}
+                        textStyle={{
+                          color: selectedStato === 'Verde' ? '#fff' : STATUS_COLORS.SUCCESS, 
+                          fontWeight: 'bold',
+                          fontSize: 14
+                        }}
                         mode="flat"
                         showSelectedCheck
                       >
@@ -81,12 +85,16 @@ const StyledFilterModal: React.FC<StyledFilterModalProps> = ({
                         style={[
                           styles.stateChip, 
                           {
-                            backgroundColor: STATUS_COLORS.WARNING,
+                            backgroundColor: selectedStato === 'Arancione' ? STATUS_COLORS.WARNING : STATUS_COLORS.WARNING + '20',
                             borderColor: STATUS_COLORS.WARNING
                           }
                         ]}
                         selectedColor="#fff"
-                        textStyle={{color: '#fff', fontWeight: 'bold'}}
+                        textStyle={{
+                          color: selectedStato === 'Arancione' ? '#fff' : STATUS_COLORS.WARNING, 
+                          fontWeight: 'bold',
+                          fontSize: 14
+                        }}
                         mode="flat"
                         showSelectedCheck
                       >
@@ -98,12 +106,16 @@ const StyledFilterModal: React.FC<StyledFilterModalProps> = ({
                         style={[
                           styles.stateChip, 
                           {
-                            backgroundColor: STATUS_COLORS.ERROR,
+                            backgroundColor: selectedStato === 'Rosso' ? STATUS_COLORS.ERROR : STATUS_COLORS.ERROR + '20',
                             borderColor: STATUS_COLORS.ERROR
                           }
                         ]}
                         selectedColor="#fff"
-                        textStyle={{color: '#fff', fontWeight: 'bold'}}
+                        textStyle={{
+                          color: selectedStato === 'Rosso' ? '#fff' : STATUS_COLORS.ERROR, 
+                          fontWeight: 'bold',
+                          fontSize: 14
+                        }}
                         mode="flat"
                         showSelectedCheck
                       >
@@ -203,10 +215,17 @@ const styles = StyleSheet.create({
   stateFilters: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: 16,
+    marginVertical: 12,
+    justifyContent: 'space-around',
   },
   stateChip: {
-    margin: 4,
+    marginHorizontal: 4,
+    marginVertical: 6,
+    height: 40,
+    paddingHorizontal: 8,
+    minWidth: 90,
+    justifyContent: 'center',
+    borderWidth: 1,
   },
   stateDescriptions: {
     backgroundColor: '#f5f5f5',

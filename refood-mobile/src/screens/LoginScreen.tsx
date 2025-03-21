@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Image, ImageBackground } from 'react-native';
+import { View, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Image, ImageBackground, Animated } from 'react-native';
 import { TextInput, Button, Text, HelperText, Surface, Card, Divider } from 'react-native-paper';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { PRIMARY_COLOR } from '../config/constants';
+import Toast from 'react-native-toast-message';
+import logger from '../utils/logger';
 
 const LoginScreen = () => {
   const [email, setEmail] = useState('');
@@ -12,11 +14,12 @@ const LoginScreen = () => {
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const { login, error, clearError, isLoading, isAuthenticated } = useAuth();
+  const [fadeAnim] = useState(new Animated.Value(0)); // Animazione per il messaggio di errore
 
   useEffect(() => {
-    console.log('LoginScreen - isAuthenticated cambiato:', isAuthenticated);
+    logger.log('LoginScreen - isAuthenticated cambiato:', isAuthenticated);
     if (isAuthenticated) {
-      console.log('LoginScreen - Utente autenticato, dovrebbe reindirizzare automaticamente');
+      logger.log('LoginScreen - Utente autenticato, dovrebbe reindirizzare automaticamente');
     }
   }, [isAuthenticated]);
 
@@ -24,6 +27,28 @@ const LoginScreen = () => {
     // Pulisci gli errori quando il componente viene montato
     clearError();
   }, []);
+
+  // Mostra Toast quando cambia l'errore
+  useEffect(() => {
+    if (error) {
+      // Mostra Toast per l errore
+      Toast.show({
+        type: "error",
+        position: "bottom",
+        text1: "Accesso non riuscito",
+        text2: error,
+        visibilityTime: 4000,
+        autoHide: true,
+      });
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      fadeAnim.setValue(0);
+    }
+  }, [error, fadeAnim]);
 
   const validateEmail = () => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -58,9 +83,9 @@ const LoginScreen = () => {
     const isPasswordValid = validatePassword();
 
     if (isEmailValid && isPasswordValid) {
-      console.log('LoginScreen - Tentativo di login con:', email);
+      logger.log('LoginScreen - Tentativo di login con:', email);
       const success = await login(email, password);
-      console.log('LoginScreen - Risultato login:', success ? 'successo' : 'fallito');
+      logger.log('LoginScreen - Risultato login:', success ? 'successo' : 'fallito');
     }
   };
 
@@ -128,13 +153,6 @@ const LoginScreen = () => {
                   {passwordError ? <HelperText type="error">{passwordError}</HelperText> : null}
                 </View>
 
-                {error ? (
-                  <Surface style={styles.errorContainer} elevation={1}>
-                    <Ionicons name="alert-circle" size={18} color="#f44336" style={styles.errorIcon} />
-                    <Text style={styles.errorText}>{error}</Text>
-                  </Surface>
-                ) : null}
-
                 <Button
                   mode="contained"
                   onPress={handleLogin}
@@ -149,7 +167,7 @@ const LoginScreen = () => {
                 
                 <Button
                   mode="text"
-                  onPress={() => console.log('Password dimenticata')}
+                  onPress={() => logger.log('Password dimenticata')}
                   style={styles.forgotPasswordButton}
                 >
                   Password dimenticata?
@@ -227,20 +245,30 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   } as any,
   errorContainer: {
+    marginVertical: 16,
+    width: '100%',
+  } as any,
+  errorSurface: {
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+    borderLeftWidth: 4,
+    borderLeftColor: '#f44336',
+  } as any,
+  errorContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffebee',
-    padding: 10,
-    borderRadius: 5,
-    marginBottom: 15,
-    marginTop: 5,
+    backgroundColor: '#fff9fa',
+    padding: 12,
   } as any,
   errorIcon: {
-    marginRight: 8,
+    marginRight: 10,
   } as any,
   errorText: {
-    color: '#f44336',
+    color: '#d32f2f',
     flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
   } as any,
   loginButton: {
     marginTop: 20,

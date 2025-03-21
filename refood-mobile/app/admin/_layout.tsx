@@ -35,6 +35,31 @@ export default function AdminLayout() {
           fontWeight: 'bold',
         },
       }}
-    />
+    >
+      <Stack.Screen
+        name="index"
+        options={{
+          title: "Dashboard Admin",
+        }}
+      />
+      <Stack.Screen
+        name="centri"
+        options={{
+          title: "Gestione Centri",
+        }}
+      />
+      <Stack.Screen
+        name="utenti"
+        options={{
+          title: "Gestione Utenti",
+        }}
+      />
+      <Stack.Screen
+        name="utenti/nuovo"
+        options={{
+          title: "Nuovo Utente",
+        }}
+      />
+    </Stack>
   );
 } 

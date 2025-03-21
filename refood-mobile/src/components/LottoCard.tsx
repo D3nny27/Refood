@@ -179,11 +179,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   statusChip: {
-    height: 24,
+    height: 28,
+    paddingHorizontal: 8,
+    minWidth: 80,
+    justifyContent: 'center',
   },
   statusChipText: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: 'bold',
+    textAlign: 'center',
   },
 });
 
