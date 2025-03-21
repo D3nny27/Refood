@@ -200,6 +200,10 @@ Il sistema è progettato per essere facilmente scalabile e manutenibile:
 ## Funzionalità Future Pianificate
 
 - **Analisi Avanzate**: Dashboard con metriche di impatto ambientale
+  - Grafici di trend sui lotti salvati
+  - Metriche di CO2 risparmiata
+  - Analisi stagionale della disponibilità alimentare
+  - Reports esportabili in PDF e CSV
 - **Integrazione Mappe**: Visualizzazione geografica dei centri
 - **Notifiche Push**: Avvisi in tempo reale per eventi importanti
 - **Condivisione Social**: Promozione dell'impatto positivo
