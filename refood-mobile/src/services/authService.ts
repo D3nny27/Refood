@@ -290,4 +290,32 @@ export const registerUser = async (userData: {
     }
     throw new Error('Si è verificato un errore durante la registrazione');
   }
+};
+
+/**
+ * Ottiene il token di autenticazione, controllando prima AUTH_TOKEN e poi USER_TOKEN
+ * Aggiunge un log per il debug
+ */
+export const getAuthToken = async (): Promise<string | null> => {
+  try {
+    // Prima controlliamo il token standard di autenticazione
+    let token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+    
+    // Se non esiste, proviamo con il token utente legacy
+    if (!token) {
+      token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      if (token) {
+        console.log('Utilizzato USER_TOKEN come fallback');
+      }
+    }
+    
+    if (!token) {
+      console.warn('Nessun token di autenticazione trovato in storage');
+    }
+    
+    return token;
+  } catch (error) {
+    console.error('Errore nel recupero del token di autenticazione:', error);
+    return null;
+  }
 }; 

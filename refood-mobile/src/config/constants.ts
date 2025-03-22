@@ -13,8 +13,10 @@ const LOCAL_IP = '192.168.123.160'; // Indirizzo IP aggiornato
 // Porta del server backend
 const SERVER_PORT = '3000';
 
-// Costruzione dell'URL in base alla piattaforma
-export let API_URL = `http://localhost:${SERVER_PORT}/api/v1`; // Default per web
+// URL di base per le API
+// Per i test con il server stub delle notifiche, modifica questo URL in:
+// export const API_URL = 'http://localhost:3001/api/v1';
+export let API_URL = 'https://refood-be.stage.app-it-up.com/api/v1';
 
 // Per Android, usa 10.0.2.2 che è l'alias dell'host locale per l'emulatore
 if (Platform.OS === 'android') {
@@ -34,10 +36,12 @@ console.log(`Usando API_URL: ${API_URL} per la piattaforma: ${Platform.OS}`);
 
 // Chiavi per AsyncStorage
 export const STORAGE_KEYS = {
-  USER_TOKEN: 'userToken',
-  USER_DATA: 'userData',
-  LAST_SYNC: 'lastSync',  // Per tenere traccia dell'ultima sincronizzazione
-  REFRESH_TOKEN: 'refreshToken', // Per il token di refresh
+  USER_TOKEN: 'user_token',
+  USER_DATA: 'user_data',
+  LAST_SYNC: 'last_sync',  // Per tenere traccia dell'ultima sincronizzazione
+  REFRESH_TOKEN: 'refresh_token', // Per il token di refresh
+  AUTH_TOKEN: 'auth_token',
+  PUSH_TOKEN: 'push_token', // Per il token delle notifiche push
 };
 
 // Ruoli utente

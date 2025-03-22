@@ -1,9 +1,12 @@
-import { Stack, Slot } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { Stack, Slot, router, usePathname, useSegments } from 'expo-router';
+import { useEffect, useState, useRef } from 'react';
 import { ActivityIndicator, View, StyleSheet, Text, Platform, AppState, AppStateStatus } from 'react-native';
 import { PaperProvider, MD3LightTheme as DefaultTheme, Button } from 'react-native-paper';
 import { PRIMARY_COLOR } from '../src/config/constants';
 import { AuthProvider, useAuth } from '../src/context/AuthContext';
+import { NotificheProvider } from '../src/context/NotificheContext';
+import pushNotificationService from '../src/services/pushNotificationService';
+import * as Notifications from 'expo-notifications';
 import LoginScreen from '../src/screens/LoginScreen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../src/config/constants';
@@ -25,7 +28,9 @@ export default function RootLayout() {
   return (
     <PaperProvider theme={theme}>
       <AuthProvider>
-        <RootLayoutNav />
+        <NotificheProvider>
+          <RootLayoutNav />
+        </NotificheProvider>
       </AuthProvider>
       <Toast />
     </PaperProvider>
@@ -36,12 +41,106 @@ export default function RootLayout() {
 function RootLayoutNav() {
   const { user, isLoading, error, refreshUserStatus, isAuthenticated } = useAuth();
   const [refreshAttempts, setRefreshAttempts] = useState(0);
+  const notificationListener = useRef<Notifications.Subscription>();
+  const responseListener = useRef<Notifications.Subscription>();
+  const [isNavigating, setIsNavigating] = useState(false); // Previene navigazione multipla
 
   // Log per debug
   useEffect(() => {
     logger.log('RootLayoutNav - isAuthenticated:', isAuthenticated);
     logger.log('RootLayoutNav - user:', user ? `${user.email} (${user.ruolo})` : 'null');
   }, [user, isAuthenticated]);
+
+  // Funzione sicura per la navigazione che previene navigazioni multiple simultanee
+  const safeNavigate = (destination: any, params?: any) => {
+    if (isNavigating) return; // Se già sta navigando, esce
+    
+    try {
+      setIsNavigating(true);
+      if (params) {
+        router.push({pathname: destination, params});
+      } else {
+        router.push(destination);
+      }
+      
+      // Resetta lo stato dopo un breve ritardo
+      setTimeout(() => {
+        setIsNavigating(false);
+      }, 300);
+    } catch (e) {
+      logger.error('Errore durante la navigazione:', e);
+      setIsNavigating(false);
+    }
+  };
+
+  // Effetto per configurare le notifiche push
+  useEffect(() => {
+    // Configura le notifiche push solo se l'utente è autenticato
+    if (isAuthenticated && user) {
+      // Configura notifiche push
+      const configurePushNotifications = async () => {
+        try {
+          const success = await pushNotificationService.configurePushNotifications();
+          if (success) {
+            logger.log('Notifiche push configurate con successo');
+            
+            // Imposta i listener per le notifiche
+            notificationListener.current = Notifications.addNotificationReceivedListener(
+              notification => {
+                logger.log('Notifica ricevuta:', notification);
+                
+                // Mostra un toast quando la notifica arriva mentre l'app è in primo piano
+                Toast.show({
+                  type: 'info',
+                  text1: notification.request.content.title || 'Nuova notifica',
+                  text2: notification.request.content.body || '',
+                  visibilityTime: 4000,
+                  topOffset: 50,
+                  onPress: () => {
+                    // Gestisci il tocco del toast come se fosse stata toccata la notifica stessa
+                    const { data } = notification.request.content;
+                    if (data?.type === 'notifica' && data?.id) {
+                      // Verifica che l'ID sia un numero valido
+                      const notificaId = parseInt(String(data.id), 10);
+                      if (!isNaN(notificaId)) {
+                        logger.log(`Toast: navigazione alla notifica ID ${notificaId}`);
+                        safeNavigate('/notifiche/[id]', {id: String(notificaId)});
+                      } else {
+                        logger.warn(`Toast: ID notifica non valido ${data.id}, navigazione alla lista`);
+                        safeNavigate('/notifiche/index');
+                      }
+                    } else if (data?.type === 'notifica') {
+                      safeNavigate('/notifiche/index');
+                    }
+                  }
+                });
+              }
+            );
+            
+            responseListener.current = Notifications.addNotificationResponseReceivedListener(
+              response => onNotificationResponseReceived(response)
+            );
+          } else {
+            logger.warn('Non è stato possibile configurare le notifiche push');
+          }
+        } catch (error) {
+          logger.error('Errore durante la configurazione delle notifiche push:', error);
+        }
+      };
+      
+      configurePushNotifications();
+      
+      // Cleanup dei listener
+      return () => {
+        if (notificationListener.current) {
+          Notifications.removeNotificationSubscription(notificationListener.current);
+        }
+        if (responseListener.current) {
+          Notifications.removeNotificationSubscription(responseListener.current);
+        }
+      };
+    }
+  }, [isAuthenticated, user]);
 
   // Effetto per gestire cambiamenti di stato dell'app
   useEffect(() => {
@@ -86,6 +185,48 @@ function RootLayoutNav() {
   const handleManualRefresh = () => {
     setRefreshAttempts(prev => prev + 1);
     refreshUserStatus();
+  };
+
+  // Quando l'utente tocca una notifica
+  const onNotificationResponseReceived = (response: Notifications.NotificationResponse) => {
+    if (isNavigating) return; // Previene navigazioni multiple
+    
+    const { data } = response.notification.request.content;
+    logger.log('Risposta alla notifica:', data);
+    
+    // Gestione semplificata della navigazione
+    try {
+      if (data?.type === 'notifica' && data?.id) {
+        // Verifica che l'id sia un numero valido
+        const notificaId = parseInt(String(data.id), 10);
+        if (!isNaN(notificaId) && notificaId > 0) {
+          logger.log(`Navigazione alla notifica ID: ${notificaId}`);
+          // Passa l'ID come parametro numerico
+          safeNavigate('/notifiche/[id]', {id: String(notificaId)});
+        } else {
+          logger.error(`ID notifica non valido nei dati della notifica: ${data.id}`);
+          // Per evitare loop, prima disattiviamo temporaneamente la navigazione
+          setIsNavigating(true);
+          setTimeout(() => {
+            safeNavigate('/notifiche/index');
+          }, 500);
+        }
+      } else if (data?.type === 'notifica') {
+        logger.log('Navigazione alla lista notifiche');
+        // Per evitare loop, prima disattiviamo temporaneamente la navigazione
+        setIsNavigating(true);
+        setTimeout(() => {
+          safeNavigate('/notifiche/index');
+        }, 500);
+      } else if (data?.type === 'lotto') {
+        safeNavigate('/(tabs)/lotti');
+      } else {
+        safeNavigate('/');
+      }
+    } catch (error) {
+      logger.error('Errore durante la navigazione dalla notifica:', error);
+      safeNavigate('/');
+    }
   };
 
   // Mostra un loader mentre l'app verifica lo stato di autenticazione
@@ -152,11 +293,22 @@ function RootLayoutNav() {
   // Se l'utente è autenticato, mostra il contenuto principale dell'app
   logger.log('RootLayoutNav - Utente autenticato, mostrando (tabs)');
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <Stack 
+      screenOptions={{ 
+        headerShown: false,
+        // Disabilita le animazioni tra le schermate per ridurre le possibilità di errori di navigazione
+        animation: 'none'
+      }}
+    >
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="admin" options={{ headerShown: false }} />
-      {/* La route "lotti" nell'errore si riferisce probabilmente a un percorso nidificato errato */}
-      {/* Le route per i lotti devono essere definite correttamente nel file */}
+      
+      {/* Rimuovo la rotta lotti che non esiste come figlio diretto */}
+      <Stack.Screen name="lotti/nuovo" options={{ headerShown: false }} />
+      
+      {/* Dichiarazione esplicita di tutte le rotte per le notifiche */}
+      <Stack.Screen name="notifiche/index" options={{ headerShown: false }} />
+      <Stack.Screen name="notifiche/[id]" options={{ headerShown: false }} />
     </Stack>
   );
 }
