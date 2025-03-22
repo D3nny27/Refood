@@ -10,7 +10,9 @@ CREATE TABLE Utenti (
     cognome TEXT NOT NULL,
     ruolo TEXT NOT NULL CHECK (ruolo IN ('Operatore', 'Amministratore', 'CentroSociale', 'CentroRiciclaggio')),
     ultimo_accesso TIMESTAMP,
-    creato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    creato_da INTEGER,
+    creato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (creato_da) REFERENCES Utenti(id)
 );
 
 -- Nuova tabella per la gestione dei JWT

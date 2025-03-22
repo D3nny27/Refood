@@ -29,7 +29,7 @@ export default function TabOneScreen() {
         return;
       }
       
-      const response = await axios.get(`${API_URL}/statistiche/contatori`, {
+      const response = await axios.get(`${API_URL}/statistiche/counters`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }

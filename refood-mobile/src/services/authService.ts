@@ -70,7 +70,7 @@ export const checkUserAuth = async (): Promise<Utente | null> => {
     setAuthToken(token);
     
     // Effettua la richiesta al server per verificare l'autenticazione
-    const response = await axios.get(`${API_URL}/auth/me`);
+    const response = await axios.get(`${API_URL}/users/profile`);
     
     if (response.status === 200 && response.data) {
       console.log('Autenticazione verificata con successo:', response.data.email);
@@ -94,7 +94,7 @@ export const checkUserAuth = async (): Promise<Utente | null> => {
       } 
       // Se l'endpoint non esiste (404), consideriamo valida l'autenticazione locale
       else if (error.response.status === 404) {
-        console.log('Endpoint /auth/me non trovato (404) - l\'API potrebbe non supportare la verifica token');
+        console.log('Endpoint non trovato (404) - controllo fallito');
         console.log('Manteniamo l\'autenticazione basata sul token locale');
         
         // Verifica nella cache locale se abbiamo i dati utente

@@ -150,100 +150,103 @@ exports.getAllUsers = async (req, res, next) => {
     const currentUserId = req.user.id;
     const isAdmin = req.user.ruolo === 'Amministratore';
     
-    // Costruzione della query base - diversa in base al ruolo
-    let query, countQuery;
-    const params = [];
-    
-    if (isAdmin) {
-      // Per gli amministratori, mostra gli utenti che ha creato o associati ai suoi centri
-      query = `
-        SELECT DISTINCT u.id, u.email, u.nome, u.cognome, u.ruolo, u.ultimo_accesso, u.creato_il
-        FROM Utenti u
-        LEFT JOIN UtentiCentri uc1 ON u.id = uc1.utente_id
-        WHERE 1=1
-        AND (
-          -- Utenti associati ai centri dell'amministratore corrente
-          EXISTS (
-            SELECT 1 FROM UtentiCentri uc_admin
-            WHERE uc_admin.utente_id = ?
-            AND EXISTS (
-              SELECT 1 FROM UtentiCentri uc_user
-              WHERE uc_user.utente_id = u.id
-              AND uc_user.centro_id = uc_admin.centro_id
-            )
-          )
-          -- Oppure utenti creati dall'amministratore (qui si potrebbe aggiungere un campo creato_da nella tabella Utenti)
-          OR u.id = ? -- Include sempre l'amministratore stesso
-        )
-      `;
-      
-      params.push(currentUserId, currentUserId);
-      
-      // Query per contare il totale dei risultati
-      countQuery = `
-        SELECT COUNT(DISTINCT u.id) as total
-        FROM Utenti u
-        LEFT JOIN UtentiCentri uc1 ON u.id = uc1.utente_id
-        WHERE 1=1
-        AND (
-          EXISTS (
-            SELECT 1 FROM UtentiCentri uc_admin
-            WHERE uc_admin.utente_id = ?
-            AND EXISTS (
-              SELECT 1 FROM UtentiCentri uc_user
-              WHERE uc_user.utente_id = u.id
-              AND uc_user.centro_id = uc_admin.centro_id
-            )
-          )
-          OR u.id = ?
-        )
-      `;
-      
-      params.push(currentUserId, currentUserId);
-    } else {
-      // Per gli altri ruoli (non dovrebbe mai accadere dato il middleware authorize)
-      query = `
-        SELECT id, email, nome, cognome, ruolo, ultimo_accesso, creato_il
-        FROM Utenti
-        WHERE 1=1
-      `;
-      
-      countQuery = `SELECT COUNT(*) as total FROM Utenti WHERE 1=1`;
+    // Approccio semplificato - prima verifichiamo se l'utente è realmente un amministratore
+    if (!isAdmin) {
+      logger.warn(`Utente non amministratore (${currentUserId}) ha tentato di accedere a getAllUsers`);
+      return next(new ApiError(403, 'Non autorizzato ad accedere a questa risorsa'));
     }
     
-    // Aggiunta dei filtri per ruolo
+    // Costruiamo le query in modo più semplice
+    let queryBase = `
+      SELECT DISTINCT u.id, u.email, u.nome, u.cognome, u.ruolo, u.ultimo_accesso, u.creato_il
+      FROM Utenti u
+      LEFT JOIN UtentiCentri uc1 ON u.id = uc1.utente_id
+      WHERE 1=1
+    `;
+    
+    let countQueryBase = `
+      SELECT COUNT(DISTINCT u.id) as total
+      FROM Utenti u
+      LEFT JOIN UtentiCentri uc1 ON u.id = uc1.utente_id
+      WHERE 1=1
+    `;
+    
+    // Prepariamo i parametri base
+    const queryParams = [];
+    const conditions = [];
+    
+    // Aggiungiamo la condizione che mostri: 
+    // 1. Utenti associati ai centri dell'amministratore 
+    // 2. Utenti creati dall'amministratore
+    // 3. L'amministratore stesso
+    conditions.push(`
+      (
+        EXISTS (
+          SELECT 1 FROM UtentiCentri uc_admin
+          WHERE uc_admin.utente_id = ?
+          AND EXISTS (
+            SELECT 1 FROM UtentiCentri uc_user
+            WHERE uc_user.utente_id = u.id
+            AND uc_user.centro_id = uc_admin.centro_id
+          )
+        )
+        OR u.creato_da = ?
+        OR u.id = ?
+      )
+    `);
+    queryParams.push(currentUserId, currentUserId, currentUserId);
+    
+    // Aggiungiamo il filtro per ruolo se presente
     if (ruolo) {
-      query += ` AND u.ruolo = ?`;
-      countQuery += ` AND u.ruolo = ?`;
-      params.push(ruolo);
+      conditions.push(`u.ruolo = ?`);
+      queryParams.push(ruolo);
     }
     
-    // Aggiunta dell'ordinamento e della paginazione
-    query += ` ORDER BY u.creato_il DESC LIMIT ? OFFSET ?`;
-    params.push(parseInt(limit), offset);
+    // Costruiamo la query finale
+    const whereClause = conditions.length > 0 ? `AND ${conditions.join(' AND ')}` : '';
+    const query = `${queryBase} ${whereClause} ORDER BY u.creato_il DESC LIMIT ? OFFSET ?`;
+    const countQuery = `${countQueryBase} ${whereClause}`;
     
-    // Esecuzione delle query
-    const countParams = params.slice(0, params.length - 2); // Rimuovi i parametri di LIMIT e OFFSET
-    const countResult = await db.get(countQuery, countParams);
-    const users = await db.all(query, params);
+    // Aggiungiamo i parametri di paginazione per la query principale
+    const finalQueryParams = [...queryParams, parseInt(limit), offset];
     
-    // Per ogni utente, recupera i centri associati
-    const usersWithCentri = await Promise.all(users.map(async (user) => {
-      const centri = await db.all(
-        `SELECT c.id, c.nome, c.tipo
-         FROM Centri c
-         JOIN UtentiCentri uc ON c.id = uc.centro_id
-         WHERE uc.utente_id = ?`,
-        [user.id]
-      );
-      
-      return { ...user, centri };
-    }));
+    // Esecuzione query di conteggio
+    logger.debug(`Esecuzione query di conteggio: ${countQuery} con params: ${JSON.stringify(queryParams)}`);
+    const countResult = await db.get(countQuery, queryParams);
+    logger.debug(`Risultato count query: ${JSON.stringify(countResult)}`);
     
-    // Calcolo info di paginazione
-    const total = countResult.total;
+    // Se non abbiamo ottenuto un risultato valido dal conteggio, assumiamo 0
+    const total = countResult && countResult.total ? parseInt(countResult.total) : 0;
     const pages = Math.ceil(total / limit);
     
+    // Esecuzione query principale
+    logger.debug(`Esecuzione query utenti: ${query} con params: ${JSON.stringify(finalQueryParams)}`);
+    const users = await db.all(query, finalQueryParams);
+    logger.debug(`Trovati ${users.length} utenti`);
+    
+    // Array per memorizzare gli utenti finali con i centri
+    const usersWithCentri = [];
+    
+    // Per ogni utente, recupera i centri associati
+    for (const user of users) {
+      try {
+        const centri = await db.all(
+          `SELECT c.id, c.nome, c.tipo
+           FROM Centri c
+           JOIN UtentiCentri uc ON c.id = uc.centro_id
+           WHERE uc.utente_id = ?`,
+          [user.id]
+        );
+        
+        usersWithCentri.push({ ...user, centri });
+      } catch (err) {
+        logger.error(`Errore nel recupero dei centri per l'utente ${user.id}: ${err.message}`);
+        // Aggiungiamo comunque l'utente, ma con un array vuoto di centri
+        usersWithCentri.push({ ...user, centri: [] });
+      }
+    }
+    
+    // Risposta
     res.json({
       data: usersWithCentri,
       pagination: {
@@ -302,6 +305,7 @@ exports.getUserById = async (req, res, next) => {
 exports.createUser = async (req, res, next) => {
   try {
     const { email, password, nome, cognome, ruolo } = req.body;
+    const creatorId = req.user.id; // ID dell'utente che sta creando il nuovo utente
     
     // Verifica che l'email non sia già usata
     const emailExists = await db.get('SELECT 1 FROM Utenti WHERE email = ?', [email]);
@@ -322,9 +326,9 @@ exports.createUser = async (req, res, next) => {
     
     // Inserisci il nuovo utente
     const result = await db.run(
-      `INSERT INTO Utenti (email, password, nome, cognome, ruolo, creato_il)
-       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-      [email, hashedPassword, nome, cognome, ruolo]
+      `INSERT INTO Utenti (email, password, nome, cognome, ruolo, creato_da, creato_il)
+       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [email, hashedPassword, nome, cognome, ruolo, creatorId]
     );
     
     // Recupera l'utente creato
@@ -456,4 +460,4 @@ exports.updateUser = async (req, res, next) => {
     logger.error(`Errore nell'aggiornamento dell'utente: ${err.message}`);
     next(new ApiError(500, 'Errore nell\'aggiornamento dell\'utente'));
   }
-}; 
+};
