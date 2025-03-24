@@ -85,12 +85,22 @@ CREATE TABLE Prenotazioni (
 
 CREATE TABLE Notifiche (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tipo TEXT NOT NULL CHECK (tipo IN ('CambioStato', 'Prenotazione', 'Alert')),
+    titolo TEXT NOT NULL,
     messaggio TEXT NOT NULL,
+    tipo TEXT NOT NULL CHECK (tipo IN ('CambioStato', 'Prenotazione', 'Alert', 'LottoCreato', 'LottoModificato')),
+    priorita TEXT NOT NULL DEFAULT 'Media' CHECK (priorita IN ('Bassa', 'Media', 'Alta')), 
     destinatario_id INTEGER NOT NULL,
     letto BOOLEAN DEFAULT 0,
+    data_lettura TIMESTAMP,
+    eliminato BOOLEAN DEFAULT 0,
+    riferimento_id INTEGER,  -- ID del lotto o prenotazione associato
+    riferimento_tipo TEXT,   -- Tipo di riferimento ('Lotto', 'Prenotazione', etc.)
+    origine_id INTEGER,      -- ID dell'utente che ha generato la notifica
+    centro_id INTEGER,       -- Centro associato alla notifica
     creato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (destinatario_id) REFERENCES Utenti(id)
+    FOREIGN KEY (destinatario_id) REFERENCES Utenti(id),
+    FOREIGN KEY (origine_id) REFERENCES Utenti(id),
+    FOREIGN KEY (centro_id) REFERENCES Centri(id)
 );
 
 CREATE TABLE LogCambioStato (
@@ -183,6 +193,12 @@ CREATE TABLE Trasporti (
     orario_partenza TIMESTAMP,
     orario_arrivo TIMESTAMP,
     stato TEXT NOT NULL CHECK (stato IN ('Pianificato', 'InCorso', 'Completato', 'Annullato')),
+    latitudine_origine REAL,
+    longitudine_origine REAL,
+    indirizzo_origine TEXT,
+    latitudine_destinazione REAL,
+    longitudine_destinazione REAL,
+    indirizzo_destinazione TEXT,
     FOREIGN KEY (prenotazione_id) REFERENCES Prenotazioni(id)
 );
 

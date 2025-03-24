@@ -1,8 +1,7 @@
 const express = require('express');
+const router = express.Router();
 const notificheController = require('../controllers/notifiche.controller');
 const { authenticate } = require('../middlewares/auth');
-
-const router = express.Router();
 
 /**
  * @swagger
@@ -15,42 +14,273 @@ const router = express.Router();
  * @swagger
  * /notifiche:
  *   get:
- *     summary: Ottiene l'elenco delle notifiche per l'utente corrente
- *     tags: [Notifiche]
+ *     summary: Recupera tutte le notifiche per l'utente corrente
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: query
- *         name: letto
- *         schema:
- *           type: boolean
- *         description: Filtra per stato di lettura
- *       - in: query
  *         name: page
  *         schema:
  *           type: integer
- *           default: 1
  *         description: Numero di pagina
  *       - in: query
  *         name: limit
  *         schema:
  *           type: integer
- *           default: 20
- *         description: Numero di risultati per pagina
+ *         description: Limite di risultati per pagina
+ *       - in: query
+ *         name: tipo
+ *         schema:
+ *           type: string
+ *         description: Filtra per tipo di notifica
+ *       - in: query
+ *         name: priorita
+ *         schema:
+ *           type: string
+ *         description: Filtra per priorità
+ *       - in: query
+ *         name: letta
+ *         schema:
+ *           type: boolean
+ *         description: Filtra per stato di lettura
  *     responses:
  *       200:
- *         description: Elenco di notifiche
+ *         description: Lista di notifiche
  *       401:
- *         description: Non autenticato
+ *         description: Non autorizzato
+ *       500:
+ *         description: Errore del server
  */
 router.get('/', authenticate, notificheController.getNotifiche);
 
 /**
  * @swagger
- * /notifiche/{id}/letto:
+ * /notifiche:
+ *   post:
+ *     summary: Crea una nuova notifica
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - titolo
+ *               - messaggio
+ *               - destinatario_id
+ *             properties:
+ *               titolo:
+ *                 type: string
+ *               messaggio:
+ *                 type: string
+ *               tipo:
+ *                 type: string
+ *                 default: 'Alert'
+ *               priorita:
+ *                 type: string
+ *                 default: 'Media'
+ *               destinatario_id:
+ *                 type: integer
+ *               riferimento_id:
+ *                 type: integer
+ *               riferimento_tipo:
+ *                 type: string
+ *               centro_id:
+ *                 type: integer
+ *     responses:
+ *       201:
+ *         description: Notifica creata con successo
+ *       400:
+ *         description: Dati non validi
+ *       401:
+ *         description: Non autorizzato
+ *       500:
+ *         description: Errore del server
+ */
+router.post('/', authenticate, notificheController.createNotifica);
+
+/**
+ * @swagger
+ * /notifiche/conteggio:
+ *   get:
+ *     summary: Ottiene il conteggio delle notifiche non lette
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Conteggio delle notifiche non lette
+ *       401:
+ *         description: Non autorizzato
+ *       500:
+ *         description: Errore del server
+ */
+router.get('/conteggio', authenticate, notificheController.countUnread);
+
+/**
+ * @swagger
+ * /notifiche/tutte-lette:
+ *   put:
+ *     summary: Segna tutte le notifiche come lette
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Tutte le notifiche segnate come lette
+ *       401:
+ *         description: Non autorizzato
+ *       500:
+ *         description: Errore del server
+ */
+router.put('/tutte-lette', authenticate, notificheController.markAllAsRead);
+
+/**
+ * @swagger
+ * /notifiche/sync:
+ *   post:
+ *     summary: Sincronizza una notifica locale con il server
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - titolo
+ *               - messaggio
+ *             properties:
+ *               titolo:
+ *                 type: string
+ *               messaggio:
+ *                 type: string
+ *               tipo:
+ *                 type: string
+ *                 default: 'Alert'
+ *               priorita:
+ *                 type: string
+ *                 default: 'Media'
+ *               letta:
+ *                 type: boolean
+ *                 default: false
+ *               dataCreazione:
+ *                 type: string
+ *                 format: date-time
+ *     responses:
+ *       201:
+ *         description: Notifica sincronizzata con successo
+ *       400:
+ *         description: Dati non validi
+ *       401:
+ *         description: Non autorizzato
+ *       500:
+ *         description: Errore del server
+ */
+router.post('/sync', authenticate, notificheController.syncLocalNotifica);
+
+/**
+ * @swagger
+ * /notifiche/centro-test:
+ *   get:
+ *     summary: Ottiene un centro valido per i test di notifica
+ *     description: Questo endpoint restituisce un centro con amministratori associati che può essere utilizzato per testare l'invio di notifiche
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Centro di test recuperato con successo
+ *       404:
+ *         description: Nessun centro con amministratori trovato
+ *       500:
+ *         description: Errore del server
+ */
+router.get('/centro-test', authenticate, notificheController.getCentroTestNotifiche);
+
+/**
+ * @swagger
+ * /notifiche/admin-centro/{centro_id}:
+ *   post:
+ *     summary: Invia una notifica a tutti gli amministratori di un centro
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: centro_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID del centro
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - titolo
+ *               - messaggio
+ *             properties:
+ *               titolo:
+ *                 type: string
+ *               messaggio:
+ *                 type: string
+ *               tipo:
+ *                 type: string
+ *                 default: 'LottoModificato'
+ *               priorita:
+ *                 type: string
+ *                 default: 'Media'
+ *               riferimento_id:
+ *                 type: integer
+ *               riferimento_tipo:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Notifiche inviate con successo
+ *       400:
+ *         description: Dati non validi
+ *       401:
+ *         description: Non autorizzato
+ *       404:
+ *         description: Centro non trovato
+ *       500:
+ *         description: Errore del server
+ */
+router.post('/admin-centro/:centro_id', authenticate, notificheController.notifyAdmins);
+
+/**
+ * @swagger
+ * /notifiche/{id}:
+ *   get:
+ *     summary: Recupera dettagli di una notifica specifica
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID della notifica
+ *     responses:
+ *       200:
+ *         description: Dettagli della notifica
+ *       401:
+ *         description: Non autorizzato
+ *       404:
+ *         description: Notifica non trovata
+ *       500:
+ *         description: Errore del server
+ */
+router.get('/:id', authenticate, notificheController.getNotificaById);
+
+/**
+ * @swagger
+ * /notifiche/{id}/letta:
  *   put:
  *     summary: Segna una notifica come letta
- *     tags: [Notifiche]
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -64,34 +294,19 @@ router.get('/', authenticate, notificheController.getNotifiche);
  *       200:
  *         description: Notifica segnata come letta
  *       401:
- *         description: Non autenticato
+ *         description: Non autorizzato
  *       404:
  *         description: Notifica non trovata
+ *       500:
+ *         description: Errore del server
  */
-router.put('/:id/letto', authenticate, notificheController.segnaComeLetta);
-
-/**
- * @swagger
- * /notifiche/leggi-tutte:
- *   put:
- *     summary: Segna tutte le notifiche come lette
- *     tags: [Notifiche]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Tutte le notifiche segnate come lette
- *       401:
- *         description: Non autenticato
- */
-router.put('/leggi-tutte', authenticate, notificheController.segnaLeggiTutte);
+router.put('/:id/letta', authenticate, notificheController.markAsRead);
 
 /**
  * @swagger
  * /notifiche/{id}:
  *   delete:
  *     summary: Elimina una notifica
- *     tags: [Notifiche]
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -105,10 +320,12 @@ router.put('/leggi-tutte', authenticate, notificheController.segnaLeggiTutte);
  *       200:
  *         description: Notifica eliminata con successo
  *       401:
- *         description: Non autenticato
+ *         description: Non autorizzato
  *       404:
  *         description: Notifica non trovata
+ *       500:
+ *         description: Errore del server
  */
-router.delete('/:id', authenticate, notificheController.eliminaNotifica);
+router.delete('/:id', authenticate, notificheController.deleteNotifica);
 
 module.exports = router; 

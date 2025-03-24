@@ -42,6 +42,7 @@ export const STORAGE_KEYS = {
   REFRESH_TOKEN: 'refresh_token', // Per il token di refresh
   AUTH_TOKEN: 'auth_token',
   PUSH_TOKEN: 'push_token', // Per il token delle notifiche push
+  LOCAL_NOTIFICATIONS: 'local_notifications', // Per salvare le notifiche locali
 };
 
 // Ruoli utente

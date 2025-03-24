@@ -1,12 +1,8 @@
 import { View, Text, StyleSheet } from 'react-native';
+import PrenotazioniScreen from '../prenotazioni/index';
 
-export default function PrenotazioniScreen() {
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Pagina Prenotazioni</Text>
-      <Text style={styles.subtitle}>Qui verranno visualizzate le prenotazioni</Text>
-    </View>
-  );
+export default function PrenotazioniTabScreen() {
+  return <PrenotazioniScreen />;
 }
 
 const styles = StyleSheet.create({

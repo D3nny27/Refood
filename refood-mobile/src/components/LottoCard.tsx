@@ -1,13 +1,15 @@
 import React from 'react';
 import { View, StyleSheet, TouchableOpacity } from 'react-native';
-import { Card, Title, Paragraph, Chip, Text, Badge } from 'react-native-paper';
+import { Card, Title, Paragraph, Chip, Text, Badge, Button } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { Lotto } from '../services/lottiService';
-import { STATUS_COLORS } from '../config/constants';
+import { STATUS_COLORS, PRIMARY_COLOR, RUOLI } from '../config/constants';
+import { useAuth } from '../context/AuthContext';
 
 interface LottoCardProps {
   lotto: Lotto;
   onPress: (lotto: Lotto) => void;
+  onPrenota?: (lotto: Lotto) => void;
 }
 
 // Funzione di utilità per formattare la data
@@ -52,7 +54,12 @@ const getStatusDescription = (stato: string | undefined) => {
   }
 };
 
-const LottoCard: React.FC<LottoCardProps> = ({ lotto, onPress }) => {
+const LottoCard: React.FC<LottoCardProps> = ({ lotto, onPress, onPrenota }) => {
+  const { user } = useAuth();
+  
+  // Controlla se l'utente può prenotare il lotto
+  const canPrenotareLotto = user?.ruolo === RUOLI.CENTRO_SOCIALE || user?.ruolo === RUOLI.CENTRO_RICICLAGGIO;
+  
   // Gestione valori sicuri per evitare errori di rendering
   const nome = lotto.nome || 'Lotto senza nome';
   const centroNome = lotto.centro_nome || `Centro #${lotto.centro_id || 'N/D'}`;
@@ -60,6 +67,15 @@ const LottoCard: React.FC<LottoCardProps> = ({ lotto, onPress }) => {
   const unitaMisura = lotto.unita_misura || 'pz';
   const descrizione = lotto.descrizione || 'Nessuna descrizione disponibile';
   const stato = lotto.stato || 'Verde';
+  
+  // Gestisci il click sul pulsante di prenotazione
+  const handlePrenotaClick = (e: React.MouseEvent<HTMLElement> | React.TouchEvent<HTMLElement>) => {
+    // Impedisci la propagazione dell'evento al TouchableOpacity parent
+    e.stopPropagation();
+    if (onPrenota) {
+      onPrenota(lotto);
+    }
+  };
   
   return (
     <TouchableOpacity onPress={() => onPress(lotto)} activeOpacity={0.7}>
@@ -101,6 +117,20 @@ const LottoCard: React.FC<LottoCardProps> = ({ lotto, onPress }) => {
               </Chip>
             </View>
           </View>
+          
+          {/* Pulsante di prenotazione */}
+          {canPrenotareLotto && onPrenota && (
+            <View style={styles.buttonContainer}>
+              <Button 
+                mode="contained" 
+                onPress={handlePrenotaClick as any}
+                style={styles.prenotaButton}
+                icon="cart-plus"
+              >
+                Prenota
+              </Button>
+            </View>
+          )}
         </Card.Content>
       </Card>
     </TouchableOpacity>
@@ -188,6 +218,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
     textAlign: 'center',
+  },
+  buttonContainer: {
+    marginTop: 12,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  prenotaButton: {
+    backgroundColor: PRIMARY_COLOR,
+    borderRadius: 8,
   },
 });
 

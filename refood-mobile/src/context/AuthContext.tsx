@@ -6,6 +6,14 @@ import { STORAGE_KEYS } from '../config/constants';
 import { Platform, AppState, AppStateStatus } from 'react-native';
 import { Utente } from '../types/user';
 import { setAuthToken } from '../services/api';
+import logger from '../utils/logger';
+import Toast from 'react-native-toast-message';
+import { listenEvent, APP_EVENTS } from '../utils/events';
+
+// Definisci il tipo di resetAuthState nel global namespace
+declare global {
+  var resetAuthState: (() => void) | undefined;
+}
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -60,6 +68,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     
     checkState();
   }, [isAuthenticated, user]);
+  
+  // Funzione per resettare lo stato di autenticazione
+  const resetAuthentication = useCallback(() => {
+    logger.warn('Esecuzione reset autenticazione');
+    setUser(null);
+    setIsAuthenticated(false);
+    setAuthToken(null);
+  }, []);
+  
+  // Assegna la funzione al global object per permettere l'accesso da api.ts
+  useEffect(() => {
+    if (typeof global !== 'undefined') {
+      global.resetAuthState = resetAuthentication;
+    }
+    
+    return () => {
+      if (typeof global !== 'undefined') {
+        global.resetAuthState = undefined;
+      }
+    };
+  }, [resetAuthentication]);
+  
+  // Listener per eventi jwt_expired usando EventEmitter invece di window
+  useEffect(() => {
+    const handleJwtExpiredEvent = () => {
+      logger.warn('Evento JWT scaduto ricevuto');
+      resetAuthentication();
+    };
+    
+    // Usa il nostro sistema di eventi personalizzato
+    const removeListener = listenEvent(APP_EVENTS.JWT_EXPIRED, handleJwtExpiredEvent);
+    
+    // Cleanup: rimuove il listener quando il componente si smonta
+    return () => {
+      removeListener();
+    };
+  }, [resetAuthentication]);
 
   // Funzione per aggiornare lo stato dell'autenticazione
   const refreshUserStatus = useCallback(async () => {
@@ -184,9 +229,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Aggiungi un timeout per prevenire il blocco del check
     const checkAuthWithTimeout = async () => {
       try {
-        // Crea un timeout di 5 secondi
+        // Crea un timeout di 8 secondi (aumentato per consentire tempo per il refresh)
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout during auth check')), 5000)
+          setTimeout(() => reject(new Error('Timeout during auth check')), 8000)
         );
         
         // Esegui il check con timeout
@@ -194,20 +239,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (error) {
         console.error('Errore o timeout durante il check iniziale:', error);
         // In caso di timeout, tenta comunque di ripristinare i dati locali
-        if (!Platform.isTV && typeof window !== 'undefined') {
-          try {
-            const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-            if (userData) {
-              console.log('Ripristino dati utente da storage dopo timeout');
-              setUser(JSON.parse(userData));
-              setIsAuthenticated(true);
-            }
-          } catch (localErr) {
-            console.error('Errore durante il ripristino locale:', localErr);
+        try {
+          const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+          const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+          if (userData && token) {
+            console.log('Ripristino dati utente da storage dopo timeout');
+            setUser(JSON.parse(userData));
+            setIsAuthenticated(true);
+            setAuthToken(token);
+          } else {
+            setUser(null);
+            setIsAuthenticated(false);
           }
+        } catch (localErr) {
+          console.error('Errore ripristino dati locali dopo timeout:', localErr);
+          setUser(null);
+          setIsAuthenticated(false);
+        } finally {
+          setIsLoading(false);
+          setInitialCheckDone(true);
         }
-        setIsLoading(false);
-        setInitialCheckDone(true);
       }
     };
     
@@ -328,20 +379,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Funzione di logout
   const logout = async (): Promise<void> => {
-    console.log('AuthContext - Avvio processo di logout...');
+    logger.log('AuthContext - Avvio processo di logout...');
     setIsLoading(true);
     
     try {
-      console.log('Inizio processo di logout...');
-      
-      // Prima imposta lo stato di autenticazione a false immediatamente
-      setIsAuthenticated(false);
-      setUser(null);
-      console.log('Stato di autenticazione impostato a false');
-      
-      // Rimuovi token e dati utente
-      setAuthToken(null);
-      console.log('Token di autenticazione rimosso dai default headers');
+      // Usa la funzione centralizzata di reset autenticazione
+      resetAuthentication();
+      logger.log('Stato di autenticazione resettato');
       
       // Pulizia dello storage in modo protetto
       if (!Platform.isTV && typeof window !== 'undefined') {
@@ -352,45 +396,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA),
             AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN)
           ]);
-          console.log('Token e dati utente rimossi da AsyncStorage');
+          logger.log('Token e dati utente rimossi da AsyncStorage');
         } catch (storageErr) {
-          console.error('Errore durante la pulizia di AsyncStorage:', storageErr);
+          logger.error('Errore durante la pulizia di AsyncStorage:', storageErr);
         }
       }
       
       // Chiama il servizio di logout (in modo sicuro, catturo errori)
       try {
         await logoutUser();
-        console.log('Richiesta di logout al server completata');
+        logger.log('Richiesta di logout al server completata');
       } catch (err) {
-        console.error('Errore durante la chiamata al servizio di logout:', err);
+        logger.error('Errore durante la chiamata al servizio di logout:', err);
         // Continuiamo con il logout locale anche se il server dà errore
       }
       
-      console.log('Logout completato con successo');
+      // Mostra una notifica di successo
+      Toast.show({
+        type: 'success',
+        text1: 'Logout completato',
+        text2: 'Hai effettuato il logout con successo',
+        visibilityTime: 3000,
+      });
+      
+      logger.log('Logout completato con successo');
       
     } catch (err: any) {
-      console.error('Errore critico durante il logout:', err);
+      logger.error('Errore critico durante il logout:', err);
       
-      // Forza comunque lo stato di logout in caso di errore
-      setIsAuthenticated(false);
-      setUser(null);
-      setAuthToken(null);
+      // Forza comunque il reset in caso di errore
+      resetAuthentication();
       
-      // Tenta ancora di pulire lo storage in caso di errore
-      if (!Platform.isTV && typeof window !== 'undefined') {
-        try {
+      // Tenta nuovamente la pulizia dello storage
+      try {
+        if (!Platform.isTV && typeof window !== 'undefined') {
           await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
           await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
           await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-        } catch (e) {
-          console.error('Secondo tentativo di pulizia storage fallito:', e);
         }
+      } catch (storageErr) {
+        logger.error('Errore durante la pulizia di emergenza di AsyncStorage:', storageErr);
       }
       
+      setError('Si è verificato un errore durante il logout, ma la sessione è stata chiusa correttamente.');
     } finally {
       setIsLoading(false);
-      console.log('AuthContext - Impostato isLoading a false dopo logout');
     }
   };
 

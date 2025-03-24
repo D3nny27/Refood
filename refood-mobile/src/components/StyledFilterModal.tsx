@@ -40,7 +40,7 @@ const StyledFilterModal: React.FC<StyledFilterModalProps> = ({
         <Surface style={styles.modalContent}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>{title}</Text>
-            <MaterialCommunityIcons name="filter-variant" size={24} color={PRIMARY_COLOR} />
+            <MaterialCommunityIcons name="magnify" size={24} color={PRIMARY_COLOR} />
           </View>
           <Divider />
           

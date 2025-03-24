@@ -1,0 +1,133 @@
+
+> refood-backend@1.0.0 dev
+> nodemon src/server.js
+
+[33m[nodemon] 2.0.22[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): *.*[39m
+[33m[nodemon] watching extensions: js,mjs,json[39m
+[32m[nodemon] starting `node src/server.js`[39m
+Percorso assoluto del database: /home/denny/Documenti/Tesi/database/refood.db
+2025-03-24 14:03:07 [32minfo[39m: [32mModuli caricati:[39m
+2025-03-24 14:03:07 [32minfo[39m: [32mServer avviato sulla porta 3000 in modalità development[39m
+2025-03-24 14:03:07 [32minfo[39m: [32mAPI disponibili su http://localhost:3000/api/v1[39m
+2025-03-24 14:03:07 [32minfo[39m: [32mDocumentazione API su http://localhost:3000/api-docs[39m
+2025-03-24 14:03:07 [32minfo[39m: [32mScheduler per aggiornamento stato lotti configurato[39m
+2025-03-24 14:03:07 [32minfo[39m: [32mScheduler inizializzato con successo[39m
+2025-03-24 14:03:07 [32minfo[39m: [32mConnesso al database SQLite: /home/denny/Documenti/Tesi/database/refood.db[39m
+AUTH: Inizio verifica autenticazione per la richiesta a /api/v1/notifiche/conteggio
+AUTH: Headers di autenticazione ricevuti: Presenti
+AUTH: Token JWT ricevuto per /api/v1/notifiche/conteggio: eyJhbGciOiJIUzI...
+AUTH: Verifica del token JWT in corso...
+AUTH: Token JWT decodificato per utente: admin@refood.org
+AUTH: Ricerca del token nel database per /api/v1/notifiche/conteggio...
+AUTH: JTI estratto dal token: b0d7fb48462ae7a07e0d72af9f741596
+2025-03-24 14:03:21 [36mdebug[39m: [36mSQL get: [39m
+[36m      SELECT [39m
+[36m        u.id, u.email, u.nome, u.cognome, u.ruolo,[39m
+[36m        t.access_token_scadenza, t.revocato[39m
+[36m      FROM TokenAutenticazione t[39m
+[36m      JOIN Utenti u ON t.utente_id = u.id[39m
+[36m      WHERE t.access_token = ?[39m
+[36m      AND t.access_token_scadenza > datetime('now')[39m
+[36m      AND t.revocato = 0[39m
+[36m      AND NOT EXISTS ([39m
+[36m        SELECT 1 FROM TokenRevocati tr [39m
+[36m        WHERE tr.token_hash = ?[39m
+[36m      )[39m
+[36m    [39m
+2025-03-24 14:03:21 [36mdebug[39m: [36mParametri: ["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjMsImVtYWlsIjoiYWRtaW5AcmVmb29kLm9yZyIsIm5vbWUiOiJBZG1pbiIsImNvZ25vbWUiOiJSZWZvb2QiLCJydW9sbyI6IkFtbWluaXN0cmF0b3JlIiwianRpIjoiYjBkN2ZiNDg0NjJhZTdhMDdlMGQ3MmFmOWY3NDE1OTYiLCJpYXQiOjE3NDI4MjA4NjEsImV4cCI6MTc0MjgyNDQ2MX0.LHQZ0plYyL0rjH83EU-iHYMZysv09Yf0onPdIhvZnek","b0d7fb48462ae7a07e0d72af9f741596"][39m
+2025-03-24 14:03:21 [36mdebug[39m: [36mQuery get completata (5ms), risultato: trovato[39m
+AUTH: Autenticazione riuscita per utente admin@refood.org con ruolo Amministratore per /api/v1/notifiche/conteggio
+AUTH: Verifica del token JWT completata
+2025-03-24 14:03:21 [32minfo[39m: [32mRichiesta conteggio notifiche non lette per l'utente 3[39m
+2025-03-24 14:03:21 [36mdebug[39m: [36mSQL get: SELECT COUNT(*) as count FROM Notifiche WHERE destinatario_id = ? AND letto = 0 AND eliminato = 0[39m
+2025-03-24 14:03:21 [36mdebug[39m: [36mParametri: [3][39m
+2025-03-24 14:03:21 [36mdebug[39m: [36mQuery get completata (2ms), risultato: trovato[39m
+2025-03-24 14:03:21 [32minfo[39m: [32m0 notifiche non lette per l'utente 3[39m
+2025-03-24 14:03:21 [35mhttp[39m: [35m[0mGET /api/v1/notifiche/conteggio [36m304[0m 19.448 ms - -[0m[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+Percorso assoluto del database: /home/denny/Documenti/Tesi/database/refood.db
+2025-03-24 14:04:18 [32minfo[39m: [32mModuli caricati:[39m
+2025-03-24 14:04:18 [32minfo[39m: [32mServer avviato sulla porta 3000 in modalità development[39m
+2025-03-24 14:04:18 [32minfo[39m: [32mAPI disponibili su http://localhost:3000/api/v1[39m
+2025-03-24 14:04:18 [32minfo[39m: [32mDocumentazione API su http://localhost:3000/api-docs[39m
+2025-03-24 14:04:18 [32minfo[39m: [32mScheduler per aggiornamento stato lotti configurato[39m
+2025-03-24 14:04:18 [32minfo[39m: [32mScheduler inizializzato con successo[39m
+2025-03-24 14:04:18 [32minfo[39m: [32mConnesso al database SQLite: /home/denny/Documenti/Tesi/database/refood.db[39m
+AUTH: Inizio verifica autenticazione per la richiesta a /api/v1/notifiche/conteggio
+AUTH: Headers di autenticazione ricevuti: Presenti
+AUTH: Token JWT ricevuto per /api/v1/notifiche/conteggio: eyJhbGciOiJIUzI...
+AUTH: Verifica del token JWT in corso...
+AUTH: Token JWT decodificato per utente: admin@refood.org
+AUTH: Ricerca del token nel database per /api/v1/notifiche/conteggio...
+AUTH: JTI estratto dal token: b0d7fb48462ae7a07e0d72af9f741596
+2025-03-24 14:04:21 [36mdebug[39m: [36mSQL get: [39m
+[36m      SELECT [39m
+[36m        u.id, u.email, u.nome, u.cognome, u.ruolo,[39m
+[36m        t.access_token_scadenza, t.revocato[39m
+[36m      FROM TokenAutenticazione t[39m
+[36m      JOIN Utenti u ON t.utente_id = u.id[39m
+[36m      WHERE t.access_token = ?[39m
+[36m      AND t.access_token_scadenza > datetime('now')[39m
+[36m      AND t.revocato = 0[39m
+[36m      AND NOT EXISTS ([39m
+[36m        SELECT 1 FROM TokenRevocati tr [39m
+[36m        WHERE tr.token_hash = ?[39m
+[36m      )[39m
+[36m    [39m
+2025-03-24 14:04:21 [36mdebug[39m: [36mParametri: ["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjMsImVtYWlsIjoiYWRtaW5AcmVmb29kLm9yZyIsIm5vbWUiOiJBZG1pbiIsImNvZ25vbWUiOiJSZWZvb2QiLCJydW9sbyI6IkFtbWluaXN0cmF0b3JlIiwianRpIjoiYjBkN2ZiNDg0NjJhZTdhMDdlMGQ3MmFmOWY3NDE1OTYiLCJpYXQiOjE3NDI4MjA4NjEsImV4cCI6MTc0MjgyNDQ2MX0.LHQZ0plYyL0rjH83EU-iHYMZysv09Yf0onPdIhvZnek","b0d7fb48462ae7a07e0d72af9f741596"][39m
+2025-03-24 14:04:21 [36mdebug[39m: [36mQuery get completata (5ms), risultato: trovato[39m
+AUTH: Autenticazione riuscita per utente admin@refood.org con ruolo Amministratore per /api/v1/notifiche/conteggio
+AUTH: Verifica del token JWT completata
+2025-03-24 14:04:21 [32minfo[39m: [32mRichiesta conteggio notifiche non lette per l'utente 3[39m
+2025-03-24 14:04:21 [36mdebug[39m: [36mSQL get: SELECT COUNT(*) as count FROM Notifiche WHERE destinatario_id = ? AND letto = 0 AND eliminato = 0[39m
+2025-03-24 14:04:21 [36mdebug[39m: [36mParametri: [3][39m
+2025-03-24 14:04:21 [36mdebug[39m: [36mQuery get completata (1ms), risultato: trovato[39m
+2025-03-24 14:04:21 [32minfo[39m: [32m0 notifiche non lette per l'utente 3[39m
+2025-03-24 14:04:21 [35mhttp[39m: [35m[0mGET /api/v1/notifiche/conteggio [36m304[0m 15.561 ms - -[0m[39m
+AUTH: Inizio verifica autenticazione per la richiesta a /api/v1/notifiche/conteggio
+AUTH: Headers di autenticazione ricevuti: Presenti
+AUTH: Token JWT ricevuto per /api/v1/notifiche/conteggio: eyJhbGciOiJIUzI...
+AUTH: Verifica del token JWT in corso...
+AUTH: Token JWT decodificato per utente: admin@refood.org
+AUTH: Ricerca del token nel database per /api/v1/notifiche/conteggio...
+AUTH: JTI estratto dal token: b0d7fb48462ae7a07e0d72af9f741596
+2025-03-24 14:04:21 [36mdebug[39m: [36mSQL get: [39m
+[36m      SELECT [39m
+[36m        u.id, u.email, u.nome, u.cognome, u.ruolo,[39m
+[36m        t.access_token_scadenza, t.revocato[39m
+[36m      FROM TokenAutenticazione t[39m
+[36m      JOIN Utenti u ON t.utente_id = u.id[39m
+[36m      WHERE t.access_token = ?[39m
+[36m      AND t.access_token_scadenza > datetime('now')[39m
+[36m      AND t.revocato = 0[39m
+[36m      AND NOT EXISTS ([39m
+[36m        SELECT 1 FROM TokenRevocati tr [39m
+[36m        WHERE tr.token_hash = ?[39m
+[36m      )[39m
+[36m    [39m
+2025-03-24 14:04:21 [36mdebug[39m: [36mParametri: ["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjMsImVtYWlsIjoiYWRtaW5AcmVmb29kLm9yZyIsIm5vbWUiOiJBZG1pbiIsImNvZ25vbWUiOiJSZWZvb2QiLCJydW9sbyI6IkFtbWluaXN0cmF0b3JlIiwianRpIjoiYjBkN2ZiNDg0NjJhZTdhMDdlMGQ3MmFmOWY3NDE1OTYiLCJpYXQiOjE3NDI4MjA4NjEsImV4cCI6MTc0MjgyNDQ2MX0.LHQZ0plYyL0rjH83EU-iHYMZysv09Yf0onPdIhvZnek","b0d7fb48462ae7a07e0d72af9f741596"][39m
+2025-03-24 14:04:21 [36mdebug[39m: [36mQuery get completata (1ms), risultato: trovato[39m
+AUTH: Autenticazione riuscita per utente admin@refood.org con ruolo Amministratore per /api/v1/notifiche/conteggio
+AUTH: Verifica del token JWT completata
+2025-03-24 14:04:21 [32minfo[39m: [32mRichiesta conteggio notifiche non lette per l'utente 3[39m
+2025-03-24 14:04:21 [36mdebug[39m: [36mSQL get: SELECT COUNT(*) as count FROM Notifiche WHERE destinatario_id = ? AND letto = 0 AND eliminato = 0[39m
+2025-03-24 14:04:21 [36mdebug[39m: [36mParametri: [3][39m
+2025-03-24 14:04:21 [36mdebug[39m: [36mQuery get completata (0ms), risultato: trovato[39m
+2025-03-24 14:04:21 [32minfo[39m: [32m0 notifiche non lette per l'utente 3[39m
+2025-03-24 14:04:21 [35mhttp[39m: [35m[0mGET /api/v1/notifiche/conteggio [36m304[0m 5.197 ms - -[0m[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+Percorso assoluto del database: /home/denny/Documenti/Tesi/database/refood.db
+2025-03-24 14:04:41 [32minfo[39m: [32mModuli caricati:[39m
+2025-03-24 14:04:41 [32minfo[39m: [32mServer avviato sulla porta 3000 in modalità development[39m
+2025-03-24 14:04:41 [32minfo[39m: [32mAPI disponibili su http://localhost:3000/api/v1[39m
+2025-03-24 14:04:41 [32minfo[39m: [32mDocumentazione API su http://localhost:3000/api-docs[39m
+2025-03-24 14:04:41 [32minfo[39m: [32mScheduler per aggiornamento stato lotti configurato[39m
+2025-03-24 14:04:41 [32minfo[39m: [32mScheduler inizializzato con successo[39m
+2025-03-24 14:04:41 [32minfo[39m: [32mConnesso al database SQLite: /home/denny/Documenti/Tesi/database/refood.db[39m
+2025-03-24 14:05:07 [32minfo[39m: [32mRicevuto segnale SIGTERM. Chiusura del server...[39m
+2025-03-24 14:05:07 [32minfo[39m: [32mScheduler arrestato[39m
+2025-03-24 14:05:07 [32minfo[39m: [32mServer chiuso correttamente[39m

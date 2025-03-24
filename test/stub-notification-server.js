@@ -9,147 +9,213 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 
 const app = express();
-const PORT = 3001;
+const port = 3030;
 
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
 
-// Dati di esempio
-const sampleNotifications = [
+// Database in memoria per le notifiche
+let notifiche = [
   {
     id: 1,
     titolo: 'Benvenuto in ReFood',
-    messaggio: 'Grazie per aver installato la nostra app!',
+    messaggio: 'Grazie per aver installato ReFood! Qui riceverai notifiche su eventi importanti come cambiamenti di stato dei lotti, prenotazioni, e altro.',
     tipo: 'Alert',
     priorita: 'Alta',
     letta: false,
     data: new Date().toISOString(),
-    dataCreazione: new Date().toISOString(),
+    dataCreazione: new Date().toISOString()
   },
   {
     id: 2,
     titolo: 'Nuovo lotto disponibile',
-    messaggio: 'Un nuovo lotto di prodotti è disponibile presso il Centro Test.',
+    messaggio: 'Un nuovo lotto di prodotti è disponibile. Controlla la lista dei lotti per maggiori dettagli.',
     tipo: 'CambioStato',
     priorita: 'Media',
-    letta: true,
-    data: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-    dataCreazione: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-    dataLettura: new Date().toISOString(),
+    letta: false,
+    data: new Date(Date.now() - 3600000).toISOString(), // 1 ora fa
+    dataCreazione: new Date(Date.now() - 3600000).toISOString()
   },
   {
     id: 3,
-    titolo: 'Prenotazione confermata',
-    messaggio: 'La tua prenotazione #123 è stata confermata.',
+    titolo: 'La tua prenotazione è stata confermata',
+    messaggio: 'La tua prenotazione per il lotto #1234 è stata confermata dal sistema.',
     tipo: 'Prenotazione',
     priorita: 'Bassa',
-    letta: false,
-    data: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
-    dataCreazione: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+    letta: true,
+    data: new Date(Date.now() - 7200000).toISOString(), // 2 ore fa
+    dataCreazione: new Date(Date.now() - 7200000).toISOString()
   }
 ];
 
-// Endpoint per ottenere le notifiche
+let nextId = notifiche.length + 1;
+
+// Endpoint per ottenere tutte le notifiche
 app.get('/api/v1/notifiche', (req, res) => {
-  console.log('GET /api/v1/notifiche');
-  const { letta } = req.query;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const tipo = req.query.tipo;
+  const priorita = req.query.priorita;
+  const letta = req.query.letta !== undefined ? req.query.letta === 'true' : undefined;
   
-  let filteredNotifications = [...sampleNotifications];
+  console.log(`GET /api/v1/notifiche - Query params:`, req.query);
   
-  // Applica filtro per notifiche lette/non lette
-  if (letta !== undefined) {
-    const isRead = letta === 'true';
-    filteredNotifications = filteredNotifications.filter(n => n.letta === isRead);
+  // Filtraggio
+  let risultati = [...notifiche];
+  
+  if (tipo) {
+    risultati = risultati.filter(n => n.tipo === tipo);
   }
   
+  if (priorita) {
+    risultati = risultati.filter(n => n.priorita === priorita);
+  }
+  
+  if (letta !== undefined) {
+    risultati = risultati.filter(n => n.letta === letta);
+  }
+  
+  // Paginazione
+  const startIndex = (page - 1) * limit;
+  const endIndex = page * limit;
+  const paginatedResults = risultati.slice(startIndex, endIndex);
+  
   res.json({
-    data: filteredNotifications,
+    data: paginatedResults,
     pagination: {
-      page: 1,
-      limit: 20,
-      total: filteredNotifications.length,
-      pages: 1
+      total: risultati.length,
+      currentPage: page,
+      totalPages: Math.ceil(risultati.length / limit)
     }
   });
 });
 
-// Endpoint per il conteggio delle notifiche
+// Endpoint per ottenere il conteggio delle notifiche non lette
 app.get('/api/v1/notifiche/conteggio', (req, res) => {
   console.log('GET /api/v1/notifiche/conteggio');
-  const { letta } = req.query;
   
-  let count = sampleNotifications.length;
-  
-  // Conta solo le notifiche lette/non lette
-  if (letta !== undefined) {
-    const isRead = letta === 'true';
-    count = sampleNotifications.filter(n => n.letta === isRead).length;
-  }
+  const nonLette = notifiche.filter(n => !n.letta).length;
   
   res.json({
-    totale: count
+    count: nonLette
   });
 });
 
-// Endpoint per il dettaglio di una notifica
+// Endpoint per ottenere una singola notifica per ID
 app.get('/api/v1/notifiche/:id', (req, res) => {
-  console.log(`GET /api/v1/notifiche/${req.params.id}`);
-  const notification = sampleNotifications.find(n => n.id === parseInt(req.params.id));
+  const id = parseInt(req.params.id);
+  console.log(`GET /api/v1/notifiche/${id}`);
   
-  if (!notification) {
-    return res.status(404).json({ error: 'Notifica non trovata' });
+  const notifica = notifiche.find(n => n.id === id);
+  
+  if (!notifica) {
+    return res.status(404).json({ 
+      message: 'Notifica non trovata',
+      error: true 
+    });
   }
   
-  res.json(notification);
+  res.json({ data: notifica });
 });
 
 // Endpoint per segnare una notifica come letta
 app.put('/api/v1/notifiche/:id/letta', (req, res) => {
-  console.log(`PUT /api/v1/notifiche/${req.params.id}/letta`);
-  const index = sampleNotifications.findIndex(n => n.id === parseInt(req.params.id));
+  const id = parseInt(req.params.id);
+  console.log(`PUT /api/v1/notifiche/${id}/letta`);
+  
+  const index = notifiche.findIndex(n => n.id === id);
   
   if (index === -1) {
-    return res.status(404).json({ error: 'Notifica non trovata' });
+    return res.status(404).json({ 
+      message: 'Notifica non trovata',
+      error: true 
+    });
   }
   
-  sampleNotifications[index].letta = true;
-  sampleNotifications[index].dataLettura = new Date().toISOString();
+  notifiche[index].letta = true;
   
-  res.json({ success: true });
+  res.json({ 
+    success: true,
+    data: notifiche[index]
+  });
 });
 
 // Endpoint per segnare tutte le notifiche come lette
-app.post('/api/v1/notifiche/segna-tutte-lette', (req, res) => {
-  console.log('POST /api/v1/notifiche/segna-tutte-lette');
+app.put('/api/v1/notifiche/lette', (req, res) => {
+  console.log('PUT /api/v1/notifiche/lette');
   
-  sampleNotifications.forEach(n => {
-    if (!n.letta) {
-      n.letta = true;
-      n.dataLettura = new Date().toISOString();
-    }
+  notifiche = notifiche.map(n => ({ ...n, letta: true }));
+  
+  res.json({ 
+    success: true,
+    message: 'Tutte le notifiche sono state segnate come lette'
   });
-  
-  res.json({ success: true });
 });
 
 // Endpoint per eliminare una notifica
 app.delete('/api/v1/notifiche/:id', (req, res) => {
-  console.log(`DELETE /api/v1/notifiche/${req.params.id}`);
-  const index = sampleNotifications.findIndex(n => n.id === parseInt(req.params.id));
+  const id = parseInt(req.params.id);
+  console.log(`DELETE /api/v1/notifiche/${id}`);
+  
+  const index = notifiche.findIndex(n => n.id === id);
   
   if (index === -1) {
-    return res.status(404).json({ error: 'Notifica non trovata' });
+    return res.status(404).json({ 
+      message: 'Notifica non trovata',
+      error: true 
+    });
   }
   
-  sampleNotifications.splice(index, 1);
+  notifiche.splice(index, 1);
   
-  res.json({ success: true });
+  res.json({ 
+    success: true,
+    message: 'Notifica eliminata con successo'
+  });
+});
+
+// Endpoint per creare una nuova notifica (utile per testare)
+app.post('/api/v1/notifiche', (req, res) => {
+  console.log('POST /api/v1/notifiche', req.body);
+  
+  const { titolo, messaggio, tipo, priorita } = req.body;
+  
+  if (!titolo || !messaggio) {
+    return res.status(400).json({
+      message: 'Titolo e messaggio sono campi obbligatori',
+      error: true
+    });
+  }
+  
+  const nuovaNotifica = {
+    id: nextId++,
+    titolo,
+    messaggio,
+    tipo: tipo || 'Alert',
+    priorita: priorita || 'Media',
+    letta: false,
+    data: new Date().toISOString(),
+    dataCreazione: new Date().toISOString()
+  };
+  
+  notifiche.unshift(nuovaNotifica); // Aggiungi all'inizio dell'array
+  
+  res.status(201).json({
+    success: true,
+    data: nuovaNotifica
+  });
 });
 
 // Avvia il server
-app.listen(PORT, () => {
-  console.log(`Server stub per notifiche attivo su http://localhost:${PORT}`);
-  console.log('Per testare le notifiche, modifica API_URL in config/constants.ts in modo che punti a questo server');
-  console.log(`API_URL dovrebbe essere: http://localhost:${PORT}/api/v1`);
+app.listen(port, () => {
+  console.log(`Server stub notifiche in esecuzione su http://localhost:${port}`);
+  console.log(`Endpoint disponibili:`);
+  console.log(`- GET /api/v1/notifiche`);
+  console.log(`- GET /api/v1/notifiche/conteggio`);
+  console.log(`- GET /api/v1/notifiche/:id`);
+  console.log(`- PUT /api/v1/notifiche/:id/letta`);
+  console.log(`- PUT /api/v1/notifiche/lette`);
+  console.log(`- DELETE /api/v1/notifiche/:id`);
+  console.log(`- POST /api/v1/notifiche`);
 }); 

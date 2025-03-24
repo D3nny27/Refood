@@ -1,20 +1,24 @@
-import { View, StyleSheet, ScrollView, RefreshControl, Alert, TouchableOpacity } from 'react-native';
-import { Card, Title, Paragraph, Button, ActivityIndicator, Text, Badge, IconButton } from 'react-native-paper';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { View, StyleSheet, ScrollView, RefreshControl, Alert, TouchableOpacity, Linking, Platform } from 'react-native';
+import { Card, Title, Paragraph, Button, ActivityIndicator, Text, Badge, IconButton, Chip, Avatar } from 'react-native-paper';
 import { useAuth } from '../../src/context/AuthContext';
-import { useEffect, useState } from 'react';
-import axios from 'axios';
-import { API_URL, STORAGE_KEYS } from '../../src/config/constants';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { PRIMARY_COLOR, RUOLI, STORAGE_KEYS, API_URL } from '../../src/config/constants';
 import { router } from 'expo-router';
-import React from 'react';
+import { format, addDays } from 'date-fns';
+import { it } from 'date-fns/locale';
+import notificheService from '../../src/services/notificheService';
+import { useNotifiche } from '../../src/context/NotificheContext';
+import Toast from 'react-native-toast-message';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function TabOneScreen() {
   const { user, logout } = useAuth();
+  const { nonLette } = useNotifiche(); // Utilizziamo il conteggio dal contesto delle notifiche
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [notifiche, setNotifiche] = useState<number>(0);
 
   const loadStats = async () => {
     try {
@@ -37,13 +41,6 @@ export default function TabOneScreen() {
       });
       
       setStats(response.data);
-      
-      // Simuliamo il caricamento delle notifiche (da implementare con API reale)
-      // Questo è solo un esempio, dovrà essere sostituito con la vera chiamata API
-      setTimeout(() => {
-        const notificheCount = Math.floor(Math.random() * 10); // Simulazione: 0-9 notifiche
-        setNotifiche(notificheCount);
-      }, 1000);
     } catch (err) {
       console.error('Error loading stats:', err);
       setError('Impossibile caricare le statistiche');
@@ -59,17 +56,22 @@ export default function TabOneScreen() {
   };
   
   const handleNotifichePress = () => {
-    if (user?.ruolo === 'Amministratore') {
-      router.push("/admin/utenti");
-    } else {
-      Alert.alert(
-        'Notifiche',
-        `Hai ${notifiche} notifiche non lette`,
-        [
-          { text: 'Visualizza tutte', onPress: () => console.log('Visualizza tutte le notifiche') },
-          { text: 'Chiudi', style: 'cancel' }
-        ]
-      );
+    // Vai sempre alla schermata delle notifiche, indipendentemente dal ruolo dell'utente
+    console.log('Navigazione alle notifiche via campanellino');
+    
+    // Forza la navigazione alla schermata notifiche
+    try {
+      // Prima prova a navigare direttamente
+      router.push('/notifiche/');
+      
+      // Se per qualche motivo fallisce, prova un altro percorso
+      setTimeout(() => {
+        router.navigate('/(tabs)/notifiche');
+      }, 100);
+    } catch (error) {
+      console.error('Errore nella navigazione alle notifiche:', error);
+      // Ultimo tentativo
+      router.navigate('/(tabs)/notifiche');
     }
   };
 
@@ -105,12 +107,12 @@ export default function TabOneScreen() {
               onPress={handleNotifichePress}
               style={styles.notificationIcon}
             />
-            {notifiche > 0 && (
+            {nonLette > 0 && (
               <Badge
                 style={styles.notificationBadge}
                 size={20}
               >
-                {notifiche}
+                {nonLette}
               </Badge>
             )}
           </View>
@@ -346,20 +348,73 @@ const AmministratoreContent = ({ stats, user }: { stats: any, user: any }) => {
   );
 };
 
-const CentroSocialeContent = ({ stats }: { stats: any }) => (
-  <Card style={styles.roleCard}>
-    <Card.Title title="Centro Sociale" />
-    <Card.Content>
-      <Paragraph>Visualizza e prenota i lotti disponibili.</Paragraph>
-      <Button mode="contained" style={styles.actionButton} icon="shopping">
-        Lotti Disponibili
-      </Button>
-      <Button mode="outlined" style={styles.actionButton} icon="history">
-        Le Mie Prenotazioni
-      </Button>
-    </Card.Content>
-  </Card>
-);
+const CentroSocialeContent = ({ stats }: { stats: any }) => {
+  // Funzione per navigare alla pagina dei lotti disponibili
+  const navigateToLottiDisponibili = () => {
+    console.log('Navigazione alla tab lotti invece che a lotti disponibili');
+    try {
+      // Naviga alla tab lotti invece che alla pagina lotti/disponibili
+      router.push('/(tabs)/lotti');
+    } catch (error) {
+      console.error('Errore durante la navigazione alla tab lotti:', error);
+      // Tentativo alternativo di navigazione
+      setTimeout(() => {
+        try {
+          router.navigate('/(tabs)/lotti');
+        } catch (fallbackError) {
+          console.error('Anche il tentativo di fallback è fallito:', fallbackError);
+          Toast.show({
+            type: 'error',
+            text1: 'Errore di navigazione',
+            text2: 'Impossibile accedere alla pagina dei lotti',
+            visibilityTime: 3000,
+          });
+        }
+      }, 100);
+    }
+  };
+
+  // Funzione per navigare alle prenotazioni
+  const navigateToPrenotazioni = () => {
+    console.log('Navigazione alle prenotazioni');
+    try {
+      router.push('/prenotazioni');
+    } catch (error) {
+      console.error('Errore durante la navigazione alle prenotazioni:', error);
+      // Tentativo alternativo di navigazione
+      setTimeout(() => {
+        router.push({
+          pathname: '/prenotazioni',
+        });
+      }, 100);
+    }
+  };
+
+  return (
+    <Card style={styles.roleCard}>
+      <Card.Title title="Centro Sociale" />
+      <Card.Content>
+        <Paragraph>Visualizza e prenota i lotti disponibili.</Paragraph>
+        <Button 
+          mode="contained" 
+          style={styles.actionButton} 
+          icon="shopping"
+          onPress={navigateToLottiDisponibili}
+        >
+          Lotti Disponibili
+        </Button>
+        <Button 
+          mode="outlined" 
+          style={styles.actionButton} 
+          icon="history"
+          onPress={navigateToPrenotazioni}
+        >
+          Le Mie Prenotazioni
+        </Button>
+      </Card.Content>
+    </Card>
+  );
+};
 
 const CentroRiciclaggioContent = ({ stats }: { stats: any }) => (
   <Card style={styles.roleCard}>

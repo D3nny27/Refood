@@ -1,5 +1,5 @@
 import { Stack, Slot, router, usePathname, useSegments } from 'expo-router';
-import { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { ActivityIndicator, View, StyleSheet, Text, Platform, AppState, AppStateStatus } from 'react-native';
 import { PaperProvider, MD3LightTheme as DefaultTheme, Button } from 'react-native-paper';
 import { PRIMARY_COLOR } from '../src/config/constants';
@@ -7,11 +7,14 @@ import { AuthProvider, useAuth } from '../src/context/AuthContext';
 import { NotificheProvider } from '../src/context/NotificheContext';
 import pushNotificationService from '../src/services/pushNotificationService';
 import * as Notifications from 'expo-notifications';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import LoginScreen from '../src/screens/LoginScreen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../src/config/constants';
 import Toast from 'react-native-toast-message';
 import logger from '../src/utils/logger';
+import { listenEvent, APP_EVENTS } from '../src/utils/events';
+import { emitEvent } from '../src/utils/events';
 
 // Definizione del tema personalizzato per react-native-paper
 const theme = {
@@ -27,13 +30,41 @@ const theme = {
 export default function RootLayout() {
   return (
     <PaperProvider theme={theme}>
-      <AuthProvider>
-        <NotificheProvider>
-          <RootLayoutNav />
-        </NotificheProvider>
-      </AuthProvider>
-      <Toast />
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <AuthProvider>
+          {/* Utilizziamo un wrapper View per isolare l'AuthProvider */}
+          <AuthProviderInitializer>
+            <Toast />
+          </AuthProviderInitializer>  
+        </AuthProvider>
+      </GestureHandlerRootView>
     </PaperProvider>
+  );
+}
+
+// Componente intermedio per garantire che AuthProvider sia completamente inizializzato
+function AuthProviderInitializer({ children }: { children: React.ReactNode }) {
+  // Ottieni l'autenticazione PRIMA di utilizzare NotificheProvider
+  const auth = useAuth();
+  
+  // Se l'autenticazione è in caricamento, mostra un loader
+  if (auth.isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+        <Text style={styles.loadingText}>Caricamento in corso...</Text>
+      </View>
+    );
+  }
+  
+  // Solo dopo che l'autenticazione è completamente inizializzata, renderizziamo NotificheProvider
+  return (
+    <>
+      <NotificheProvider>
+        <RootLayoutNav />
+      </NotificheProvider>
+      {children}
+    </>
   );
 }
 
@@ -50,6 +81,43 @@ function RootLayoutNav() {
     logger.log('RootLayoutNav - isAuthenticated:', isAuthenticated);
     logger.log('RootLayoutNav - user:', user ? `${user.email} (${user.ruolo})` : 'null');
   }, [user, isAuthenticated]);
+  
+  // Listener per eventi di token JWT scaduto usando il sistema di eventi personalizzato
+  useEffect(() => {
+    const handleJwtExpired = () => {
+      logger.warn('Evento JWT scaduto rilevato in RootLayoutNav');
+      
+      // Naviga alla schermata di login dopo un breve ritardo
+      setTimeout(() => {
+        // Utilizza safeNavigate per prevenire navigazioni multiple
+        if (!isNavigating) {
+          setIsNavigating(true);
+          
+          router.replace('/');
+          
+          // Mostra un messaggio all'utente
+          Toast.show({
+            type: 'info',
+            text1: 'Sessione scaduta',
+            text2: 'Effettua nuovamente il login per continuare',
+            visibilityTime: 5000,
+          });
+          
+          setTimeout(() => {
+            setIsNavigating(false);
+          }, 300);
+        }
+      }, 500);
+    };
+    
+    // Usa il sistema di eventi personalizzato invece di window.addEventListener
+    const removeListener = listenEvent(APP_EVENTS.JWT_EXPIRED, handleJwtExpired);
+    
+    // Cleanup quando il componente si smonta
+    return () => {
+      removeListener();
+    };
+  }, [isNavigating]);
 
   // Funzione sicura per la navigazione che previene navigazioni multiple simultanee
   const safeNavigate = (destination: any, params?: any) => {
@@ -83,6 +151,18 @@ function RootLayoutNav() {
           const success = await pushNotificationService.configurePushNotifications();
           if (success) {
             logger.log('Notifiche push configurate con successo');
+            
+            // Registra il token push con il server
+            try {
+              const registrationSuccess = await pushNotificationService.registerPushTokenWithServer();
+              if (registrationSuccess) {
+                logger.log('Token push registrato con successo sul server');
+              } else {
+                logger.warn('Impossibile registrare il token push con il server');
+              }
+            } catch (regError) {
+              logger.error('Errore durante la registrazione del token push:', regError);
+            }
             
             // Imposta i listener per le notifiche
             notificationListener.current = Notifications.addNotificationReceivedListener(
@@ -151,6 +231,18 @@ function RootLayoutNav() {
         refreshUserStatus().catch(err => {
           logger.error('Errore durante il refresh al ritorno attivo:', err);
         });
+        
+        // Aggiorna anche le notifiche quando l'app torna attiva
+        if (isAuthenticated) {
+          logger.log('Aggiorno le notifiche al ritorno attivo...');
+          
+          // Usa un piccolo ritardo per dare priorità all'aggiornamento auth
+          setTimeout(() => {
+            // Qui possiamo richiamare il metodo di refresh dal contesto delle notifiche
+            // usando una funzione globale o un event emitter
+            emitEvent(APP_EVENTS.REFRESH_NOTIFICATIONS);
+          }, 1000);
+        }
       }
     };
     
@@ -282,7 +374,7 @@ function RootLayoutNav() {
       })();
     }
     
-    // Invece di usare <LoginScreen /> direttamente, includiamolo in una View per evitare problemi di navigazione
+    // Torniamo ad usare View per evitare errori di tipo con Slot
     return (
       <View style={{ flex: 1 }}>
         <LoginScreen />
@@ -302,11 +394,7 @@ function RootLayoutNav() {
     >
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="admin" options={{ headerShown: false }} />
-      
-      {/* Rimuovo la rotta lotti che non esiste come figlio diretto */}
       <Stack.Screen name="lotti/nuovo" options={{ headerShown: false }} />
-      
-      {/* Dichiarazione esplicita di tutte le rotte per le notifiche */}
       <Stack.Screen name="notifiche/index" options={{ headerShown: false }} />
       <Stack.Screen name="notifiche/[id]" options={{ headerShown: false }} />
     </Stack>

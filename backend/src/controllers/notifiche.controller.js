@@ -3,188 +3,728 @@ const { ApiError } = require('../middlewares/errorHandler');
 const logger = require('../utils/logger');
 
 /**
- * Ottiene l'elenco delle notifiche per l'utente corrente
+ * Funzione di utilità per trovare automaticamente un centro valido e gli amministratori associati
+ * Può essere usata per test automatici o per implementare logiche che non dipendono da ID specifici
+ * @returns {Promise<{centro: Object, amministratori: Array}>} Un oggetto con il centro e i suoi amministratori
+ */
+async function trovaCentroConAmministratori() {
+  try {
+    // Prima troviamo tutti i centri
+    const centri = await db.all(`
+      SELECT c.id, c.nome, c.tipo,
+        (SELECT COUNT(*) FROM UtentiCentri uc 
+         JOIN Utenti u ON uc.utente_id = u.id 
+         WHERE uc.centro_id = c.id AND u.ruolo = 'Amministratore') AS num_amministratori
+      FROM Centri c
+      ORDER BY num_amministratori DESC
+    `);
+    
+    if (!centri || centri.length === 0) {
+      logger.warn('Nessun centro trovato nel database');
+      return null;
+    }
+    
+    // Prendiamo il primo centro che ha amministratori associati
+    const centro = centri.find(c => c.num_amministratori > 0) || centri[0];
+    
+    // Troviamo gli amministratori associati a questo centro
+    const amministratori = await db.all(`
+      SELECT u.id, u.nome, u.cognome, u.email
+      FROM Utenti u
+      JOIN UtentiCentri uc ON u.id = uc.utente_id
+      WHERE uc.centro_id = ? AND u.ruolo = 'Amministratore'
+    `, [centro.id]);
+    
+    logger.info(`Trovato centro ID ${centro.id} con ${amministratori.length} amministratori associati`);
+    
+    return {
+      centro,
+      amministratori
+    };
+  } catch (error) {
+    logger.error(`Errore nella ricerca di un centro con amministratori: ${error.message}`);
+    return null;
+  }
+}
+
+/**
+ * Ottiene tutte le notifiche per l'utente corrente
+ * con supporto per paginazione e filtri
  */
 exports.getNotifiche = async (req, res, next) => {
   try {
-    const { letto, page = 1, limit = 20 } = req.query;
+    const userId = req.user.id;
+    const { page = 1, limit = 20, tipo, priorita, letta } = req.query;
     const offset = (page - 1) * limit;
     
-    // Costruzione della query base
+    logger.info(`Richiesta notifiche per utente ${userId} con filtri: ${JSON.stringify(req.query)}`);
+    
+    // Costruzione della query di base
     let query = `
-      SELECT *
-      FROM Notifiche
-      WHERE destinatario_id = ?
+      SELECT 
+        n.*,
+        u.nome AS origine_nome,
+        u.cognome AS origine_cognome,
+        c.nome AS centro_nome
+      FROM Notifiche n
+      LEFT JOIN Utenti u ON n.origine_id = u.id
+      LEFT JOIN Centri c ON n.centro_id = c.id
+      WHERE n.destinatario_id = ? AND n.eliminato = 0
     `;
     
     // Array per i parametri della query
-    const params = [req.user.id];
+    const params = [userId];
     
     // Aggiunta dei filtri
-    if (letto !== undefined) {
-      query += ` AND letto = ?`;
-      params.push(letto === 'true' || letto === '1' ? 1 : 0);
+    if (tipo) {
+      query += ` AND n.tipo = ?`;
+      params.push(tipo);
     }
     
-    // Query per contare il totale dei risultati e notifiche non lette
-    const countQuery = `SELECT COUNT(*) as total FROM Notifiche WHERE destinatario_id = ?`;
-    const countNonLetteQuery = `SELECT COUNT(*) as non_lette FROM Notifiche WHERE destinatario_id = ? AND letto = 0`;
+    if (priorita) {
+      query += ` AND n.priorita = ?`;
+      params.push(priorita);
+    }
+    
+    if (letta !== undefined) {
+      query += ` AND n.letto = ?`;
+      params.push(letta === 'true' ? 1 : 0);
+    }
+    
+    // Query per il conteggio totale
+    const countQuery = query.replace(
+      'SELECT \n        n.*,\n        u.nome AS origine_nome,\n        u.cognome AS origine_cognome,\n        c.nome AS centro_nome', 
+      'SELECT COUNT(*) as total'
+    );
+    
+    // Esecuzione della query di conteggio
+    const countResult = await db.get(countQuery, params);
+    const total = countResult ? countResult.total : 0;
+    
+    // Calcolo della paginazione
+    const totalPages = Math.ceil(total / limit);
     
     // Aggiunta dell'ordinamento e della paginazione
-    query += ` ORDER BY creato_il DESC LIMIT ? OFFSET ?`;
+    query += ` ORDER BY n.creato_il DESC LIMIT ? OFFSET ?`;
     params.push(parseInt(limit), offset);
     
-    // Esecuzione delle query
-    const [countResult, countNonLette] = await Promise.all([
-      db.get(countQuery, [req.user.id]),
-      db.get(countNonLetteQuery, [req.user.id])
-    ]);
-    
+    // Esecuzione della query principale
     const notifiche = await db.all(query, params);
     
-    // Calcolo info di paginazione
-    const total = countResult.total;
-    const pages = Math.ceil(total / limit);
+    // Formattazione della risposta
+    const formattedNotifiche = notifiche.map(n => ({
+      id: n.id,
+      titolo: n.titolo,
+      messaggio: n.messaggio,
+      tipo: n.tipo,
+      priorita: n.priorita,
+      letta: n.letto === 1,
+      data: n.creato_il,
+      dataCreazione: n.creato_il,
+      dataLettura: n.data_lettura,
+      origine: n.origine_id ? {
+        id: n.origine_id,
+        nome: `${n.origine_nome || ''} ${n.origine_cognome || ''}`.trim()
+      } : null,
+      centro: n.centro_id ? {
+        id: n.centro_id,
+        nome: n.centro_nome
+      } : null,
+      riferimento: n.riferimento_id ? {
+        id: n.riferimento_id,
+        tipo: n.riferimento_tipo
+      } : null
+    }));
+    
+    logger.info(`Restituite ${formattedNotifiche.length} notifiche per l'utente ${userId}`);
     
     res.json({
-      data: notifiche,
-      non_lette: countNonLette.non_lette,
+      data: formattedNotifiche,
       pagination: {
         total,
-        pages,
-        page: parseInt(page),
-        limit: parseInt(limit)
+        currentPage: parseInt(page),
+        totalPages
       }
     });
-  } catch (err) {
-    logger.error(`Errore nel recupero delle notifiche: ${err.message}`);
+  } catch (error) {
+    logger.error(`Errore nel recupero delle notifiche: ${error.message}`);
     next(new ApiError(500, 'Errore nel recupero delle notifiche'));
+  }
+};
+
+/**
+ * Ottiene il dettaglio di una notifica specifica
+ */
+exports.getNotificaById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    
+    logger.info(`Richiesta dettaglio notifica ${id} per utente ${userId}`);
+    
+    // Controllo dei permessi: un utente può vedere solo le proprie notifiche
+    const query = `
+      SELECT 
+        n.*,
+        u.nome AS origine_nome,
+        u.cognome AS origine_cognome,
+        c.nome AS centro_nome
+      FROM Notifiche n
+      LEFT JOIN Utenti u ON n.origine_id = u.id
+      LEFT JOIN Centri c ON n.centro_id = c.id
+      WHERE n.id = ? AND n.destinatario_id = ? AND n.eliminato = 0
+    `;
+    
+    const notifica = await db.get(query, [id, userId]);
+    
+    if (!notifica) {
+      logger.warn(`Notifica ${id} non trovata o non accessibile per l'utente ${userId}`);
+      return next(new ApiError(404, 'Notifica non trovata'));
+    }
+    
+    // Formattazione della notifica
+    const formattedNotifica = {
+      id: notifica.id,
+      titolo: notifica.titolo,
+      messaggio: notifica.messaggio,
+      tipo: notifica.tipo,
+      priorita: notifica.priorita,
+      letta: notifica.letto === 1,
+      data: notifica.creato_il,
+      dataCreazione: notifica.creato_il,
+      dataLettura: notifica.data_lettura,
+      origine: notifica.origine_id ? {
+        id: notifica.origine_id,
+        nome: `${notifica.origine_nome || ''} ${notifica.origine_cognome || ''}`.trim()
+      } : null,
+      centro: notifica.centro_id ? {
+        id: notifica.centro_id,
+        nome: notifica.centro_nome
+      } : null,
+      riferimento: notifica.riferimento_id ? {
+        id: notifica.riferimento_id,
+        tipo: notifica.riferimento_tipo
+      } : null
+    };
+    
+    res.json({ data: formattedNotifica });
+    
+  } catch (error) {
+    logger.error(`Errore nel recupero della notifica ${req.params.id}: ${error.message}`);
+    next(new ApiError(500, 'Errore nel recupero della notifica'));
+  }
+};
+
+/**
+ * Crea una nuova notifica
+ */
+exports.createNotifica = async (req, res, next) => {
+  try {
+    const { 
+      titolo, 
+      messaggio, 
+      tipo = 'Alert', 
+      priorita = 'Media', 
+      destinatario_id,
+      riferimento_id,
+      riferimento_tipo,
+      centro_id
+    } = req.body;
+    
+    // Validazione dei dati obbligatori
+    if (!titolo || !messaggio || !destinatario_id) {
+      return next(new ApiError(400, 'Titolo, messaggio e destinatario_id sono campi obbligatori'));
+    }
+    
+    // Verifica che il destinatario esista
+    const destinatario = await db.get('SELECT id FROM Utenti WHERE id = ?', [destinatario_id]);
+    if (!destinatario) {
+      return next(new ApiError(404, 'Destinatario non trovato'));
+    }
+    
+    // L'utente corrente è l'origine della notifica
+    const origine_id = req.user.id;
+    
+    // Inserimento della notifica nel database
+    const insertQuery = `
+      INSERT INTO Notifiche (
+        titolo, 
+        messaggio, 
+        tipo, 
+        priorita, 
+        destinatario_id,
+        origine_id,
+        riferimento_id,
+        riferimento_tipo,
+        centro_id,
+        creato_il
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `;
+    
+    const result = await db.run(
+      insertQuery, 
+      [
+        titolo, 
+        messaggio, 
+        tipo, 
+        priorita, 
+        destinatario_id, 
+        origine_id,
+        riferimento_id || null,
+        riferimento_tipo || null,
+        centro_id || null
+      ]
+    );
+    
+    if (!result || !result.lastID) {
+      return next(new ApiError(500, 'Errore nella creazione della notifica'));
+    }
+    
+    logger.info(`Creata notifica con ID ${result.lastID} per l'utente ${destinatario_id}`);
+    
+    // Recupero della notifica completa
+    const notifica = await db.get(
+      'SELECT * FROM Notifiche WHERE id = ?',
+      [result.lastID]
+    );
+    
+    // Formattazione della risposta
+    const formattedNotifica = {
+      id: notifica.id,
+      titolo: notifica.titolo,
+      messaggio: notifica.messaggio,
+      tipo: notifica.tipo,
+      priorita: notifica.priorita,
+      letta: notifica.letto === 1,
+      dataCreazione: notifica.creato_il
+    };
+    
+    res.status(201).json({
+      success: true,
+      message: 'Notifica creata con successo',
+      data: formattedNotifica
+    });
+    
+  } catch (error) {
+    logger.error(`Errore nella creazione della notifica: ${error.message}`);
+    next(new ApiError(500, 'Errore nella creazione della notifica'));
   }
 };
 
 /**
  * Segna una notifica come letta
  */
-exports.segnaComeLetta = async (req, res, next) => {
+exports.markAsRead = async (req, res, next) => {
   try {
-    const notificaId = req.params.id;
+    const { id } = req.params;
+    const userId = req.user.id;
     
-    // Verifica che la notifica esista ed appartenga all'utente
+    logger.info(`Richiesta di segnare come letta la notifica ${id} per l'utente ${userId}`);
+    
+    // Verifica che la notifica esista e appartenga all'utente
     const notifica = await db.get(
-      'SELECT * FROM Notifiche WHERE id = ? AND destinatario_id = ?',
-      [notificaId, req.user.id]
+      'SELECT id, letto FROM Notifiche WHERE id = ? AND destinatario_id = ? AND eliminato = 0',
+      [id, userId]
     );
     
     if (!notifica) {
       return next(new ApiError(404, 'Notifica non trovata'));
+    }
+    
+    // Se la notifica è già stata letta, non fare nulla
+    if (notifica.letto === 1) {
+      return res.json({
+        success: true,
+        message: 'La notifica era già stata segnata come letta'
+      });
     }
     
     // Aggiorna lo stato della notifica
     await db.run(
-      'UPDATE Notifiche SET letto = 1 WHERE id = ?',
-      [notificaId]
+      'UPDATE Notifiche SET letto = 1, data_lettura = datetime("now") WHERE id = ?',
+      [id]
     );
     
+    logger.info(`Notifica ${id} segnata come letta`);
+    
     res.json({
-      id: parseInt(notificaId),
-      letto: true,
-      messaggio: 'Notifica segnata come letta'
+      success: true,
+      message: 'Notifica segnata come letta'
     });
-  } catch (err) {
-    logger.error(`Errore nell'aggiornamento della notifica: ${err.message}`);
-    next(new ApiError(500, 'Errore nell\'aggiornamento della notifica'));
+    
+  } catch (error) {
+    logger.error(`Errore nel segnare come letta la notifica ${req.params.id}: ${error.message}`);
+    next(new ApiError(500, 'Errore nel segnare la notifica come letta'));
   }
 };
 
 /**
- * Segna tutte le notifiche dell'utente come lette
+ * Segna tutte le notifiche come lette
  */
-exports.segnaLeggiTutte = async (req, res, next) => {
+exports.markAllAsRead = async (req, res, next) => {
   try {
+    const userId = req.user.id;
+    
+    logger.info(`Richiesta di segnare tutte le notifiche come lette per l'utente ${userId}`);
+    
     // Aggiorna tutte le notifiche non lette dell'utente
     const result = await db.run(
-      'UPDATE Notifiche SET letto = 1 WHERE destinatario_id = ? AND letto = 0',
-      [req.user.id]
+      'UPDATE Notifiche SET letto = 1, data_lettura = datetime("now") WHERE destinatario_id = ? AND letto = 0 AND eliminato = 0',
+      [userId]
     );
     
+    logger.info(`${result.changes || 0} notifiche segnate come lette per l'utente ${userId}`);
+    
     res.json({
-      notifiche_aggiornate: result.changes,
-      messaggio: 'Tutte le notifiche sono state segnate come lette'
-    });
-  } catch (err) {
-    logger.error(`Errore nell'aggiornamento delle notifiche: ${err.message}`);
-    next(new ApiError(500, 'Errore nell\'aggiornamento delle notifiche'));
-  }
-};
-
-/**
- * Invia una notifica agli utenti (utility per altri controllers)
- * @param {Object} options - Opzioni della notifica
- * @param {string} options.tipo - Tipo di notifica
- * @param {string} options.messaggio - Messaggio della notifica
- * @param {number|number[]} options.destinatario_id - ID o array di ID dei destinatari
- * @returns {Promise} - Promise che risolve con le notifiche create
- */
-exports.inviaNotifica = async (options) => {
-  try {
-    const { tipo, messaggio, destinatario_id } = options;
-    
-    // Converte l'ID in array se è un singolo valore
-    const destinatari = Array.isArray(destinatario_id) ? destinatario_id : [destinatario_id];
-    
-    // Prepara le query per inserimenti multipli
-    const placeholders = destinatari.map(() => '(?, ?, ?, ?)').join(', ');
-    const params = [];
-    
-    destinatari.forEach(id => {
-      params.push(tipo, messaggio, id, 0);
-    });
-    
-    const query = `
-      INSERT INTO Notifiche (tipo, messaggio, destinatario_id, letto)
-      VALUES ${placeholders}
-    `;
-    
-    const result = await db.run(query, params);
-    
-    logger.info(`Inviate ${destinatari.length} notifiche di tipo "${tipo}"`);
-    
-    return {
       success: true,
-      notifiche_create: result.changes
-    };
-  } catch (err) {
-    logger.error(`Errore nell'invio delle notifiche: ${err.message}`);
-    throw err;
+      message: `${result.changes || 0} notifiche segnate come lette`
+    });
+    
+  } catch (error) {
+    logger.error(`Errore nel segnare tutte le notifiche come lette: ${error.message}`);
+    next(new ApiError(500, 'Errore nel segnare tutte le notifiche come lette'));
   }
 };
 
 /**
- * Elimina una notifica
+ * Elimina una notifica (soft delete)
  */
-exports.eliminaNotifica = async (req, res, next) => {
+exports.deleteNotifica = async (req, res, next) => {
   try {
-    const notificaId = req.params.id;
+    const { id } = req.params;
+    const userId = req.user.id;
     
-    // Verifica che la notifica esista ed appartenga all'utente
+    logger.info(`Richiesta di eliminazione della notifica ${id} per l'utente ${userId}`);
+    
+    // Verifica che la notifica esista e appartenga all'utente
     const notifica = await db.get(
-      'SELECT * FROM Notifiche WHERE id = ? AND destinatario_id = ?',
-      [notificaId, req.user.id]
+      'SELECT id, eliminato FROM Notifiche WHERE id = ? AND destinatario_id = ?',
+      [id, userId]
     );
     
     if (!notifica) {
       return next(new ApiError(404, 'Notifica non trovata'));
     }
     
-    // Elimina la notifica
-    await db.run('DELETE FROM Notifiche WHERE id = ?', [notificaId]);
+    // Se la notifica è già stata eliminata, non fare nulla
+    if (notifica.eliminato === 1) {
+      return res.json({
+        success: true,
+        message: 'La notifica era già stata eliminata'
+      });
+    }
+    
+    // Soft delete della notifica
+    await db.run(
+      'UPDATE Notifiche SET eliminato = 1 WHERE id = ?',
+      [id]
+    );
+    
+    logger.info(`Notifica ${id} eliminata (soft delete)`);
     
     res.json({
-      id: parseInt(notificaId),
-      messaggio: 'Notifica eliminata con successo'
+      success: true,
+      message: 'Notifica eliminata con successo'
     });
-  } catch (err) {
-    logger.error(`Errore nell'eliminazione della notifica: ${err.message}`);
+    
+  } catch (error) {
+    logger.error(`Errore nell'eliminazione della notifica ${req.params.id}: ${error.message}`);
     next(new ApiError(500, 'Errore nell\'eliminazione della notifica'));
+  }
+};
+
+/**
+ * Invia una notifica a tutti gli amministratori di un centro
+ */
+exports.notifyAdmins = async (req, res, next) => {
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    const { centro_id } = req.params;
+    const { 
+      titolo, 
+      messaggio, 
+      tipo = 'LottoModificato', 
+      priorita = 'Media',
+      riferimento_id,
+      riferimento_tipo
+    } = req.body;
+    
+    logger.info(`Richiesta di invio notifica agli amministratori del centro ${centro_id}`);
+    
+    // Validazione dei dati obbligatori
+    if (!titolo || !messaggio) {
+      await connection.rollback();
+      return next(new ApiError(400, 'Titolo e messaggio sono campi obbligatori'));
+    }
+    
+    // Verifica che il centro esista
+    const centro = await connection.get('SELECT id FROM Centri WHERE id = ?', [centro_id]);
+    if (!centro) {
+      await connection.rollback();
+      return next(new ApiError(404, 'Centro non trovato'));
+    }
+    
+    // Trova gli amministratori del centro
+    const query = `
+      SELECT u.id 
+      FROM Utenti u
+      JOIN UtentiCentri uc ON u.id = uc.utente_id
+      WHERE uc.centro_id = ? 
+      AND u.ruolo = 'Amministratore'
+    `;
+    
+    const amministratori = await connection.all(query, [centro_id]);
+    
+    if (!amministratori || amministratori.length === 0) {
+      logger.warn(`Nessun amministratore trovato per il centro ${centro_id}`);
+      await connection.rollback();
+      return res.status(200).json({
+        success: true,
+        message: 'Nessun amministratore trovato per questo centro',
+        notifiche_inviate: 0
+      });
+    }
+    
+    // L'utente corrente è l'origine della notifica
+    const origine_id = req.user.id;
+    
+    // Inserisci una notifica per ogni amministratore
+    const insertQuery = `
+      INSERT INTO Notifiche (
+        titolo, 
+        messaggio, 
+        tipo, 
+        priorita, 
+        destinatario_id,
+        origine_id,
+        riferimento_id,
+        riferimento_tipo,
+        centro_id,
+        creato_il
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `;
+    
+    let notificheInviate = 0;
+    
+    for (const admin of amministratori) {
+      try {
+        // Salta l'invio se l'amministratore è l'utente stesso che sta creando la notifica
+        if (admin.id === origine_id) {
+          logger.info(`Saltato invio a se stessi (admin ${admin.id})`);
+          continue;
+        }
+        
+        const result = await connection.run(
+          insertQuery, 
+          [
+            titolo, 
+            messaggio, 
+            tipo, 
+            priorita, 
+            admin.id, // destinatario
+            origine_id, // origine
+            riferimento_id || null,
+            riferimento_tipo || null,
+            centro_id
+          ]
+        );
+        
+        if (result && result.lastID) {
+          notificheInviate++;
+          logger.info(`Notifica inviata all'amministratore ${admin.id}`);
+        }
+      } catch (insertError) {
+        logger.error(`Errore nell'invio della notifica all'amministratore ${admin.id}: ${insertError.message}`);
+        // Continua con gli altri amministratori
+      }
+    }
+    
+    // Commit della transazione
+    await connection.commit();
+    
+    logger.info(`Inviate ${notificheInviate} notifiche agli amministratori del centro ${centro_id}`);
+    
+    res.status(200).json({
+      success: true,
+      message: `Inviate ${notificheInviate} notifiche agli amministratori`,
+      notifiche_inviate: notificheInviate
+    });
+    
+  } catch (error) {
+    await connection.rollback();
+    logger.error(`Errore nell'invio delle notifiche agli amministratori: ${error.message}`);
+    next(new ApiError(500, 'Errore nell\'invio delle notifiche agli amministratori'));
+  } finally {
+    connection.release();
+  }
+};
+
+/**
+ * Conta le notifiche non lette per l'utente corrente
+ */
+exports.countUnread = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    
+    logger.info(`Richiesta conteggio notifiche non lette per l'utente ${userId}`);
+    
+    const result = await db.get(
+      'SELECT COUNT(*) as count FROM Notifiche WHERE destinatario_id = ? AND letto = 0 AND eliminato = 0',
+      [userId]
+    );
+    
+    const count = result ? result.count : 0;
+    
+    logger.info(`${count} notifiche non lette per l'utente ${userId}`);
+    
+    res.json({ count });
+    
+  } catch (error) {
+    logger.error(`Errore nel conteggio delle notifiche non lette: ${error.message}`);
+    next(new ApiError(500, 'Errore nel conteggio delle notifiche non lette'));
+  }
+};
+
+/**
+ * Sincronizza una notifica locale con il server
+ */
+exports.syncLocalNotifica = async (req, res, next) => {
+  try {
+    const { 
+      titolo, 
+      messaggio, 
+      tipo = 'Alert', 
+      priorita = 'Media',
+      letta = false,
+      dataCreazione
+    } = req.body;
+    
+    const userId = req.user.id;
+    
+    logger.info(`Richiesta di sincronizzazione notifica locale per l'utente ${userId}`);
+    
+    // Validazione dei dati
+    if (!titolo || !messaggio) {
+      return next(new ApiError(400, 'Titolo e messaggio sono campi obbligatori'));
+    }
+    
+    // Inserimento della notifica nel database
+    const insertQuery = `
+      INSERT INTO Notifiche (
+        titolo, 
+        messaggio, 
+        tipo, 
+        priorita, 
+        destinatario_id,
+        origine_id,
+        letto,
+        data_lettura,
+        creato_il
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    
+    const lettoValue = letta ? 1 : 0;
+    const dataLetturaValue = letta ? new Date().toISOString() : null;
+    const dataCreataValue = dataCreazione || new Date().toISOString();
+    
+    const result = await db.run(
+      insertQuery, 
+      [
+        titolo, 
+        messaggio, 
+        tipo, 
+        priorita, 
+        userId, 
+        userId,
+        lettoValue,
+        dataLetturaValue,
+        dataCreataValue
+      ]
+    );
+    
+    if (!result || !result.lastID) {
+      return next(new ApiError(500, 'Errore nella sincronizzazione della notifica'));
+    }
+    
+    logger.info(`Sincronizzata notifica locale con ID ${result.lastID} per l'utente ${userId}`);
+    
+    // Recupero della notifica completa
+    const notifica = await db.get(
+      'SELECT * FROM Notifiche WHERE id = ?',
+      [result.lastID]
+    );
+    
+    // Formattazione della risposta
+    const formattedNotifica = {
+      id: notifica.id,
+      titolo: notifica.titolo,
+      messaggio: notifica.messaggio,
+      tipo: notifica.tipo,
+      priorita: notifica.priorita,
+      letta: notifica.letto === 1,
+      dataCreazione: notifica.creato_il,
+      dataLettura: notifica.data_lettura
+    };
+    
+    res.status(201).json({
+      success: true,
+      message: 'Notifica sincronizzata con successo',
+      data: formattedNotifica
+    });
+    
+  } catch (error) {
+    logger.error(`Errore nella sincronizzazione della notifica: ${error.message}`);
+    console.error('Stack errore:', error.stack);
+    console.error('Dettagli errore:', JSON.stringify(error));
+    
+    return res.status(500).json({
+      status: 'error',
+      message: 'Errore nella sincronizzazione della notifica',
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+/**
+ * Restituisce un centro valido per i test di notifica
+ * Utile per il client mobile per ottenere un centro_id valido
+ * per testare l'invio di notifiche agli amministratori
+ */
+exports.getCentroTestNotifiche = async (req, res, next) => {
+  try {
+    const risultato = await trovaCentroConAmministratori();
+    
+    if (!risultato) {
+      return next(new ApiError(404, 'Nessun centro con amministratori trovato'));
+    }
+    
+    // Formatta la risposta includendo solo le informazioni essenziali
+    const response = {
+      centro: {
+        id: risultato.centro.id,
+        nome: risultato.centro.nome,
+        tipo: risultato.centro.tipo,
+        num_amministratori: risultato.amministratori.length
+      },
+      amministratori: risultato.amministratori.map(admin => ({
+        id: admin.id,
+        nome: `${admin.nome} ${admin.cognome}`.trim(),
+        email: admin.email
+      }))
+    };
+    
+    logger.info(`Restituito centro di test ID ${risultato.centro.id} con ${risultato.amministratori.length} amministratori`);
+    
+    res.json({
+      success: true,
+      data: response
+    });
+    
+  } catch (error) {
+    logger.error(`Errore nel recupero del centro di test: ${error.message}`);
+    next(new ApiError(500, 'Errore nel recupero del centro di test'));
   }
 }; 

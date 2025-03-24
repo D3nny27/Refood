@@ -126,19 +126,19 @@ export const refreshToken = async (): Promise<string | null> => {
     }
     
     console.log('Tentativo di refresh del token...');
-    const response = await axios.post(`${API_URL}/auth/refresh`, { refreshToken });
+    const response = await axios.post(`${API_URL}/auth/refresh-token`, { refresh_token: refreshToken });
     
-    if (response.status === 200 && response.data.token) {
+    if (response.status === 200 && response.data.access_token) {
       // Salva il nuovo token
-      await saveToken(response.data.token);
+      await saveToken(response.data.access_token);
       console.log('Token rinnovato con successo');
       
       // Se c'è un nuovo refresh token, salvalo
-      if (response.data.refreshToken) {
-        await saveRefreshToken(response.data.refreshToken);
+      if (response.data.refresh_token) {
+        await saveRefreshToken(response.data.refresh_token);
       }
       
-      return response.data.token;
+      return response.data.access_token;
     } else {
       console.log('Risposta non valida durante il refresh del token');
       return null;

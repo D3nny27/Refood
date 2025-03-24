@@ -159,6 +159,89 @@ const getPrenotazioneById = async (req, res, next) => {
 };
 
 /**
+ * Invia notifiche push agli amministratori del centro di origine quando un lotto viene prenotato
+ * @param {number} prenotazioneId - ID della prenotazione
+ * @param {object} lotto - Dettagli del lotto prenotato
+ * @param {object} centro - Dettagli del centro che ha effettuato la prenotazione
+ * @param {string|null} data_ritiro - Data prevista per il ritiro (opzionale)
+ * @param {string|null} note - Note aggiuntive (opzionale)
+ */
+async function notificaAmministratoriCentroOrigine(prenotazioneId, lotto, centro, data_ritiro, note) {
+  try {
+    // Recupera gli utenti amministratori e operatori del centro di origine
+    const utentiQuery = `
+      SELECT 
+        u.id, 
+        u.nome, 
+        u.cognome, 
+        u.token_notifiche
+      FROM Utenti u
+      JOIN UtentiCentri uc ON u.id = uc.utente_id
+      WHERE uc.centro_id = ? 
+      AND (u.ruolo = 'Amministratore' OR u.ruolo = 'Operatore')
+      AND u.token_notifiche IS NOT NULL
+    `;
+    
+    const utenti = await db.all(utentiQuery, [lotto.centro_origine_id]);
+    if (utenti.length === 0) {
+      console.log(`Nessun amministratore o operatore con token notifiche trovato per il centro ${lotto.centro_origine_id}`);
+      return;
+    }
+    
+    // Costruisci il messaggio dettagliato
+    const titolo = 'Nuova prenotazione ricevuta';
+    const messaggio = `Il lotto "${lotto.prodotto}" (${lotto.quantita} ${lotto.unita_misura}) è stato prenotato dal centro "${centro.nome}". ${data_ritiro ? `Ritiro previsto: ${data_ritiro}` : 'Data ritiro non specificata'}.`;
+    
+    // Log per debug
+    console.log(`Invio notifiche push a ${utenti.length} utenti per la prenotazione ${prenotazioneId}`);
+    
+    // Imposta le notifiche nel sistema (usato poi per le notifiche push)
+    const notificaQuery = `
+      INSERT INTO Notifiche (
+        titolo,
+        messaggio,
+        tipo,
+        priorita,
+        destinatario_id,
+        riferimento_id,
+        riferimento_tipo,
+        letto,
+        creato_il
+      ) VALUES (?, ?, 'Prenotazione', 'Alta', ?, ?, 'Prenotazione', 0, CURRENT_TIMESTAMP)
+    `;
+    
+    for (const utente of utenti) {
+      if (utente.token_notifiche) {
+        try {
+          // Inserisci la notifica nel database per questo utente specifico
+          await db.run(
+            notificaQuery, 
+            [
+              titolo,
+              messaggio,
+              utente.id,
+              prenotazioneId
+            ]
+          );
+          
+          console.log(`Notifica inserita per l'utente ${utente.id} (${utente.nome} ${utente.cognome})`);
+          
+          // Qui potremmo inviare una notifica push tramite Firebase o altro servizio esterno
+          // usando il token_notifiche dell'utente
+        } catch (notificaErr) {
+          console.error(`Errore durante l'inserimento della notifica per l'utente ${utente.id}:`, notificaErr);
+        }
+      }
+    }
+    
+    console.log(`Notifiche inviate agli amministratori del centro di origine per la prenotazione ${prenotazioneId}`);
+  } catch (error) {
+    console.error(`Errore nell'invio delle notifiche agli amministratori del centro: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
  * Crea una nuova prenotazione
  */
 const createPrenotazione = async (req, res, next) => {
@@ -167,7 +250,8 @@ const createPrenotazione = async (req, res, next) => {
     
     // Verifica che il lotto esista e sia disponibile
     const lottoQuery = `
-      SELECT l.*, c.nome AS centro_nome 
+      SELECT l.*, c.nome AS centro_nome, c.latitudine AS origine_lat, 
+             c.longitudine AS origine_lng, c.indirizzo AS origine_indirizzo
       FROM Lotti l
       JOIN Centri c ON l.centro_origine_id = c.id
       WHERE l.id = ?
@@ -192,7 +276,12 @@ const createPrenotazione = async (req, res, next) => {
     }
     
     // Verifica che il centro ricevente esista
-    const centroQuery = `SELECT * FROM Centri WHERE id = ?`;
+    const centroQuery = `
+      SELECT c.*, c.latitudine AS dest_lat, c.longitudine AS dest_lng, 
+             c.indirizzo AS dest_indirizzo 
+      FROM Centri c 
+      WHERE id = ?
+    `;
     const centro = await db.get(centroQuery, [centro_ricevente_id]);
     
     if (!centro) {
@@ -204,60 +293,189 @@ const createPrenotazione = async (req, res, next) => {
       throw new ApiError(400, 'Il centro ricevente non può essere lo stesso del centro origine');
     }
     
-    // Crea la prenotazione
-    const insertQuery = `
-      INSERT INTO Prenotazioni (
-        lotto_id, centro_ricevente_id, stato, 
-        data_prenotazione, data_ritiro, note
-      ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
-    `;
-    
-    const result = await db.run(
-      insertQuery, 
-      [lotto_id, centro_ricevente_id, 'Prenotato', data_ritiro || null, note || null]
-    );
-    
-    if (!result.lastID) {
-      throw new ApiError(500, 'Errore durante la creazione della prenotazione');
+    // Calcola la distanza tra i due centri se entrambi hanno coordinate geografiche
+    let distanza = null;
+    let percorso = null;
+    if (lotto.origine_lat && lotto.origine_lng && centro.dest_lat && centro.dest_lng) {
+      // Calcolo della distanza approssimativa usando la formula di Haversine
+      const R = 6371; // Raggio della Terra in km
+      const dLat = (centro.dest_lat - lotto.origine_lat) * Math.PI / 180;
+      const dLon = (centro.dest_lng - lotto.origine_lng) * Math.PI / 180;
+      const a = 
+        Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(lotto.origine_lat * Math.PI / 180) * Math.cos(centro.dest_lat * Math.PI / 180) * 
+        Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      distanza = R * c; // Distanza in km
+      
+      // Creiamo un oggetto percorso semplificato con le coordinate di partenza e arrivo
+      percorso = {
+        origine: {
+          lat: lotto.origine_lat,
+          lng: lotto.origine_lng,
+          indirizzo: lotto.origine_indirizzo
+        },
+        destinazione: {
+          lat: centro.dest_lat,
+          lng: centro.dest_lng,
+          indirizzo: centro.dest_indirizzo
+        },
+        distanza_km: distanza.toFixed(2)
+      };
     }
     
-    // Crea notifica per il centro di origine
-    const notificaQuery = `
-      INSERT INTO Notifiche (
-        tipo, messaggio, destinatario_id, creato_il
-      )
-      SELECT 
-        'Prenotazione', 
-        'Il lotto "' || ? || '" è stato prenotato dal centro "' || ? || '"', 
-        u.id,
-        CURRENT_TIMESTAMP
-      FROM Utenti u
-      JOIN UtentiCentri uc ON u.id = uc.utente_id
-      WHERE uc.centro_id = ?
-    `;
+    // Avvia una transazione per garantire l'integrità dei dati
+    await db.exec('BEGIN TRANSACTION');
     
-    await db.run(
-      notificaQuery, 
-      [lotto.prodotto, centro.nome, lotto.centro_origine_id]
-    );
-    
-    // Ottieni i dettagli completi della prenotazione appena creata
-    const prenotazioneQuery = `
-      SELECT 
-        p.*,
-        l.prodotto, l.quantita, l.unita_misura, l.data_scadenza,
-        co.nome AS centro_origine_nome,
-        cr.nome AS centro_ricevente_nome
-      FROM Prenotazioni p
-      JOIN Lotti l ON p.lotto_id = l.id
-      JOIN Centri co ON l.centro_origine_id = co.id
-      JOIN Centri cr ON p.centro_ricevente_id = cr.id
-      WHERE p.id = ?
-    `;
-    
-    const prenotazione = await db.get(prenotazioneQuery, [result.lastID]);
-    
-    res.status(201).json(prenotazione);
+    try {
+      // Crea la prenotazione
+      const insertQuery = `
+        INSERT INTO Prenotazioni (
+          lotto_id, centro_ricevente_id, stato, 
+          data_prenotazione, data_ritiro, note
+        ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+      `;
+      
+      const result = await db.run(
+        insertQuery, 
+        [lotto_id, centro_ricevente_id, 'Prenotato', data_ritiro || null, note || null]
+      );
+      
+      const prenotazioneId = result.lastID;
+      
+      if (!prenotazioneId) {
+        throw new ApiError(500, 'Errore durante la creazione della prenotazione');
+      }
+      
+      // Se abbiamo calcolato un percorso, registriamo anche informazioni preliminari di trasporto
+      if (percorso) {
+        const insertTrasportoQuery = `
+          INSERT INTO Trasporti (
+            prenotazione_id, 
+            mezzo,
+            distanza_km, 
+            emissioni_co2, 
+            stato, 
+            latitudine_origine,
+            longitudine_origine,
+            indirizzo_origine,
+            latitudine_destinazione,
+            longitudine_destinazione,
+            indirizzo_destinazione
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+        
+        // Calcoliamo una stima approssimativa delle emissioni di CO2 (0.2 kg per km)
+        const emissioni = distanza * 0.2;
+        
+        await db.run(
+          insertTrasportoQuery, 
+          [
+            prenotazioneId,
+            'Non specificato', // Valore predefinito per il campo mezzo
+            distanza, 
+            emissioni, 
+            'Pianificato',
+            lotto.origine_lat,
+            lotto.origine_lng,
+            lotto.origine_indirizzo,
+            centro.dest_lat,
+            centro.dest_lng,
+            centro.dest_indirizzo
+          ]
+        );
+      }
+      
+      // Crea notifica per il centro di origine
+      const notificaQuery = `
+        INSERT INTO Notifiche (
+          titolo,
+          messaggio,
+          tipo,
+          priorita,
+          destinatario_id,
+          riferimento_id,
+          riferimento_tipo,
+          letto,
+          creato_il
+        )
+        SELECT 
+          'Nuova prenotazione ricevuta',
+          'Il lotto "' || ? || '" (' || ? || ' ' || ? || ') è stato prenotato dal centro "' || ? || '". ' || 
+          'Data ritiro: ' || COALESCE(?, 'Non specificata') || '. ' || 
+          'Note: ' || COALESCE(?, 'Nessuna'), 
+          'Prenotazione',
+          'Alta',
+          u.id,
+          ?,
+          'Prenotazione',
+          0,
+          CURRENT_TIMESTAMP
+        FROM Utenti u
+        JOIN UtentiCentri uc ON u.id = uc.utente_id
+        WHERE uc.centro_id = ? 
+        AND (u.ruolo = 'Amministratore' OR u.ruolo = 'Operatore')
+      `;
+      
+      await db.run(
+        notificaQuery, 
+        [
+          lotto.prodotto, 
+          lotto.quantita,
+          lotto.unita_misura,
+          centro.nome,
+          data_ritiro || 'Non specificata',
+          note || 'Nessuna',
+          prenotazioneId,
+          lotto.centro_origine_id
+        ]
+      );
+      
+      // Commit della transazione
+      await db.exec('COMMIT');
+      
+      // Ottieni i dettagli completi della prenotazione appena creata
+      const prenotazioneQuery = `
+        SELECT 
+          p.*,
+          l.prodotto, l.quantita, l.unita_misura, l.data_scadenza,
+          co.nome AS centro_origine_nome, co.latitudine AS origine_lat, co.longitudine AS origine_lng,
+          cr.nome AS centro_ricevente_nome, cr.latitudine AS dest_lat, cr.longitudine AS dest_lng,
+          t.distanza_km, t.emissioni_co2, t.stato AS stato_trasporto
+        FROM Prenotazioni p
+        JOIN Lotti l ON p.lotto_id = l.id
+        JOIN Centri co ON l.centro_origine_id = co.id
+        JOIN Centri cr ON p.centro_ricevente_id = cr.id
+        LEFT JOIN Trasporti t ON p.id = t.prenotazione_id
+        WHERE p.id = ?
+      `;
+      
+      const prenotazione = await db.get(prenotazioneQuery, [prenotazioneId]);
+      
+      res.status(201).json({
+        message: 'Prenotazione creata con successo',
+        prenotazione: prenotazione,
+        percorso: percorso
+      });
+      
+      // Invia notifiche push agli amministratori del centro di origine (asincrono, dopo la risposta)
+      try {
+        await notificaAmministratoriCentroOrigine(
+          prenotazioneId, 
+          lotto, 
+          centro, 
+          data_ritiro, 
+          note
+        );
+      } catch (notifyError) {
+        console.error('Errore durante l\'invio delle notifiche push:', notifyError);
+        // Non propaga l'errore poiché la prenotazione è stata comunque creata con successo
+      }
+    } catch (error) {
+      // In caso di errore, annulla la transazione
+      await db.exec('ROLLBACK');
+      throw error;
+    }
   } catch (error) {
     next(error);
   }
@@ -346,7 +564,7 @@ const updatePrenotazione = async (req, res, next) => {
     
     if (note !== undefined) {
       updateFields.push('note = ?');
-      updateParams.push(notes);
+      updateParams.push(note);
     }
     
     // Se non ci sono campi da aggiornare, restituisci un errore

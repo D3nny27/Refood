@@ -338,6 +338,75 @@ exports.createLotto = async (req, res, next) => {
         logger.warn(`La tabella LogCambioStato non esiste, impossibile registrare il cambio di stato`);
       }
       
+      // Crea notifiche per gli amministratori del centro
+      try {
+        // Ottieni l'informazione sull'utente che ha creato il lotto
+        const utente = await db.get(
+          'SELECT nome, cognome FROM Utenti WHERE id = ?', 
+          [req.user.id]
+        );
+        
+        const nomeOperatore = utente ? `${utente.nome} ${utente.cognome}` : 'Operatore';
+        
+        const notificaQuery = `
+          INSERT INTO Notifiche (
+            titolo,
+            messaggio,
+            tipo,
+            priorita,
+            destinatario_id,
+            origine_id,
+            letto,
+            centro_id,
+            creato_il
+          )
+          SELECT 
+            'Nuovo lotto creato',
+            'L''operatore ${nomeOperatore} ha creato il lotto "' || ? || '" con ' || ? || ' ' || ? || ' e scadenza il ' || ?',
+            'Alert',
+            'Media',
+            u.id,
+            ?,
+            0,
+            ?,
+            datetime('now')
+          FROM Utenti u
+          JOIN UtentiCentri uc ON u.id = uc.utente_id
+          WHERE uc.centro_id = ? 
+            AND u.ruolo = 'Amministratore'
+            AND u.id != ? -- Non inviare a se stessi
+        `;
+        
+        const notificaResult = await db.run(
+          notificaQuery, 
+          [
+            prodotto, 
+            quantita, 
+            unita_misura, 
+            data_scadenza, 
+            req.user.id, // origine della notifica
+            centro_origine_id,
+            centro_origine_id,
+            req.user.id // non inviare a se stessi
+          ]
+        );
+        
+        logger.info(`Notifiche create per gli amministratori del centro ${centro_origine_id} per il nuovo lotto ${lottoId}`);
+      } catch (notificaError) {
+        logger.error(`Errore nella creazione delle notifiche per il lotto: ${notificaError.message}`);
+        // Continuiamo comunque con il commit, non è un errore fatale
+      }
+      
+      // Invia notifiche ai centri beneficiari
+      try {
+        // Chiamata alla nuova funzione per notificare i centri beneficiari
+        await notificaCentriBeneficiari(lottoId, prodotto, centro_origine_id);
+        logger.info(`Notifiche inviate ai centri beneficiari per il lotto ${lottoId}`);
+      } catch (notificaError) {
+        logger.error(`Errore nell'invio di notifiche ai centri beneficiari: ${notificaError.message}`);
+        // Continuiamo comunque con il commit, non è un errore fatale
+      }
+      
       // Commit della transazione
       await db.exec('COMMIT');
       logger.info(`Transazione completata con successo per il lotto ${lottoId}`);
@@ -482,6 +551,81 @@ exports.updateLotto = async (req, res, next) => {
       try {
         await db.run(updateQuery, params);
         logger.info(`Lotto ID ${lottoId} aggiornato con successo`);
+        
+        // Crea notifiche per gli amministratori del centro quando un lotto viene modificato
+        try {
+          // Prepara la descrizione delle modifiche
+          let descrizioneModifiche = 'Modifiche: ';
+          if (prodotto !== undefined) descrizioneModifiche += 'nome, ';
+          if (quantita !== undefined) descrizioneModifiche += 'quantità, ';
+          if (unita_misura !== undefined) descrizioneModifiche += 'unità di misura, ';
+          if (data_scadenza !== undefined) descrizioneModifiche += 'data scadenza, ';
+          if (stato !== undefined) descrizioneModifiche += 'stato, ';
+          // Rimuovi l'ultima virgola e spazio
+          descrizioneModifiche = descrizioneModifiche.replace(/, $/, '');
+          
+          // Ottieni i dettagli aggiornati del lotto
+          const lottoAggiornato = await db.get(
+            'SELECT prodotto, centro_origine_id FROM Lotti WHERE id = ?',
+            [lottoId]
+          );
+          
+          // Ottieni l'informazione sull'utente che ha modificato il lotto
+          const utente = await db.get(
+            'SELECT nome, cognome FROM Utenti WHERE id = ?', 
+            [req.user.id]
+          );
+          
+          const nomeOperatore = utente ? `${utente.nome} ${utente.cognome}` : 'Operatore';
+          
+          if (lottoAggiornato) {
+            const notificaQuery = `
+              INSERT INTO Notifiche (
+                titolo,
+                messaggio,
+                tipo,
+                priorita,
+                destinatario_id,
+                origine_id,
+                letto,
+                centro_id,
+                creato_il
+              )
+              SELECT 
+                'Lotto modificato',
+                'L''operatore ${nomeOperatore} ha modificato il lotto "' || ? || '". ' || ?,
+                'Alert',
+                'Media',
+                u.id,
+                ?,
+                0,
+                ?,
+                datetime('now')
+              FROM Utenti u
+              JOIN UtentiCentri uc ON u.id = uc.utente_id
+              WHERE uc.centro_id = ? 
+                AND u.ruolo = 'Amministratore'
+                AND u.id != ? -- Non inviare a se stessi
+            `;
+            
+            const notificaResult = await db.run(
+              notificaQuery, 
+              [
+                lottoAggiornato.prodotto,
+                descrizioneModifiche,
+                req.user.id, // origine della notifica
+                lottoAggiornato.centro_origine_id,
+                lottoAggiornato.centro_origine_id,
+                req.user.id // non inviare a se stessi
+              ]
+            );
+            
+            logger.info(`Notifiche create per gli amministratori del centro ${lottoAggiornato.centro_origine_id} per il lotto modificato ${lottoId}`);
+          }
+        } catch (notificaError) {
+          logger.error(`Errore nella creazione delle notifiche per il lotto modificato: ${notificaError.message}`);
+          // Continuiamo comunque con il commit, non è un errore fatale
+        }
       } catch (updateError) {
         logger.error(`Errore nell'aggiornamento del lotto: ${updateError.message}`);
         await db.exec('ROLLBACK');
@@ -634,6 +778,32 @@ exports.getLottiDisponibili = async (req, res, next) => {
     
     logger.debug(`Utente ${userId} con ruolo ${userRuolo} richiede lotti disponibili`);
     
+    // Determina il tipo di centro dell'utente (se è associato a un centro)
+    let tipoCentroUtente = null;
+    let centriUtente = [];
+    
+    if (userRuolo === 'CentroSociale' || userRuolo === 'CentroRiciclaggio') {
+      try {
+        // Trova i centri dell'utente e il loro tipo
+        const userCentriQuery = `
+          SELECT c.id, c.tipo, c.nome 
+          FROM Centri c
+          JOIN UtentiCentri uc ON c.id = uc.centro_id
+          WHERE uc.utente_id = ?
+        `;
+        
+        centriUtente = await db.all(userCentriQuery, [userId]);
+        
+        if (centriUtente && centriUtente.length > 0) {
+          // Prendi il tipo del primo centro come riferimento
+          tipoCentroUtente = centriUtente[0].tipo;
+          logger.debug(`Utente appartiene a centro di tipo: ${tipoCentroUtente}`);
+        }
+      } catch (err) {
+        logger.error(`Errore nel recupero dei centri dell'utente: ${err.message}`);
+      }
+    }
+    
     // Verifica se la tabella Categorie esiste
     let hasCategorieTable = false;
     try {
@@ -660,39 +830,43 @@ exports.getLottiDisponibili = async (req, res, next) => {
     const params = [];
     const whereConditions = [];
     
-    // Filtro base: lotti non prenotati dall'utente e ancora disponibili
+    // Filtro base: lotti che non sono stati prenotati da nessun altro utente
+    // Nota: utilizziamo UPPER() per fare un confronto case-insensitive
     whereConditions.push(`
       l.id NOT IN (
         SELECT lotto_id FROM Prenotazioni 
-        WHERE utente_id = ? AND stato = 'Attiva'
+        WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
       )
     `);
-    params.push(userId);
     
     // Non mostrare i lotti del proprio centro
     if (userRuolo !== 'Amministratore') {
-      try {
-        // Trova i centri dell'utente
-        const centriUtente = await db.all(`
-          SELECT centro_id FROM UtentiCentri WHERE utente_id = ?
-        `, [userId]);
-        
-        if (centriUtente && centriUtente.length > 0) {
-          const centriIds = centriUtente.map(c => c.centro_id);
-          whereConditions.push(`l.centro_origine_id NOT IN (${centriIds.join(',')})`);
-        }
-      } catch (err) {
-        logger.error(`Errore nel recupero dei centri dell'utente: ${err.message}`);
+      if (centriUtente && centriUtente.length > 0) {
+        const centriIds = centriUtente.map(c => c.id);
+        whereConditions.push(`l.centro_origine_id NOT IN (${centriIds.join(',')})`);
       }
     }
     
-    // Filtro per stato
-    if (stato) {
-      whereConditions.push('l.stato = ?');
-      params.push(stato);
+    // Filtra per tipo di centro beneficiario
+    if (tipoCentroUtente === 'Sociale' || tipoCentroUtente === 'Riciclaggio') {
+      // Prioritizza i lotti più adatti al tipo di centro
+      if (tipoCentroUtente === 'Sociale') {
+        // I centri sociali hanno priorità sui lotti più freschi (Verde e inizio Arancione)
+        whereConditions.push(`l.stato IN ('Verde', 'Arancione')`);
+      } else if (tipoCentroUtente === 'Riciclaggio') {
+        // I centri di riciclaggio hanno priorità sui lotti in scadenza (Arancione avanzato e Rosso)
+        // ma possono vedere anche quelli verdi
+        // Non filtriamo per stato, ma cambieremo l'ordinamento per mostrare prima quelli più adatti
+      }
     } else {
-      // Se non specificato, mostra solo verdi e arancioni
-      whereConditions.push(`l.stato IN ('Verde', 'Arancione')`);
+      // Filtro per stato
+      if (stato) {
+        whereConditions.push('l.stato = ?');
+        params.push(stato);
+      } else {
+        // Se non specificato, mostra solo verdi e arancioni come default
+        whereConditions.push(`l.stato IN ('Verde', 'Arancione')`);
+      }
     }
     
     // Filtro per centro specifico
@@ -722,16 +896,45 @@ exports.getLottiDisponibili = async (req, res, next) => {
     }
     
     // Aggiunge il group by e l'ordinamento
-    query += ` 
-      GROUP BY l.id 
-      ORDER BY l.data_scadenza ASC, 
-               CASE l.stato 
-                 WHEN 'Verde' THEN 1 
-                 WHEN 'Arancione' THEN 2 
-                 WHEN 'Rosso' THEN 3 
-                 ELSE 4 
-               END
-    `;
+    query += ` GROUP BY l.id `;
+    
+    // Personalizza l'ordinamento in base al tipo di centro
+    if (tipoCentroUtente === 'Sociale') {
+      // I centri sociali vedono prima i lotti più freschi
+      query += ` 
+        ORDER BY 
+          CASE l.stato 
+            WHEN 'Verde' THEN 1 
+            WHEN 'Arancione' THEN 2 
+            WHEN 'Rosso' THEN 3 
+            ELSE 4 
+          END,
+          l.data_scadenza DESC
+      `;
+    } else if (tipoCentroUtente === 'Riciclaggio') {
+      // I centri di riciclaggio vedono prima i lotti in scadenza
+      query += ` 
+        ORDER BY 
+          CASE l.stato 
+            WHEN 'Rosso' THEN 1 
+            WHEN 'Arancione' THEN 2 
+            WHEN 'Verde' THEN 3 
+            ELSE 4 
+          END,
+          l.data_scadenza ASC
+      `;
+    } else {
+      // Ordinamento standard per altri utenti
+      query += ` 
+        ORDER BY l.data_scadenza ASC, 
+                 CASE l.stato 
+                   WHEN 'Verde' THEN 1 
+                   WHEN 'Arancione' THEN 2 
+                   WHEN 'Rosso' THEN 3 
+                   ELSE 4 
+                 END
+      `;
+    }
     
     // Query di conteggio
     const countQuery = `
@@ -1021,4 +1224,71 @@ exports.getCentriDisponibili = async (req, res, next) => {
     logger.error(`Errore generale nel recupero dei centri: ${err.message}`);
     next(new ApiError(500, 'Errore nel recupero dei centri disponibili'));
   }
-}; 
+};
+
+/**
+ * Invia notifiche ai centri beneficiari (Centro di Riciclaggio e Centro Sociale) 
+ * quando un nuovo lotto è disponibile
+ * @param {number} lottoId - ID del lotto creato
+ * @param {string} prodotto - Nome del prodotto
+ * @param {number} centro_origine_id - ID del centro di origine
+ */
+async function notificaCentriBeneficiari(lottoId, prodotto, centro_origine_id) {
+  try {
+    // Ottieni il nome del centro di origine
+    const centro = await db.get(
+      'SELECT nome FROM Centri WHERE id = ?',
+      [centro_origine_id]
+    );
+    
+    const nomeCentro = centro ? centro.nome : 'Centro sconosciuto';
+    
+    // Invia notifiche agli utenti dei centri beneficiari
+    const notificaQuery = `
+      INSERT INTO Notifiche (
+        titolo,
+        messaggio,
+        tipo,
+        priorita,
+        destinatario_id,
+        riferimento_id,
+        riferimento_tipo,
+        origine_id,
+        centro_id,
+        letto,
+        creato_il
+      )
+      SELECT 
+        'Nuovo lotto disponibile',
+        'Il centro "${nomeCentro}" ha reso disponibile un nuovo lotto di "${prodotto}" che puoi prenotare',
+        'LottoCreato',
+        'Media',
+        u.id,
+        ?,
+        'Lotto',
+        NULL,
+        c.id,
+        0,
+        datetime('now')
+      FROM Utenti u
+      JOIN UtentiCentri uc ON u.id = uc.utente_id
+      JOIN Centri c ON uc.centro_id = c.id
+      WHERE c.tipo IN ('Riciclaggio', 'Sociale')
+        AND c.id != ?
+    `;
+    
+    await db.run(
+      notificaQuery, 
+      [
+        lottoId,  // riferimento_id
+        centro_origine_id // non inviare al centro di origine
+      ]
+    );
+    
+    logger.info(`Notifiche inviate ai centri beneficiari per il lotto ${lottoId}`);
+    return true;
+  } catch (error) {
+    logger.error(`Errore nell'invio delle notifiche ai centri beneficiari: ${error.message}`);
+    throw error;
+  }
+} 

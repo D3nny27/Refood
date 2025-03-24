@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useCallback, Rea
 import { Notifica, NotificaFiltri } from '../types/notification';
 import notificheService from '../services/notificheService';
 import { useAuth } from './AuthContext';
+import { listenEvent, APP_EVENTS } from '../utils/events';
+import logger from '../utils/logger';
 
 interface NotificheContextType {
   notifiche: Notifica[];
@@ -15,6 +17,7 @@ interface NotificheContextType {
   refreshNotifiche: () => Promise<void>;
   aggiornaConteggio: () => Promise<void>;
   segnalaComeLetta: (id: number) => Promise<void>;
+  syncLocalNotificheToServer: () => Promise<number>;
 }
 
 // Creazione del contesto con valori di default
@@ -30,6 +33,7 @@ const NotificheContext = createContext<NotificheContextType>({
   refreshNotifiche: async () => {},
   aggiornaConteggio: async () => {},
   segnalaComeLetta: async () => {},
+  syncLocalNotificheToServer: async () => 0,
 });
 
 // Hook personalizzato per utilizzare il contesto
@@ -152,6 +156,7 @@ export const NotificheProvider: React.FC<NotificheProviderProps> = ({ children }
 
   // Ricarica completamente le notifiche
   const refreshNotifiche = useCallback(async () => {
+    logger.log('Aggiornamento completo delle notifiche...');
     await caricaNotifiche(1, 20);
     await aggiornaConteggio();
   }, [caricaNotifiche, aggiornaConteggio]);
@@ -173,6 +178,23 @@ export const NotificheProvider: React.FC<NotificheProviderProps> = ({ children }
       notificheService.interrompiPollingNotifiche();
     };
   }, [isAuthenticated]);
+  
+  // Ascolta l'evento di refresh notifiche (quando l'app torna in primo piano)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    
+    logger.log('Configuro listener per refresh notifiche');
+    const removeListener = listenEvent(APP_EVENTS.REFRESH_NOTIFICATIONS, () => {
+      logger.log('Evento refresh notifiche ricevuto, aggiornamento in corso...');
+      refreshNotifiche().catch(err => {
+        logger.error('Errore durante il refresh delle notifiche:', err);
+      });
+    });
+    
+    return () => {
+      removeListener();
+    };
+  }, [isAuthenticated, refreshNotifiche]);
 
   // Carica le notifiche all'avvio o quando cambia l'utente
   useEffect(() => {
@@ -215,6 +237,31 @@ export const NotificheProvider: React.FC<NotificheProviderProps> = ({ children }
       } catch (error) {
         console.error(`Errore nel segnare come letta la notifica ${id}:`, error);
         setError('Impossibile segnare la notifica come letta');
+      }
+    },
+    syncLocalNotificheToServer: async () => {
+      try {
+        // Verifica se il caricamento è già in corso
+        if (loading) {
+          logger.warn('Sincronizzazione ignorata: caricamento già in corso');
+          return 0;
+        }
+        
+        setLoading(true);
+        const count = await notificheService.syncAllLocalNotificationsToServer();
+        
+        // Ricarica le notifiche dopo la sincronizzazione
+        if (count > 0) {
+          await refreshNotifiche();
+        }
+        
+        return count;
+      } catch (error) {
+        console.error('Errore durante la sincronizzazione delle notifiche:', error);
+        setError('Impossibile sincronizzare le notifiche con il server');
+        return 0;
+      } finally {
+        setLoading(false);
       }
     },
   };

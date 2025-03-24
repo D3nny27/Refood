@@ -33,6 +33,11 @@ import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
 import { it } from 'date-fns/locale';
+import { useNotifiche } from '../../src/context/NotificheContext';
+import pushNotificationService from '../../src/services/pushNotificationService';
+import notificheService from '../../src/services/notificheService';
+import logger from '../../src/utils/logger';
+import { emitEvent, APP_EVENTS } from '../../src/utils/events';
 
 // Definizione delle unità di misura disponibili, raggruppate per tipo
 const UNITA_MISURA_GROUPS = {
@@ -56,6 +61,7 @@ const UNITA_MISURA_OPTIONS = [
 const NuovoLottoScreen = () => {
   const theme = useTheme();
   const { user } = useAuth();
+  const { refreshNotifiche } = useNotifiche();
   const [loading, setLoading] = useState(false);
   
   // Stato del form
@@ -93,20 +99,33 @@ const NuovoLottoScreen = () => {
         });
         
         if (!response.ok) {
-          throw new Error(`Errore nel caricamento dei centri (${response.status})`);
+          throw new Error('Errore nel caricamento dei centri');
         }
         
         const data = await response.json();
-        if (data && data.centri) {
+        // Verifico la struttura della risposta e imposto l'array di centri
+        if (data && data.centri && Array.isArray(data.centri)) {
           setCentri(data.centri);
+          console.log(`Caricati ${data.centri.length} centri`);
+          
+          // Se c'è un solo centro, selezionalo automaticamente
           if (data.centri.length === 1) {
-            // Se c'è un solo centro, selezionalo automaticamente
             setCentroSelezionato(data.centri[0]);
+            validateField('centro', data.centri[0]);
           }
+        } else {
+          // Se la risposta non ha la struttura attesa, imposto un array vuoto
+          console.warn('Struttura risposta API centri non valida:', data);
+          setCentri([]);
         }
       } catch (error) {
-        console.error("Errore nel caricamento dei centri:", error);
-        Alert.alert("Errore", "Impossibile caricare i centri disponibili");
+        console.error('Errore nel caricamento dei centri:', error);
+        Toast.show({
+          type: 'error',
+          text1: 'Errore',
+          text2: 'Impossibile caricare l\'elenco dei centri',
+        });
+        setCentri([]);
       } finally {
         setLoadingCentri(false);
       }
@@ -231,6 +250,53 @@ const NuovoLottoScreen = () => {
         text2: 'Stai per essere reindirizzato alla lista dei lotti',
         visibilityTime: 2000,
       });
+      
+      // Gestione notifiche
+      try {
+        // Ottieni info sull'utente corrente
+        const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+        const user = userData ? JSON.parse(userData) : null;
+        const userNomeCompleto = user ? `${user.nome} ${user.cognome}` : 'Operatore';
+        
+        // Invia notifica agli amministratori del centro e crea notifica locale per l'operatore
+        if (centroSelezionato?.id) {
+          await notificheService.addNotificaToAmministratori(
+            centroSelezionato.id,
+            'Nuovo lotto creato',
+            `Hai creato un nuovo lotto: ${nome} (${quantita} ${unitaMisura}), con scadenza: ${formatDate(dataScadenza)}`,
+            userNomeCompleto
+          );
+          
+          logger.log(`Notifica inviata agli amministratori del centro ${centroSelezionato.id}`);
+        } else {
+          logger.warn('Impossibile inviare notifica agli amministratori: centro_id mancante');
+        }
+        
+        // Invia anche la notifica push locale
+        await pushNotificationService.sendLocalNotification(
+          'Nuovo lotto creato',
+          `Hai creato un nuovo lotto: ${nome} (${quantita} ${unitaMisura})`,
+          {
+            type: 'notifica',
+            subtype: 'lotto_creato',
+            lottoId: result.lotto?.id || 0
+          }
+        );
+        logger.log('Notifica push locale inviata per il nuovo lotto');
+        
+        // Aspetta un po' più a lungo per il refresh delle notifiche
+        // per assicurarsi che il contesto venga aggiornato
+        if (refreshNotifiche) {
+          logger.log('Forzo aggiornamento notifiche...');
+          setTimeout(() => {
+            refreshNotifiche();
+            logger.log('Aggiornamento notifiche completato');
+          }, 2000);
+        }
+        
+      } catch (notificationError) {
+        logger.error('Errore nell\'invio della notifica:', notificationError);
+      }
       
       // Reindirizzamento diretto e immediato - senza alert
       setTimeout(() => {
@@ -609,42 +675,59 @@ const NuovoLottoScreen = () => {
           onDismiss={() => setShowCentriPicker(false)}
           contentContainerStyle={styles.modalContainer}
         >
-          <Title style={styles.modalTitle}>Seleziona centro</Title>
-          <Divider style={styles.divider} />
-          
-          {centri.length === 0 ? (
-            <Text style={styles.noCentriText}>
-              Nessun centro disponibile.
-            </Text>
-          ) : (
-            centri.map((centro) => (
-              <List.Item
-                key={centro.id}
-                title={centro.nome}
-                description={centro.indirizzo}
-                onPress={() => {
-                  setCentroSelezionato(centro);
-                  setShowCentriPicker(false);
-                  validateField('centro', centro);
-                }}
-                left={props => <List.Icon {...props} icon="domain" />}
-                right={props => 
-                  centroSelezionato?.id === centro.id ? 
-                  <List.Icon {...props} icon="check" color={theme.colors.primary} /> : 
-                  null
-                }
-                style={styles.listItem}
-              />
-            ))
-          )}
-          
-          <Button 
-            mode="outlined" 
-            onPress={() => setShowCentriPicker(false)}
-            style={styles.closeButton}
-          >
-            Chiudi
-          </Button>
+          <Surface style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Seleziona centro</Text>
+            </View>
+            <Divider />
+            
+            <ScrollView style={styles.modalScroll}>
+              {loadingCentri ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+                  <Text style={styles.loadingText}>Caricamento centri...</Text>
+                </View>
+              ) : !Array.isArray(centri) || centri.length === 0 ? (
+                <View style={styles.emptyCentriContainer}>
+                  <Ionicons name="alert-circle-outline" size={48} color="#999" />
+                  <Text style={styles.noCentriText}>Nessun centro disponibile.</Text>
+                </View>
+              ) : (
+                centri.map((centro) => (
+                  <List.Item
+                    key={centro.id}
+                    title={centro.nome}
+                    description={centro.indirizzo || 'Nessun indirizzo disponibile'}
+                    onPress={() => {
+                      setCentroSelezionato(centro);
+                      setShowCentriPicker(false);
+                      validateField('centro', centro);
+                    }}
+                    left={props => <List.Icon {...props} icon="domain" />}
+                    right={props => 
+                      centroSelezionato?.id === centro.id ? 
+                      <List.Icon {...props} icon="check-circle" color={theme.colors.primary} /> : 
+                      null
+                    }
+                    style={[
+                      styles.centroListItem,
+                      centroSelezionato?.id === centro.id && styles.selectedCentroItem
+                    ]}
+                  />
+                ))
+              )}
+            </ScrollView>
+            
+            <Divider />
+            <View style={styles.modalFooter}>
+              <Button 
+                mode="text" 
+                onPress={() => setShowCentriPicker(false)}
+              >
+                Chiudi
+              </Button>
+            </View>
+          </Surface>
         </Modal>
       </Portal>
     </KeyboardAvoidingView>
@@ -697,43 +780,68 @@ const styles = StyleSheet.create({
   } as any,
   flex1: {
     flex: 1,
-    marginRight: 8,
   } as any,
   unitSelector: {
-    width: 90,
-    height: 56,
-    justifyContent: 'center',
+    marginLeft: 8,
+    alignSelf: 'flex-end',
+    marginBottom: 16,
   } as any,
   unitDisplay: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     paddingHorizontal: 12,
+    paddingVertical: 15,
     borderWidth: 1,
     borderRadius: 4,
-    height: 56,
-    backgroundColor: '#fff',
+    minWidth: 80,
   } as any,
   unitText: {
+    marginRight: 4,
     fontSize: 16,
   } as any,
-  dateSelector: {
+  selectField: {
     marginBottom: 16,
+  } as any,
+  selectLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 4,
+    paddingLeft: 4,
+  } as any,
+  selectValue: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 4,
+    padding: 16,
+    backgroundColor: '#fff',
+  } as any,
+  selectPlaceholder: {
+    color: '#999',
+  } as any,
+  errorBorder: {
+    borderColor: '#B00020',
+  } as any,
+  dateSelector: {
+    marginBottom: 8,
   } as any,
   dateSurface: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 16,
-    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 4,
     backgroundColor: '#fff',
-    elevation: 1,
   } as any,
   dateError: {
-    borderWidth: 1,
     borderColor: '#B00020',
   } as any,
   dateIcon: {
-    marginRight: 16,
+    marginRight: 12,
   } as any,
   dateTextContainer: {
     flex: 1,
@@ -744,14 +852,30 @@ const styles = StyleSheet.create({
   } as any,
   dateValue: {
     fontSize: 16,
-    marginTop: 4,
+  } as any,
+  dateButtonsContainer: {
+    padding: 16,
+    alignItems: 'center',
+  } as any,
+  dateSelectionText: {
+    fontSize: 16,
+    marginBottom: 16,
+  } as any,
+  dateButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    width: '100%',
+  } as any,
+  dateButton: {
+    flex: 1,
+    marginHorizontal: 4,
   } as any,
   infoText: {
-    fontSize: 12,
+    fontSize: 14,
     color: '#666',
-    fontStyle: 'italic',
-    marginTop: 4,
-  },
+    marginTop: 8,
+  } as any,
   footer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -759,7 +883,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
     backgroundColor: '#fff',
-    elevation: 4,
   } as any,
   button: {
     flex: 1,
@@ -789,7 +912,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   } as any,
   modalScroll: {
-    maxHeight: 350,
+    maxHeight: 300,
   } as any,
   modalGroup: {
     fontSize: 14,
@@ -809,12 +932,7 @@ const styles = StyleSheet.create({
     padding: 8,
   } as any,
   datePickerContainer: {
-    padding: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as any,
-  datePicker: {
-    width: '100%',
+    padding: 16,
   } as any,
   webDatePicker: {
     border: '1px solid #ccc',
@@ -823,61 +941,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     width: '100%',
   } as any,
-  selectField: {
-    marginVertical: 8,
-  },
-  selectLabel: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 4,
-  },
-  selectValue: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  loadingContainer: {
+    padding: 40,
+    justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 4,
-    padding: 12,
-    backgroundColor: '#f9f9f9',
-  },
-  selectPlaceholder: {
-    color: '#999',
-  },
-  errorBorder: {
-    borderColor: 'red',
-  },
-  divider: {
-    marginBottom: 10,
-  },
-  listItem: {
+  } as any,
+  loadingText: {
+    fontSize: 16,
+    marginTop: 16,
+    color: '#666',
+  } as any,
+  emptyCentriContainer: {
+    padding: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  } as any,
+  noCentriText: {
+    fontSize: 16,
+    color: '#666',
+    marginTop: 16,
+    textAlign: 'center',
+  } as any,
+  centroListItem: {
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
-  },
-  closeButton: {
-    marginTop: 20,
-  },
-  noCentriText: {
-    textAlign: 'center',
-    marginVertical: 20,
-    color: '#666',
-  },
-  dateButtonsContainer: {
-    padding: 16,
-    alignItems: 'center',
   } as any,
-  dateSelectionText: {
-    fontSize: 16,
-    marginBottom: 16,
-    textAlign: 'center',
+  selectedCentroItem: {
+    backgroundColor: '#e8f5e9',
   } as any,
-  dateButtonsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: 16,
-    width: '100%',
-  } as any,
-  dateButton: {
-    marginHorizontal: 4,
+  divider: {
+    marginVertical: 8,
   } as any,
 }); 

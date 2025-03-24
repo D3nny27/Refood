@@ -13,33 +13,32 @@ export interface Notifica {
   id: number;
   titolo: string;
   messaggio: string;
-  tipo: TipoNotifica;
-  priorita?: PrioritaNotifica;
+  tipo: string;
+  priorita: string;
   letta: boolean;
-  data: Date | string;
-  dataCreazione: Date | string; // Data di creazione
-  dataLettura?: Date | string;  // Data di lettura (opzionale)
-  dettagli?: Record<string, any>; // Dettagli aggiuntivi come key-value
-  azione?: string; // URL o identificatore dell'azione associata
-  testoPulsanteAzione?: string; // Testo da mostrare sul pulsante dell'azione
+  data: string;
+  dataCreazione: string;
+  dataLettura?: string;
+}
+
+// Filtri per le notifiche
+export interface NotificaFiltri {
+  tipo?: string;
+  priorita?: string;
+  letta?: boolean;
 }
 
 // Tipo per la risposta API delle notifiche
 export interface NotificheResponse {
   data: Notifica[];
-  pagination?: {
-    page: number;
-    limit: number;
+  pagination: {
     total: number;
-    pages: number;
+    // Formato vecchio
+    page?: number;
+    limit?: number;
+    pages?: number;
+    // Formato nuovo
+    currentPage?: number;
+    totalPages?: number;
   };
-}
-
-// Filtri per le notifiche
-export interface NotificaFiltri {
-  tipo?: TipoNotifica;
-  letta?: boolean;
-  priorita?: PrioritaNotifica;
-  dataInizio?: string;
-  dataFine?: string;
 } 

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, ScrollView, ActivityIndicator, Text } from 'react-native';
 import { useLocalSearchParams, router, Redirect } from 'expo-router';
 import { Button, Card, Title, Paragraph } from 'react-native-paper';
-import { notificheService } from '../../src/services/notificheService';
+import notificheService from '../../src/services/notificheService';
 import { useAuth } from '../../src/context/AuthContext';
 import { PRIMARY_COLOR } from '../../src/config/constants';
 import { Ionicons } from '@expo/vector-icons';
@@ -78,10 +78,10 @@ export default function DettaglioNotifica() {
         
         // Carica i dettagli della notifica
         const result = await notificheService.getNotifica(notificaId);
-        setNotifica(result);
+        setNotifica(result.data);
         
         // Segna la notifica come letta se non lo è già
-        if (!result.letta) {
+        if (!result.data.letta) {
           await notificheService.segnaComeLetta(notificaId);
           // Aggiorna il contesto delle notifiche
           refreshNotifiche();

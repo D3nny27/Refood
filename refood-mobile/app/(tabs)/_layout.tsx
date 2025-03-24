@@ -23,17 +23,22 @@ export default function TabLayout() {
   const { user } = useAuth();
   const { nonLette, aggiornaConteggio } = useNotifiche();
   
-  // Aggiorniamo il conteggio quando il componente viene montato
+  // Aggiorniamo il conteggio quando il componente viene montato e quando l'utente cambia
   useEffect(() => {
+    // Esce se non c'è un utente
+    if (!user) return;
+    
+    // Aggiorna immediatamente il conteggio
     aggiornaConteggio();
     
     // Impostiamo un intervallo per aggiornare periodicamente il conteggio
     const interval = setInterval(() => {
       aggiornaConteggio();
-    }, 60000); // Ogni minuto
+    }, 30000); // Ogni 30 secondi (ridotto da 60 secondi per aggiornamenti più frequenti)
     
+    // Pulizia dell'intervallo quando il componente si smonta o l'utente cambia
     return () => clearInterval(interval);
-  }, []);
+  }, [user, aggiornaConteggio]); // Dipendenze: user e aggiornaConteggio
 
   // Assicuriamoci che l'utente sia autenticato prima di mostrare le tab
   if (!user) {

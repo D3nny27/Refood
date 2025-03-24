@@ -1,52 +1,307 @@
-import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_URL, STORAGE_KEYS } from '../config/constants';
-import { Notifica, NotificheResponse, NotificaFiltri } from '../types/notification';
-import { getAuthToken } from './authService';
+import api from './api';
+import { Notifica, NotificaFiltri, NotificheResponse } from '../types/notification';
+import { API_URL, API_TIMEOUT } from '../config/constants';
+import axios, { AxiosError } from 'axios';
 import logger from '../utils/logger';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { STORAGE_KEYS } from '../config/constants';
+import { Platform } from 'react-native';
+import { API_CONFIG } from '../config/config';
+import Toast from 'react-native-toast-message';
+import { emitEvent, APP_EVENTS } from '../utils/events';
+
+// Adattamento del tipo di paginazione per supportare il nuovo formato
+interface PaginationData {
+  total: number;
+  currentPage?: number;
+  totalPages?: number;
+  // Supporto per il formato vecchio
+  page?: number;
+  limit?: number;
+  pages?: number;
+}
+
+// Interfaccia aggiornata per la risposta delle notifiche
+interface ApiNotificheResponse {
+  data: Notifica[];
+  pagination: PaginationData;
+}
+
+// Chiave per salvare le notifiche locali in AsyncStorage
+const LOCAL_NOTIFICATIONS_STORAGE_KEY = STORAGE_KEYS.LOCAL_NOTIFICATIONS || 'refood-local-notifications';
 
 /**
  * Servizio per la gestione delle notifiche
  */
 class NotificheService {
   private pollingInterval: NodeJS.Timeout | null = null;
-  private pollingDelay = 30000; // 30 secondi
+  private pollingDelay = 30000; // 30 secondi di default
   private lastCountFetchTime: number = 0;
   private cachedNonLetteCount: number = 0;
+  private lastFetchedNotifiche: { timestamp: number, data: Notifica[] } = { timestamp: 0, data: [] };
+  private isPolling: boolean = false;
+  private CACHE_DURATION = 60000; // 1 minuto di cache per il conteggio
+  private localNotificaCounter = -10000; // Contatore per ID negativi per notifiche locali
+  private isSyncing: boolean = false; // Nuovo flag per tenere traccia della sincronizzazione
+
+  constructor() {
+    // Imposta un intervallo più breve per il polling in sviluppo
+    if (__DEV__) {
+      this.pollingDelay = 15000; // 15 secondi in sviluppo
+    }
+    logger.log(`NotificheService inizializzato con polling ogni ${this.pollingDelay/1000} secondi`);
+    
+    // Carica le notifiche locali salvate in AsyncStorage
+    this.loadLocalNotifications();
+  }
+  
+  /**
+   * Carica le notifiche locali da AsyncStorage
+   */
+  private async loadLocalNotifications(): Promise<void> {
+    try {
+      const savedNotificationsString = await AsyncStorage.getItem(LOCAL_NOTIFICATIONS_STORAGE_KEY);
+      
+      if (savedNotificationsString) {
+        const savedNotifications = JSON.parse(savedNotificationsString) as Notifica[];
+        
+        // Aggiorna il contatore locale per generare nuovi ID
+        if (savedNotifications.length > 0) {
+          // Trova l'ID più basso (ricorda che sono negativi)
+          const lowestId = savedNotifications.reduce((min, notifica) => 
+            notifica.id < min ? notifica.id : min, 0);
+          
+          if (lowestId < 0) {
+            // Imposta il contatore a un valore più basso per evitare conflitti
+            this.localNotificaCounter = lowestId - 1;
+          }
+          
+          // Aggiungi le notifiche salvate all'array delle notifiche
+          logger.log(`Caricando ${savedNotifications.length} notifiche locali da AsyncStorage`);
+          
+          // Inizializza l'array se necessario
+          if (!this.lastFetchedNotifiche.data) {
+            this.lastFetchedNotifiche.data = [];
+          }
+          
+          // Aggiungi le notifiche salvate alla cache
+          this.lastFetchedNotifiche.data = [...savedNotifications, ...this.lastFetchedNotifiche.data];
+          
+          // Aggiorna il conteggio delle notifiche non lette
+          const nonLetteCount = savedNotifications.filter(n => !n.letta).length;
+          this.cachedNonLetteCount += nonLetteCount;
+          
+          logger.log(`Caricate ${savedNotifications.length} notifiche locali (${nonLetteCount} non lette)`);
+        }
+      } else {
+        logger.log('Nessuna notifica locale salvata in AsyncStorage');
+      }
+    } catch (error) {
+      logger.error('Errore durante il caricamento delle notifiche locali da AsyncStorage:', error);
+    }
+  }
+  
+  /**
+   * Salva le notifiche locali in AsyncStorage
+   */
+  private async saveLocalNotifications(): Promise<void> {
+    try {
+      // Filtra solo le notifiche locali (ID negativo)
+      const localNotifications = this.lastFetchedNotifiche.data.filter(n => n.id < 0);
+      
+      if (localNotifications.length > 0) {
+        await AsyncStorage.setItem(
+          LOCAL_NOTIFICATIONS_STORAGE_KEY, 
+          JSON.stringify(localNotifications)
+        );
+        logger.log(`Salvate ${localNotifications.length} notifiche locali in AsyncStorage`);
+      } else {
+        // Se non ci sono notifiche locali, rimuovi la voce da AsyncStorage
+        await AsyncStorage.removeItem(LOCAL_NOTIFICATIONS_STORAGE_KEY);
+        logger.log('Nessuna notifica locale da salvare, rimossa chiave da AsyncStorage');
+      }
+    } catch (error) {
+      logger.error('Errore durante il salvataggio delle notifiche locali in AsyncStorage:', error);
+    }
+  }
 
   /**
-   * Recupera le notifiche dal server
-   * @param page Numero di pagina
-   * @param limit Limite di notifiche per pagina
-   * @param filtri Filtri opzionali
+   * Aggiunge una notifica locale al cache delle notifiche.
+   * Utile per le notifiche generate dall'app, senza passare dal server.
+   * @param titolo Titolo della notifica
+   * @param contenuto Corpo della notifica
+   * @param letta Se la notifica è già stata letta
+   * @param syncWithServer Se sincronizzare immediatamente con il server
+   * @returns La notifica creata
    */
-  async getNotifiche(page = 1, limit = 20, filtri?: NotificaFiltri): Promise<NotificheResponse> {
-    try {
-      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+  public addLocalNotifica(
+    titolo: string, 
+    contenuto: string, 
+    letta: boolean = false, 
+    syncWithServer: boolean = false
+  ): Notifica {
+    // Genera un ID temporaneo per la notifica locale
+    // Decrementa il contatore per evitare conflitti con IDs dal server (che saranno positivi)
+    const tempId = this.localNotificaCounter--;
+    
+    logger.log(`NotificheService: Generato ID notifica locale: ${tempId}`);
+    
+    // Crea la notifica con i dati forniti
+    const notifica: Notifica = {
+      id: tempId,
+      titolo: titolo,
+      messaggio: contenuto,
+      tipo: 'Alert',
+      priorita: 'Media',
+      letta: letta,
+      data: new Date().toISOString(),
+      dataCreazione: new Date().toISOString(),
+      dataLettura: letta ? new Date().toISOString() : undefined
+    };
+    
+    // Aggiungi la notifica alla cache delle notifiche già recuperate
+    // Se non ci sono notifiche in cache, inizializza l'array
+    if (!this.lastFetchedNotifiche.data) {
+      this.lastFetchedNotifiche.data = [];
+    }
+    
+    // Aggiungi la notifica all'inizio dell'array (più recente)
+    this.lastFetchedNotifiche.data.unshift(notifica);
+    
+    // Aggiorna il timestamp della cache
+    this.lastFetchedNotifiche.timestamp = Date.now();
+    
+    // Se la notifica non è già stata letta, incrementa il conteggio di quelle non lette
+    if (!letta) {
+      this.cachedNonLetteCount += 1;
+    }
+    
+    logger.log(`NotificheService: Aggiunta notifica locale con ID: ${tempId}. Totale notifiche in cache: ${this.lastFetchedNotifiche.data.length}`);
+    
+    // Salva le notifiche locali in AsyncStorage
+    this.saveLocalNotifications();
+    
+    // Mostra un toast per confermare l'aggiunta
+    Toast.show({
+      type: 'success',
+      text1: 'Notifica aggiunta',
+      text2: titolo,
+      visibilityTime: 2000,
+    });
+    
+    // Emette un evento di refresh delle notifiche
+    emitEvent(APP_EVENTS.REFRESH_NOTIFICATIONS);
+    
+    // Se richiesto, sincronizza immediatamente con il server
+    if (syncWithServer) {
+      logger.log('Sincronizzazione immediata della notifica con il server...');
       
-      if (!token) {
-        throw new Error('Token non disponibile');
-      }
+      // Utilizziamo setTimeout per non bloccare il thread UI
+      setTimeout(() => {
+        this.syncLocalNotificaToServer(notifica)
+          .then(serverId => {
+            if (serverId) {
+              logger.log(`Notifica sincronizzata con successo. Nuovo ID: ${serverId}`);
+              // Emettiamo un altro evento per aggiornare l'UI dopo la sincronizzazione
+              emitEvent(APP_EVENTS.REFRESH_NOTIFICATIONS);
+            } else {
+              logger.warn('Impossibile sincronizzare la notifica con il server');
+            }
+          })
+          .catch(error => {
+            logger.error('Errore durante la sincronizzazione della notifica:', error);
+          });
+      }, 500);
+    }
+    
+    return notifica;
+  }
 
-      // Costruisci parametri di query in base ai filtri
-      let params: Record<string, any> = { page, limit };
-      
-      if (filtri) {
-        if (filtri.tipo) params.tipo = filtri.tipo;
-        if (filtri.letta !== undefined) params.letta = filtri.letta;
-        if (filtri.priorita) params.priorita = filtri.priorita;
-        if (filtri.dataInizio) params.dataInizio = filtri.dataInizio;
-        if (filtri.dataFine) params.dataFine = filtri.dataFine;
+  /**
+   * Recupera tutte le notifiche con supporto per paginazione e filtri
+   */
+  async getNotifiche(page = 1, limit = 20, filtri: NotificaFiltri = {}): Promise<ApiNotificheResponse> {
+    try {
+      // Se abbiamo dati in cache e stiamo usando notifiche mock in sviluppo, restituiamo direttamente la cache
+      if (__DEV__ && API_CONFIG.USE_MOCK_NOTIFICATIONS && this.lastFetchedNotifiche.data.length > 0) {
+        logger.log('NotificheService: Usando dati cache per notifiche (modalità mock)');
+        return {
+          data: this.lastFetchedNotifiche.data,
+          pagination: {
+            total: this.lastFetchedNotifiche.data.length,
+            currentPage: 1,
+            totalPages: 1
+          }
+        };
       }
       
-      const response = await axios.get(`${API_URL}/notifiche`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-        params
+      // Prepariamo i parametri della query
+      const queryParams = new URLSearchParams({ 
+        page: page.toString(), 
+        limit: limit.toString(),
+        ...filtri as Record<string, string>
       });
+      
+      logger.log(`NotificheService: Richiesta notifiche con params: ${queryParams.toString()}`);
+      
+      // Utilizziamo l'URL specifico per le notifiche dalla configurazione
+      const response = await api.get(`${API_CONFIG.NOTIFICATIONS_API_URL}?${queryParams.toString()}`, {
+        timeout: API_CONFIG.REQUEST_TIMEOUT
+      });
+      
+      logger.log(`NotificheService: Ricevute ${response.data?.data?.length || 0} notifiche`);
+      
+      // Aggiorna la cache locale se è la prima pagina
+      if (page === 1) {
+        this.lastFetchedNotifiche = {
+          timestamp: Date.now(),
+          data: response.data.data
+        };
+      }
       
       return response.data;
     } catch (error) {
-      console.error('Errore durante il recupero delle notifiche:', error);
+      logger.error('NotificheService: Errore nel recupero delle notifiche', error);
+      
+      // Se siamo in modalità sviluppo e abbiamo attivato i dati mock, non propaghiamo l'errore
+      if (API_CONFIG.USE_MOCK_NOTIFICATIONS && __DEV__) {
+        Toast.show({
+          type: 'info',
+          text1: 'Utilizzo dati di esempio',
+          text2: 'Non è stato possibile contattare il server delle notifiche',
+          visibilityTime: 3000,
+        });
+        
+        // Se abbiamo notifiche locali nella cache, le restituiamo
+        if (this.lastFetchedNotifiche.data.length > 0) {
+          logger.log('Restituisco notifiche dalla cache locale (mock attivo)');
+          return {
+            data: this.lastFetchedNotifiche.data,
+            pagination: {
+              total: this.lastFetchedNotifiche.data.length,
+              currentPage: 1,
+              totalPages: 1
+            }
+          };
+        } else {
+          // Altrimenti restituiamo un array vuoto
+          return { data: [], pagination: { total: 0, currentPage: 1, totalPages: 1 } };
+        }
+      }
+      
+      // Se abbiamo dati in cache e siamo sulla prima pagina, li restituiamo
+      if (page === 1 && this.lastFetchedNotifiche.data.length > 0) {
+        logger.log('Restituisco notifiche dalla cache locale');
+        return {
+          data: this.lastFetchedNotifiche.data,
+          pagination: {
+            total: this.lastFetchedNotifiche.data.length,
+            currentPage: 1,
+            totalPages: 1
+          }
+        };
+      }
+      
       throw error;
     }
   }
@@ -55,91 +310,122 @@ class NotificheService {
    * Recupera il conteggio delle notifiche non lette
    */
   async getNotificheNonLette(): Promise<number> {
+    // Riduciamo la durata della cache per avere aggiornamenti più frequenti
+    const CACHE_DURATION_SHORT = 10000; // 10 secondi
+    
+    // Se abbiamo una cache valida, la restituiamo
+    const now = Date.now();
+    if (now - this.lastCountFetchTime < CACHE_DURATION_SHORT) {
+      logger.log(`NotificheService: Restituisco conteggio in cache: ${this.cachedNonLetteCount}`);
+      return this.cachedNonLetteCount;
+    }
+    
     try {
-      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      logger.log('NotificheService: Richiesta conteggio notifiche non lette');
       
-      if (!token) {
-        logger.warn('Token non disponibile per il conteggio notifiche');
-        return 0;
+      // Se siamo in modalità sviluppo e i dati mock sono attivi, calcoliamo dai dati locali
+      if (API_CONFIG.USE_MOCK_NOTIFICATIONS && __DEV__) {
+        // Calcola il numero di notifiche non lette dai dati locali
+        const nonLette = this.lastFetchedNotifiche.data.filter(n => !n.letta).length;
+        this.cachedNonLetteCount = nonLette;
+        this.lastCountFetchTime = now;
+        logger.log(`NotificheService: Conteggio da dati mock: ${nonLette}`);
+        return nonLette;
       }
       
-      // Utilizziamo un approccio con memorizzazione in cache per evitare troppe chiamate
-      const now = Date.now();
-      const timeSinceLastFetch = now - this.lastCountFetchTime;
-      const CACHE_THRESHOLD = 30000; // 30 secondi
-      
-      // Se abbiamo un conteggio recente, lo restituiamo direttamente
-      if (this.lastCountFetchTime > 0 && timeSinceLastFetch < CACHE_THRESHOLD) {
-        return this.cachedNonLetteCount;
-      }
-      
+      // Prima proviamo l'endpoint dedicato
       try {
-        // Prima prova l'endpoint specifico per il conteggio
-        const response = await axios.get(`${API_URL}/notifiche/conteggio`, {
-          headers: { 'Authorization': `Bearer ${token}` },
-          params: { letta: false },
-          timeout: 5000 // Timeout più breve per evitare blocchi
+        const response = await api.get(`${API_CONFIG.NOTIFICATIONS_API_URL}/conteggio`, {
+          timeout: 3000 // timeout ridotto per questo endpoint
         });
         
+        // Aggiorniamo la cache
+        this.cachedNonLetteCount = response.data.count;
         this.lastCountFetchTime = now;
-        this.cachedNonLetteCount = response.data.totale || 0;
-        return this.cachedNonLetteCount;
-      } catch (apiError: any) {
-        // Se l'endpoint non esiste (404), prova a contare manualmente
-        if (apiError.response && apiError.response.status === 404) {
-          logger.warn('Endpoint conteggio non disponibile, calcolo manuale');
-          
-          // In sviluppo, per evitare chiamate eccessive, simula un conteggio fisso
-          if (__DEV__) {
-            logger.log('In sviluppo, restituzione di conteggio simulato');
-            this.lastCountFetchTime = now;
-            this.cachedNonLetteCount = 0;
-            return 0;
-          }
-          
-          // In produzione, recupera tutte le notifiche e conta quelle non lette
-          const allNotifiche = await this.getNotifiche(1, 100, { letta: false });
-          this.lastCountFetchTime = now;
-          this.cachedNonLetteCount = allNotifiche.data.length || 0;
-          return this.cachedNonLetteCount;
-        }
         
-        // Se è un altro errore, lo propaga
-        throw apiError;
+        logger.log(`NotificheService: Conteggio ottenuto: ${this.cachedNonLetteCount}`);
+        return this.cachedNonLetteCount;
+      } catch (error) {
+        // Se l'endpoint dedicato fallisce, proveremo con il calcolo manuale
+        logger.warn('(NOBRIDGE) WARN  Endpoint conteggio non disponibile, calcolo manuale');
+        
+        // Altrimenti calcoliamo manualmente
+        const response = await api.get(`${API_CONFIG.NOTIFICATIONS_API_URL}?letta=false&limit=1`, {
+          timeout: API_CONFIG.REQUEST_TIMEOUT
+        });
+        
+        // Aggiorniamo la cache
+        this.cachedNonLetteCount = response.data.pagination.total;
+        this.lastCountFetchTime = now;
+        
+        logger.log(`NotificheService: Conteggio calcolato manualmente: ${this.cachedNonLetteCount}`);
+        return this.cachedNonLetteCount;
       }
     } catch (error) {
-      logger.error('Errore durante il recupero del conteggio notifiche:', error);
-      // In caso di errore, restituisci 0 per evitare interruzioni nell'UI
-      return 0;
+      logger.error('NotificheService: Errore nel recupero del conteggio delle notifiche', error);
+      
+      // In caso di errore, restituiamo l'ultimo valore in cache o 0
+      return this.cachedNonLetteCount;
     }
   }
 
   /**
    * Segna una notifica come letta
    */
-  async segnaComeLetta(id: number): Promise<void> {
+  async segnaComeLetta(id: number | string): Promise<any> {
     try {
-      const authToken = await getAuthToken();
+      logger.log(`NotificheService: Richiesta segna come letta notifica ${id}`);
       
-      if (!authToken) {
-        throw new Error('Utente non autenticato');
-      }
+      // Converti id in numero se è una stringa
+      const numericId = typeof id === 'string' ? parseInt(id, 10) : id;
       
-      const response = await axios.put(
-        `${API_URL}/notifiche/${id}/letta`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-          },
+      // Per le notifiche locali (ID negativi), gestiamo localmente
+      if (numericId < 0) {
+        // Aggiorna la notifica in cache
+        const notificaIndex = this.lastFetchedNotifiche.data.findIndex(n => n.id === numericId);
+        
+        if (notificaIndex !== -1 && !this.lastFetchedNotifiche.data[notificaIndex].letta) {
+          // Aggiorna lo stato e la data di lettura
+          this.lastFetchedNotifiche.data[notificaIndex].letta = true;
+          this.lastFetchedNotifiche.data[notificaIndex].dataLettura = new Date().toISOString();
+          
+          // Decrementa il conteggio delle non lette
+          if (this.cachedNonLetteCount > 0) {
+            this.cachedNonLetteCount--;
+          }
+          
+          // Salva le modifiche in AsyncStorage
+          this.saveLocalNotifications();
+          
+          logger.log(`Notifica locale ${numericId} segnata come letta`);
+          return { success: true };
+        } else if (notificaIndex === -1) {
+          logger.warn(`Notifica locale ${numericId} non trovata in cache`);
+          return { success: false, message: 'Notifica non trovata' };
+        } else {
+          logger.log(`Notifica locale ${numericId} già segnata come letta`);
+          return { success: true };
         }
-      );
-      
-      if (response.status !== 200) {
-        throw new Error('Errore nella marcatura della notifica come letta');
       }
+      
+      // Per le notifiche dal server, procedi con la chiamata API
+      const response = await api.put(`${API_CONFIG.NOTIFICATIONS_API_URL}/${id}/letta`);
+      
+      // Aggiorniamo il conteggio in cache
+      if (this.cachedNonLetteCount > 0) {
+        this.cachedNonLetteCount--;
+      }
+      
+      // Aggiorna anche le notifiche in cache
+      const notificaIndex = this.lastFetchedNotifiche.data.findIndex(n => n.id === numericId);
+      
+      if (notificaIndex !== -1) {
+        this.lastFetchedNotifiche.data[notificaIndex].letta = true;
+      }
+      
+      return response.data;
     } catch (error) {
-      console.error(`Errore nel segnare come letta la notifica ID ${id}:`, error);
+      logger.error(`NotificheService: Errore nel segnare come letta la notifica ${id}`, error);
       throw error;
     }
   }
@@ -149,259 +435,561 @@ class NotificheService {
    */
   async segnaTutteComeLette(): Promise<boolean> {
     try {
-      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      logger.log('NotificheService: Richiesta segna tutte le notifiche come lette');
       
-      if (!token) {
-        throw new Error('Token non disponibile');
+      // Tieni traccia se ci sono notifiche locali
+      let hasLocalNotifications = false;
+      
+      // Aggiorna anche le notifiche in cache
+      if (this.lastFetchedNotifiche.data.length > 0) {
+        // Verifica se ci sono notifiche locali non lette
+        const localNotifications = this.lastFetchedNotifiche.data.filter(n => n.id < 0 && !n.letta);
+        hasLocalNotifications = localNotifications.length > 0;
+        
+        // Aggiorna lo stato di tutte le notifiche in cache
+        this.lastFetchedNotifiche.data = this.lastFetchedNotifiche.data.map(notifica => ({
+          ...notifica,
+          letta: true,
+          dataLettura: notifica.dataLettura || new Date().toISOString()
+        }));
+        
+        // Se ci sono notifiche locali, salva le modifiche in AsyncStorage
+        if (hasLocalNotifications) {
+          this.saveLocalNotifications();
+          logger.log('Aggiornato stato notifiche locali in AsyncStorage');
+        }
       }
       
-      await axios.post(`${API_URL}/notifiche/segna-tutte-lette`, 
-        {},
-        { headers: { 'Authorization': `Bearer ${token}` } }
-      );
+      // Aggiorniamo il conteggio in cache
+      this.cachedNonLetteCount = 0;
       
-      return true;
+      // Se ci sono solo notifiche locali, restituisci successo senza chiamare il server
+      if (hasLocalNotifications && this.lastFetchedNotifiche.data.every(n => n.id < 0)) {
+        return true;
+      }
+      
+      // Altrimenti chiama il server per aggiornare le notifiche remote
+      const response = await api.put(`${API_CONFIG.NOTIFICATIONS_API_URL}/lette`);
+      return response.data.success || false;
+      
     } catch (error) {
-      console.error('Errore durante l\'aggiornamento di tutte le notifiche:', error);
+      logger.error('NotificheService: Errore nel segnare tutte le notifiche come lette', error);
       return false;
     }
   }
 
   /**
    * Elimina una notifica
-   * @param notificaId ID della notifica da eliminare
    */
-  async eliminaNotifica(notificaId: number): Promise<boolean> {
+  async eliminaNotifica(id: number | string): Promise<boolean> {
     try {
-      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      logger.log(`NotificheService: Richiesta eliminazione notifica ${id}`);
       
-      if (!token) {
-        throw new Error('Token non disponibile');
+      // Converti id in numero se è una stringa
+      const numericId = typeof id === 'string' ? parseInt(id, 10) : id;
+      
+      // Cerca la notifica nella cache
+      const notificaEliminata = this.lastFetchedNotifiche.data.find(n => n.id === numericId);
+      
+      // Per le notifiche locali (ID negativi), gestiamo localmente
+      if (numericId < 0) {
+        if (notificaEliminata) {
+          // Aggiorna il conteggio se la notifica era non letta
+          if (!notificaEliminata.letta) {
+            this.cachedNonLetteCount = Math.max(0, (this.cachedNonLetteCount || 0) - 1);
+          }
+          
+          // Rimuovi dalla cache
+          this.lastFetchedNotifiche.data = this.lastFetchedNotifiche.data.filter(n => n.id !== numericId);
+          
+          // Salva le modifiche in AsyncStorage
+          this.saveLocalNotifications();
+          
+          logger.log(`Notifica locale ${numericId} eliminata`);
+          return true;
+        } else {
+          logger.warn(`Notifica locale ${numericId} non trovata in cache`);
+          return false;
+        }
       }
       
-      await axios.delete(`${API_URL}/notifiche/${notificaId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      // Per le notifiche dal server, procedi con la chiamata API
+      const response = await api.delete(`${API_CONFIG.NOTIFICATIONS_API_URL}/${id}`);
       
-      return true;
+      // Aggiorna la cache locale se la notifica era non letta
+      if (notificaEliminata && !notificaEliminata.letta) {
+        this.cachedNonLetteCount = Math.max(0, (this.cachedNonLetteCount || 0) - 1);
+      }
+      
+      // Rimuovi dalla cache
+      if (this.lastFetchedNotifiche.data.length > 0) {
+        this.lastFetchedNotifiche.data = this.lastFetchedNotifiche.data.filter(n => n.id !== numericId);
+      }
+      
+      return response.data.success || false;
     } catch (error) {
-      console.error(`Errore durante l'eliminazione della notifica ${notificaId}:`, error);
+      logger.error(`NotificheService: Errore nell'eliminazione della notifica ${id}`, error);
       return false;
     }
   }
 
   /**
-   * Avvia il polling delle notifiche
-   * @param callback Funzione da chiamare quando vengono ricevute nuove notifiche
+   * Avvia il polling per le notifiche non lette
    */
   avviaPollingNotifiche(callback: (count: number) => void): void {
-    // Interrompi qualsiasi polling esistente
-    this.interrompiPollingNotifiche();
+    if (this.pollingInterval !== null) {
+      this.interrompiPollingNotifiche();
+    }
     
-    // Esegui immediatamente una prima volta
+    this.isPolling = true;
+    
+    // Esegue il callback immediatamente con i dati attuali
     this.getNotificheNonLette()
       .then(count => callback(count))
-      .catch(err => console.error('Errore nel polling delle notifiche:', err));
+      .catch(err => logger.error('Errore nel polling iniziale:', err));
     
     // Avvia il polling periodico
     this.pollingInterval = setInterval(async () => {
+      if (!this.isPolling) return;
+      
       try {
         const count = await this.getNotificheNonLette();
         callback(count);
       } catch (error) {
-        console.error('Errore nel polling delle notifiche:', error);
+        logger.error('Errore durante il polling delle notifiche:', error);
       }
     }, this.pollingDelay);
+    
+    logger.log(`Polling notifiche avviato (ogni ${this.pollingDelay/1000} secondi)`);
   }
 
   /**
    * Interrompe il polling delle notifiche
    */
   interrompiPollingNotifiche(): void {
-    if (this.pollingInterval) {
+    if (this.pollingInterval !== null) {
       clearInterval(this.pollingInterval);
       this.pollingInterval = null;
+      this.isPolling = false;
+      logger.log('Polling notifiche interrotto');
     }
   }
 
   /**
-   * Recupera i dettagli di una notifica specifica
-   * @param notificaId ID della notifica
+   * Ottiene i dettagli di una specifica notifica
    */
   async getDettaglioNotifica(notificaId: number): Promise<Notifica> {
     try {
-      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
-      
-      if (!token) {
-        throw new Error('Token non disponibile');
+      // Prima cerca nella cache locale
+      const cachedNotifica = this.lastFetchedNotifiche.data.find(n => n.id === notificaId);
+      if (cachedNotifica) {
+        return cachedNotifica;
       }
       
-      try {
-        const response = await axios.get(`${API_URL}/notifiche/${notificaId}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        
-        return response.data;
-      } catch (apiError: any) {
-        // Gestisci errori specifici dell'API
-        if (apiError.response) {
-          // Se la notifica non esiste (404)
-          if (apiError.response.status === 404) {
-            logger.warn(`Notifica ID ${notificaId} non trovata`);
-            throw new Error('Notifica non trovata');
-          }
-          
-          // Se il server risponde con un errore (500, ecc.)
-          if (apiError.response.status >= 500) {
-            logger.error(`Errore del server nel recupero della notifica ${notificaId}: ${apiError.response.status}`);
-            throw new Error('Il server ha riscontrato un errore. Riprova più tardi.');
-          }
-        }
-        
-        // Per errori di timeout o di rete
-        if (apiError.code === 'ECONNABORTED' || !apiError.response) {
-          logger.error(`Errore di connessione nel recupero della notifica ${notificaId}`);
-          throw new Error('Impossibile comunicare con il server. Verifica la tua connessione.');
-        }
-        
-        // Propaga l'errore originale se non è stato gestito sopra
-        throw apiError;
-      }
+      // Se non trovata in cache, fai la richiesta
+      const response = await api.get(`/notifiche/${notificaId}`);
+      return response.data.data;
     } catch (error) {
-      logger.error(`Errore durante il recupero della notifica ${notificaId}:`, error);
+      logger.error(`Errore durante il recupero dei dettagli della notifica ${notificaId}:`, error);
       throw error;
     }
   }
-
+  
   /**
-   * Ottiene una notifica specifica per ID
-   * @param id ID della notifica da recuperare
+   * Ottiene una notifica per ID con resilienza agli errori
    */
-  async getNotifica(id: number): Promise<Notifica> {
-    // Verifica che l'ID sia valido
-    if (!id || isNaN(id)) {
-      logger.error(`Tentativo di recuperare notifica con ID non valido: ${id}`);
-      throw new Error('ID notifica non valido');
-    }
-    
+  async getNotifica(id: number | string): Promise<{data: Notifica}> {
     try {
-      const authToken = await getAuthToken();
+      logger.log(`NotificheService: Richiesta dettaglio notifica ${id}`);
       
-      if (!authToken) {
-        logger.error('Token di autenticazione non disponibile per recuperare la notifica');
-        throw new Error('Utente non autenticato');
+      // Verifica se la notifica è in cache
+      const numericId = typeof id === 'string' ? parseInt(id, 10) : id;
+      const cachedNotifica = this.lastFetchedNotifiche.data.find(n => n.id === numericId);
+      
+      if (cachedNotifica) {
+        logger.log(`Notifica ${id} trovata in cache`);
+        return { data: cachedNotifica };
       }
       
-      logger.log(`Recupero notifica ID ${id} dal server`);
-      
-      try {
-        const response = await axios.get(`${API_URL}/notifiche/${id}`, {
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-          },
-        });
-        
-        if (response.status === 200) {
-          return response.data;
-        } else {
-          throw new Error(`Errore nel recupero della notifica: ${response.status}`);
-        }
-      } catch (apiError: any) {
-        // Gestisci errori specifici dell'API
-        if (apiError.response) {
-          // Se la notifica non esiste (404)
-          if (apiError.response.status === 404) {
-            logger.warn(`Notifica ID ${id} non trovata sul server`);
-            throw new Error('Notifica non trovata');
-          }
-          
-          // Se c'è un problema di autenticazione (401)
-          if (apiError.response.status === 401) {
-            logger.error('Token di autenticazione scaduto o non valido');
-            throw new Error('Utente non autenticato');
-          }
-        }
-        
-        // Rilancia l'errore originale per altri tipi di errori
-        throw apiError;
-      }
-    } catch (error) {
-      logger.error(`Errore nel recupero della notifica ID ${id}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Ottiene il conteggio delle notifiche non lette
-   */
-  async getConteggio(): Promise<number> {
-    try {
-      const authToken = await getAuthToken();
-      
-      if (!authToken) {
-        throw new Error('Utente non autenticato');
+      // Per le notifiche locali (ID negativi) non fare chiamate al server
+      if (numericId < 0) {
+        logger.error(`Notifica locale con ID ${id} non trovata in cache.`);
+        throw new Error(`Notifica con ID ${id} non trovata.`);
       }
       
-      const response = await axios.get(`${API_URL}/notifiche/conteggio-non-lette`, {
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-        },
-      });
-      
-      if (response.status === 200) {
-        return response.data.count;
-      } else {
-        throw new Error('Errore nel recupero del conteggio notifiche');
-      }
-    } catch (error) {
-      console.error('Errore nel recupero del conteggio notifiche non lette:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Configura una richiesta API con autorizzazione e timeout
-   * @param endpoint Endpoint dell'API
-   * @param params Parametri opzionali
-   */
-  private async configuraRichiesta(endpoint: string, params: Record<string, any> = {}) {
-    const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
-    
-    if (!token) {
-      throw new Error('Token non disponibile');
-    }
-    
-    return {
-      url: `${API_URL}${endpoint}`,
-      headers: { 'Authorization': `Bearer ${token}` },
-      params,
-      timeout: 10000, // 10 secondi timeout
-    };
-  }
-
-  /**
-   * Esegue una richiesta GET resiliente con gestione errori
-   * @param endpoint Endpoint dell'API
-   * @param params Parametri opzionali
-   * @param defaultValue Valore predefinito in caso di errore
-   */
-  private async getResilient<T>(endpoint: string, params: Record<string, any> = {}, defaultValue?: T): Promise<T> {
-    try {
-      const config = await this.configuraRichiesta(endpoint, params);
-      const response = await axios.get(config.url, { 
-        headers: config.headers, 
-        params: config.params,
-        timeout: config.timeout
+      // Per le notifiche dal server, prova a recuperarle
+      const response = await api.get(`${API_CONFIG.NOTIFICATIONS_API_URL}/${id}`, {
+        timeout: API_CONFIG.REQUEST_TIMEOUT
       });
       
       return response.data;
-    } catch (error: any) {
-      // Logging dettagliato dell'errore
-      logger.error(`Errore nella richiesta GET a ${endpoint}:`, error);
+    } catch (error) {
+      // Se siamo in modalità sviluppo e abbiamo abilitato i mock, cerca di nuovo in cache
+      if (__DEV__ && API_CONFIG.USE_MOCK_NOTIFICATIONS) {
+        const numericId = typeof id === 'string' ? parseInt(id, 10) : id;
+        // Cerca in cache anche con piccole differenze (potrebbe essere un errore di conversione)
+        const cachedNotifica = this.lastFetchedNotifiche.data.find(n => 
+          n.id === numericId || n.id === -numericId || n.id === Math.abs(numericId)
+        );
+        
+        if (cachedNotifica) {
+          logger.log(`Trovata notifica in cache con ID alternativo: ${cachedNotifica.id}`);
+          return { data: cachedNotifica };
+        }
+      }
       
-      // Se è stato specificato un valore predefinito, restituiscilo invece di propagare l'errore
+      logger.error(`NotificheService: Errore nel recupero della notifica ${id}`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Ottiene le notifiche per tipo specifico (es. notifiche relative ai lotti)
+   */
+  async getNotifichePerTipo(tipo: string, page = 1, limit = 20): Promise<NotificheResponse> {
+    try {
+      const filtri: NotificaFiltri = { tipo: tipo as any };
+      return await this.getNotifiche(page, limit, filtri);
+    } catch (error) {
+      logger.error(`Errore durante il recupero delle notifiche di tipo ${tipo}:`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Ottiene solo le notifiche relative ai lotti (CambioStato)
+   */
+  async getNotificheLotti(page = 1, limit = 20): Promise<NotificheResponse> {
+    return this.getNotifichePerTipo('CambioStato', page, limit);
+  }
+  
+  /**
+   * Ottiene solo le notifiche relative alle prenotazioni
+   */
+  async getNotifichePrenotazioni(page = 1, limit = 20): Promise<NotificheResponse> {
+    return this.getNotifichePerTipo('Prenotazione', page, limit);
+  }
+  
+  /**
+   * Ottiene il conteggio delle notifiche
+   */
+  async getConteggio(): Promise<number> {
+    try {
+      const response = await api.get('/notifiche/conteggio');
+      return response.data.totale || 0;
+    } catch (error) {
+      logger.error('Errore durante il recupero del conteggio notifiche:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Invia una notifica locale al server per salvarla nel database
+   * @param notifica La notifica locale da sincronizzare con il server
+   * @returns L'ID della notifica sul server
+   */
+  async syncLocalNotificaToServer(notifica: Notifica): Promise<number | null> {
+    try {
+      // Prepara i dati da inviare al server
+      const notificaData = {
+        titolo: notifica.titolo,
+        messaggio: notifica.messaggio,
+        tipo: notifica.tipo,
+        priorita: notifica.priorita,
+        letta: notifica.letta,
+        // Mandiamo la data originale di creazione
+        dataCreazione: notifica.dataCreazione
+      };
+      
+      logger.log(`Invio notifica locale al server: ${JSON.stringify(notificaData)}`);
+      
+      // Ottieni il token di autenticazione
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      if (!token) {
+        logger.error('Token di autenticazione mancante. Impossibile sincronizzare la notifica.');
+        throw new Error('Token di autenticazione mancante');
+      }
+      
+      // Utilizziamo il nuovo endpoint di sincronizzazione
+      logger.log(`URL endpoint sincronizzazione: ${API_CONFIG.NOTIFICATIONS_API_URL}/sync`);
+      
+      // Effettua la chiamata al server con token esplicito
+      const response = await api.post(
+        `${API_CONFIG.NOTIFICATIONS_API_URL}/sync`, 
+        notificaData,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      if (response.data && response.data.success && response.data.data && response.data.data.id) {
+        const serverNotificaId = response.data.data.id;
+        logger.log(`Notifica sincronizzata con successo. ID server: ${serverNotificaId}`);
+        
+        // Trova l'indice della notifica locale
+        const localIndex = this.lastFetchedNotifiche.data.findIndex(n => n.id === notifica.id);
+        
+        if (localIndex !== -1) {
+          // Aggiorna l'ID e i dati della notifica con quelli del server
+          const updatedNotifica = {
+            ...this.lastFetchedNotifiche.data[localIndex],
+            id: serverNotificaId,
+            dataCreazione: response.data.data.dataCreazione || notifica.dataCreazione
+          };
+          
+          // Rimuovi la vecchia notifica locale e aggiungi quella aggiornata
+          this.lastFetchedNotifiche.data.splice(localIndex, 1);
+          this.lastFetchedNotifiche.data.push(updatedNotifica);
+          
+          // Aggiorna la cache locale
+          await this.saveLocalNotifications();
+          
+          // Mostra toast di conferma
+          Toast.show({
+            type: 'success',
+            text1: 'Notifica sincronizzata',
+            text2: `ID: ${serverNotificaId}`,
+            visibilityTime: 2000,
+          });
+          
+          return serverNotificaId;
+        }
+        
+        return serverNotificaId;
+      } else {
+        logger.warn('Risposta server non valida durante la sincronizzazione della notifica');
+        logger.warn(`Risposta: ${JSON.stringify(response.data)}`);
+        return null;
+      }
+    } catch (error) {
+      logger.error('Errore durante la sincronizzazione della notifica con il server:');
+      if (error instanceof Error) {
+        logger.error(`- Messaggio: ${error.message}`);
+      }
+      if (axios.isAxiosError(error)) {
+        logger.error(`- Codice stato: ${error.response?.status}`);
+        logger.error(`- Risposta: ${JSON.stringify(error.response?.data)}`);
+        logger.error(`- URL richiesta: ${error.config?.url}`);
+      }
+      return null;
+    }
+  }
+  
+  /**
+   * Sincronizza tutte le notifiche locali con il server
+   * @returns Numero di notifiche sincronizzate con successo
+   */
+  async syncAllLocalNotificationsToServer(): Promise<number> {
+    // Evita sincronizzazioni simultanee
+    if (this.isSyncing) {
+      logger.warn('Sincronizzazione già in corso, richiesta ignorata');
+      return 0;
+    }
+    
+    try {
+      this.isSyncing = true;
+      
+      // Filtriamo solo le notifiche locali (ID negativo)
+      const localNotifications = this.lastFetchedNotifiche.data.filter(n => n.id < 0);
+      
+      if (localNotifications.length === 0) {
+        logger.log('Nessuna notifica locale da sincronizzare');
+        return 0;
+      }
+      
+      logger.log(`Sincronizzazione di ${localNotifications.length} notifiche locali con il server`);
+      
+      let syncSuccess = 0;
+      
+      // Sincronizza ogni notifica una alla volta
+      for (const notifica of localNotifications) {
+        const serverId = await this.syncLocalNotificaToServer(notifica);
+        if (serverId) {
+          syncSuccess++;
+        }
+      }
+      
+      // Aggiorna la cache dopo la sincronizzazione
+      await this.saveLocalNotifications();
+      
+      logger.log(`Sincronizzazione completata: ${syncSuccess}/${localNotifications.length} notifiche sincronizzate`);
+      
+      // Aggiorna il conteggio delle notifiche non lette
+      this.getNotificheNonLette();
+      
+      return syncSuccess;
+    } catch (error) {
+      logger.error('Errore durante la sincronizzazione delle notifiche con il server:', error);
+      return 0;
+    } finally {
+      this.isSyncing = false;
+    }
+  }
+
+  /**
+   * Invia una notifica a tutti gli amministratori di un centro
+   * @param centroId ID del centro
+   * @param titolo Titolo della notifica
+   * @param contenuto Corpo della notifica
+   * @param operatoreName Nome dell'operatore che ha generato l'azione
+   * @returns Promise<void>
+   */
+  public async addNotificaToAmministratori(
+    centroId: number | null = null, 
+    titolo: string, 
+    contenuto: string, 
+    operatoreName?: string
+  ): Promise<void> {
+    try {
+      // Crea una notifica locale per l'operatore corrente usando il contenuto originale
+      // che è già formulato dal punto di vista dell'operatore ("Hai modificato...")
+      const notificaLocale = this.addLocalNotifica(
+        titolo,
+        contenuto, 
+        false, // non letta
+        true   // sincronizza con il server
+      );
+      
+      logger.log('Notifica locale aggiunta al contesto con ID:', notificaLocale.id);
+      
+      // Se non è specificato un centroId, otteniamo un centro valido dal backend
+      if (centroId === null) {
+        try {
+          const response = await this.getResilient<any>(
+            `${API_CONFIG.NOTIFICATIONS_API_URL}/centro-test`, 
+            {}, 
+            null
+          );
+          
+          if (response && response.success && response.data && response.data.centro) {
+            centroId = response.data.centro.id;
+            console.log(`Ottenuto automaticamente il centro ID ${centroId} per le notifiche`);
+          } else {
+            console.error('Impossibile ottenere un centro valido per le notifiche:', response);
+            return;
+          }
+        } catch (error) {
+          console.error('Errore nel recupero del centro per le notifiche:', error);
+          return;
+        }
+      }
+      
+      // Controllo finale che il centroId sia valido
+      if (!centroId) {
+        console.error('CentroId non valido per inviare notifica agli amministratori');
+        return;
+      }
+
+      // Recupera il token di autenticazione
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      
+      if (!token) {
+        console.warn('Token non disponibile per inviare notifica agli amministratori');
+        // La notifica locale è già stata aggiunta sopra
+        return;
+      }
+      
+      // Prepara il contenuto per gli amministratori
+      let messaggioAmministratori;
+      
+      // Se il contenuto è formulato come "Hai modificato il lotto...", lo convertiamo
+      // per gli amministratori in "L'operatore X ha modificato il lotto..."
+      if (contenuto.includes("Hai modificato")) {
+        // Estrae il nome del lotto dalla notifica per l'operatore
+        const lottoMatch = contenuto.match(/Hai modificato il lotto "([^"]+)"/);
+        const lottoNome = lottoMatch ? lottoMatch[1] : "un lotto";
+        
+        // Estrae la descrizione delle modifiche
+        const modificheMatch = contenuto.match(/Modifiche: (.*)/);
+        const descrizioneModifiche = modificheMatch ? modificheMatch[1] : "";
+        
+        // Crea il messaggio per gli amministratori
+        messaggioAmministratori = operatoreName 
+          ? `L'operatore ${operatoreName} ha modificato il lotto "${lottoNome}". Modifiche: ${descrizioneModifiche}`
+          : `Un operatore ha modificato il lotto "${lottoNome}". Modifiche: ${descrizioneModifiche}`;
+      } else {
+        // Se il contenuto non è formulato come "Hai modificato...", usiamo il contenuto originale
+        // e aggiungiamo solo il nome dell'operatore se disponibile
+        messaggioAmministratori = operatoreName 
+          ? `${contenuto} - Da: ${operatoreName}`
+          : contenuto;
+      }
+      
+      // Prepara i dati della notifica per gli amministratori
+      const notificaData = {
+        titolo,
+        messaggio: messaggioAmministratori,
+        tipo: 'LottoModificato',
+        priorita: 'Media'
+      };
+      
+      console.log(`Invio notifica agli amministratori del centro ${centroId}: ${titolo}`);
+      
+      // Invia la notifica al backend
+      const response = await fetch(`${API_CONFIG.NOTIFICATIONS_API_URL}/admin-centro/${centroId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(notificaData)
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Errore nell\'invio della notifica agli amministratori:', 
+          response.status, errorData.message || response.statusText);
+        
+        // La notifica locale è già stata aggiunta sopra
+        return;
+      }
+      
+      const data = await response.json();
+      console.log('Notifica inviata agli amministratori con successo:', data);
+      
+      // Emetti manualmente un evento di refresh delle notifiche 
+      // per garantire che il contesto venga aggiornato
+      emitEvent(APP_EVENTS.REFRESH_NOTIFICATIONS);
+      
+    } catch (error) {
+      console.error('Errore nell\'invio della notifica agli amministratori:', error);
+      
+      // La notifica locale è già stata aggiunta sopra
+    }
+  }
+
+  /**
+   * Configura la richiesta API con parametri e gestione errori
+   */
+  private async configuraRichiesta(endpoint: string, params: Record<string, any> = {}) {
+    try {
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      
+      return await api.get(endpoint, {
+        params,
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+    } catch (error) {
+      logger.error(`Errore API: ${endpoint}`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Esegue una richiesta GET con resilienza agli errori
+   */
+  private async getResilient<T>(endpoint: string, params: Record<string, any> = {}, defaultValue?: T): Promise<T> {
+    try {
+      const response = await this.configuraRichiesta(endpoint, params);
+      return response.data;
+    } catch (error) {
+      logger.warn(`Errore nella richiesta resiliente a ${endpoint}:`, error);
+      
       if (defaultValue !== undefined) {
-        logger.warn(`Restituisco valore predefinito per ${endpoint}`);
+        logger.info(`Utilizzando valore predefinito per ${endpoint}`);
         return defaultValue;
       }
       
@@ -410,6 +998,6 @@ class NotificheService {
   }
 }
 
-// Crea e esporta una singola istanza del servizio
-export const notificheService = new NotificheService();
+// Crea e esporta un'istanza del servizio
+const notificheService = new NotificheService();
 export default notificheService; 

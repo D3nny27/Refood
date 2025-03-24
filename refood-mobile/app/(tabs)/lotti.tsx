@@ -1,340 +1,656 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { View, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Alert } from 'react-native';
-import { Searchbar, Button, Chip, Text, IconButton, FAB, Card, Divider } from 'react-native-paper';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, StyleSheet, FlatList, Pressable, RefreshControl, Platform } from 'react-native';
+import { Text, Button, Surface, Searchbar, IconButton, Divider, Badge, Chip, Modal, Portal, TextInput as PaperTextInput } from 'react-native-paper';
+import { Link } from 'expo-router';
+import Animated from 'react-native-reanimated';
 import { useAuth } from '../../src/context/AuthContext';
-import { Lotto, getLotti, LottoFiltri, invalidateCache } from '../../src/services/lottiService';
+import { getLotti, Lotto, invalidateCache, LottoFiltri } from '../../src/services/lottiService';
 import LottoCard from '../../src/components/LottoCard';
+import Toast from 'react-native-toast-message';
+import { useFocusEffect } from '@react-navigation/native';
 import StyledFilterModal from '../../src/components/StyledFilterModal';
 import { RUOLI, PRIMARY_COLOR, STATUS_COLORS } from '../../src/config/constants';
 import { router } from 'expo-router';
+import { DatePickerInput } from 'react-native-paper-dates';
+import { it } from 'date-fns/locale';
+import { addDays, format } from 'date-fns';
+import { prenotaLotto } from '../../src/services/prenotazioniService';
 
 // Costanti locali per gli stati dei lotti disponibili
-const STATI_LOTTI = ['Verde', 'Arancione', 'Rosso'];
+const STATI_LOTTI = {
+  VERDE: 'Verde',
+  ARANCIONE: 'Arancione',
+  ROSSO: 'Rosso'
+};
 
 export default function LottiScreen() {
-  const { user } = useAuth();
+  // Stati per gestire i dati e le interazioni dell'utente
   const [lotti, setLotti] = useState<Lotto[]>([]);
-  const [filteredLotti, setFilteredLotti] = useState<Lotto[]>([]);
-  const [filtri, setFiltri] = useState<LottoFiltri>({});
-  const [loading, setLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filtersVisible, setFiltersVisible] = useState(false);
-  
-  // Stati selezionati nei filtri
+  const [error, setError] = useState<string | null>(null);
+  const [searchText, setSearchText] = useState('');
+  const [filterModalVisible, setFilterModalVisible] = useState(false);
+  const [filtersApplied, setFiltersApplied] = useState(false);
   const [selectedStato, setSelectedStato] = useState<string | null>(null);
+  const [selectedCategorie, setSelectedCategorie] = useState<string[]>([]);
   
-  // Determina se l'utente può creare nuovi lotti (solo operatori/admin)
-  const canCreateLotto = user?.ruolo === RUOLI.OPERATORE || user?.ruolo === RUOLI.AMMINISTRATORE;
-
-  // Carica i lotti al primo rendering e quando cambiano i filtri
-  useEffect(() => {
-    loadLotti();
-  }, [filtri]);
-
-  // Filtra e ordina i lotti in base alla ricerca
-  useEffect(() => {
-    if (lotti.length === 0) {
-      setFilteredLotti([]);
-      return;
-    }
-
-    // Filtra i lotti in base alla ricerca locale
-    let result = [...lotti];
+  // Stati per gestire la prenotazione
+  const [selectedLotto, setSelectedLotto] = useState<Lotto | null>(null);
+  const [showModalPrenotazione, setShowModalPrenotazione] = useState(false);
+  const [dataRitiroPrevista, setDataRitiroPrevista] = useState<Date | undefined>(addDays(new Date(), 1));
+  const [notePrenotazione, setNotePrenotazione] = useState('');
+  const [isPrenotazioneLoading, setIsPrenotazioneLoading] = useState(false);
+  const [manualCentroId, setManualCentroId] = useState<string>('');
+  const [showCentroIdInput, setShowCentroIdInput] = useState(false);
+  
+  // Ottieni l'utente autenticato
+  const { user } = useAuth();
+  
+  // Gestisce il filtro per le date
+  const [filtriDate, setFiltriDate] = useState({
+    dataMin: undefined as Date | undefined,
+    dataMax: undefined as Date | undefined,
+  });
+  
+  // Costruisce i filtri da applicare alla richiesta
+  const buildFiltri = (): LottoFiltri => {
+    const filtri: LottoFiltri = {};
     
-    // Filtra in base al testo di ricerca (instantaneo)
-    if (searchQuery.trim() !== '') {
-      const searchLower = searchQuery.toLowerCase().trim();
-      result = result.filter(lotto => 
-        lotto.nome.toLowerCase().includes(searchLower)
-      );
+    // Aggiungi il testo di ricerca se presente
+    if (searchText) {
+      filtri.cerca = searchText;
     }
-
-    // Ordina i lotti in ordine alfabetico per nome
-    result.sort((a, b) => a.nome.localeCompare(b.nome));
     
-    setFilteredLotti(result);
-  }, [lotti, searchQuery]);
-
-  // Funzione per caricare i lotti
+    // Aggiungi il filtro per stato se selezionato
+    if (selectedStato) {
+      filtri.stato = selectedStato;
+    }
+    
+    // Aggiungi le date se impostate
+    if (filtriDate.dataMin) {
+      filtri.scadenza_min = filtriDate.dataMin.toISOString().split('T')[0];
+    }
+    
+    if (filtriDate.dataMax) {
+      filtri.scadenza_max = filtriDate.dataMax.toISOString().split('T')[0];
+    }
+    
+    return filtri;
+  };
+  
+  // Carica i lotti dal servizio API
   const loadLotti = async (forceRefresh = false) => {
-    setLoading(true);
     try {
-      console.log('Caricamento lotti in corso con filtri:', JSON.stringify(filtri));
+      setIsLoading(true);
+      setError(null);
+      
+      // Costruisci i filtri
+      const filtri = buildFiltri();
+      
+      // Chiamata al servizio
       const response = await getLotti(filtri, forceRefresh);
+      setLotti(response.lotti || []);
       
-      // Verifica che response.lotti esista
-      if (response && Array.isArray(response.lotti)) {
-        // Salva i lotti ordinati per nome
-        const lottiOrdinati = [...response.lotti].sort((a, b) => 
-          a.nome.localeCompare(b.nome)
-        );
-        setLotti(lottiOrdinati);
-        console.log(`Caricati ${response.lotti.length} lotti con successo`);
-      } else {
-        console.warn('La risposta non contiene un array di lotti valido:', response);
-        setLotti([]);
-      }
-    } catch (error: any) {
-      console.error('Errore nel caricamento dei lotti:', error);
-      
-      // Gestione specifica degli errori
-      let errorMessage = 'Impossibile caricare i lotti. Riprova più tardi.';
-      
-      if (error.message && typeof error.message === 'string') {
-        if (error.message.includes('Timeout')) {
-          errorMessage = 'Il server ha impiegato troppo tempo a rispondere. Verifica la connessione e riprova.';
-        } else if (error.message.includes('Sessione scaduta')) {
-          errorMessage = 'La tua sessione è scaduta. Effettua nuovamente il login.';
+      if ((response.lotti || []).length === 0) {
+        if (Object.keys(filtri).length > 0) {
+          setError('Nessun lotto trovato con i filtri selezionati');
         } else {
-          errorMessage = error.message;
+          setError('Nessun lotto disponibile al momento');
         }
       }
+    } catch (err: any) {
+      setError(err.message || 'Si è verificato un errore durante il caricamento dei lotti');
+      console.error('Errore nel caricamento dei lotti:', err);
       
-      // In caso di errore, imposta un array vuoto e mostra un alert
-      setLotti([]);
-      Alert.alert('Errore', errorMessage);
+      // Mostra un messaggio all'utente
+      Toast.show({
+        type: 'error',
+        text1: 'Errore',
+        text2: err.message || 'Impossibile caricare i lotti',
+        visibilityTime: 3000,
+      });
     } finally {
-      setLoading(false);
+      setIsLoading(false);
       setRefreshing(false);
     }
   };
-
-  // Gestisce l'aggiornamento tramite pull-to-refresh
+  
+  // Ricarica i dati quando la schermata riceve il focus
+  useFocusEffect(
+    useCallback(() => {
+      // Invalida la cache quando la schermata riceve il focus
+      invalidateCache();
+      loadLotti(true);
+      
+      return () => {
+        // Cleanup
+      };
+    }, [])
+  );
+  
+  // Aggiorna i lotti quando i filtri vengono modificati
+  useEffect(() => {
+    if (!isLoading && !refreshing) {
+      loadLotti();
+    }
+  }, [selectedStato, filtriDate.dataMin, filtriDate.dataMax]);
+  
+  // Gestisce l'azione di pull-to-refresh
   const onRefresh = () => {
     setRefreshing(true);
-    // Forza l'aggiornamento dalla rete ignorando la cache
     invalidateCache();
     loadLotti(true);
   };
-
-  // Applica la ricerca ai filtri (per la ricerca server-side)
+  
+  // Gestisce l'evento di ricerca
   const onSearch = () => {
-    setFiltri({ ...filtri, cerca: searchQuery });
+    loadLotti(true);
   };
-
+  
   // Resetta tutti i filtri
   const resetFiltri = () => {
-    setFiltri({});
     setSelectedStato(null);
-    setSearchQuery('');
-    setFiltersVisible(false);
+    setFiltriDate({
+      dataMin: undefined,
+      dataMax: undefined
+    });
+    setFiltersApplied(false);
+    
+    // Ricarica i dati
+    loadLotti(true);
   };
-
-  // Applica i filtri e chiude il modale
+  
+  // Applica i filtri dalla modal
   const applyFilters = () => {
-    const newFiltri: LottoFiltri = {};
+    // Determina se ci sono filtri applicati
+    const hasFilters = selectedStato !== null || 
+                      filtriDate.dataMin !== undefined || 
+                      filtriDate.dataMax !== undefined;
     
-    if (selectedStato) {
-      newFiltri.stato = selectedStato;
-    }
+    setFiltersApplied(hasFilters);
+    setFilterModalVisible(false);
     
-    if (searchQuery) {
-      newFiltri.cerca = searchQuery;
-    }
-    
-    setFiltri(newFiltri);
-    setFiltersVisible(false);
+    // Ricarica i dati
+    loadLotti(true);
   };
-
-  // Naviga al dettaglio del lotto selezionato
+  
+  // Naviga al dettaglio del lotto
   const navigateToLottoDetail = (lotto: Lotto) => {
-    // Per ora solo mostriamo un messaggio, implementeremo la navigazione in seguito
-    alert(`Dettaglio del lotto: ${lotto.nome}`);
-    // router.push(`/lotti/${lotto.id}`);
+    router.push({
+      pathname: '/lotti/dettaglio/[id]',
+      params: { id: lotto.id.toString() }
+    });
   };
-
+  
   // Naviga alla schermata di creazione lotto
   const navigateToCreateLotto = () => {
     router.push('/lotti/nuovo');
   };
-
-  // Ottiene la descrizione dei filtri attualmente applicati
+  
+  // Ottiene la descrizione dei filtri applicati
   const getFilterDescription = () => {
-    const filterParts = [];
+    const filters = [];
     
-    if (filtri.stato) {
-      filterParts.push(`stato: ${filtri.stato}`);
+    if (selectedStato) {
+      filters.push(`Stato: ${selectedStato}`);
     }
     
-    if (filtri.cerca) {
-      filterParts.push(`ricerca: "${filtri.cerca}"`);
+    if (filtriDate.dataMin) {
+      filters.push(`Scadenza da: ${format(filtriDate.dataMin, 'dd/MM/yyyy')}`);
     }
     
-    return filterParts.length > 0 
-      ? `Filtri attivi: ${filterParts.join(', ')}`
-      : 'Tutti i lotti disponibili';
+    if (filtriDate.dataMax) {
+      filters.push(`Scadenza fino a: ${format(filtriDate.dataMax, 'dd/MM/yyyy')}`);
+    }
+    
+    return filters.join(' • ');
+  };
+  
+  // Gestisce la prenotazione di un lotto
+  const handlePrenotazioneLotto = (lotto: Lotto) => {
+    // Verifica se l'utente ha i permessi necessari
+    if (user?.ruolo !== RUOLI.CENTRO_SOCIALE && user?.ruolo !== RUOLI.CENTRO_RICICLAGGIO) {
+      Toast.show({
+        type: 'error',
+        text1: 'Permessi insufficienti',
+        text2: 'Non hai i permessi per prenotare questo lotto',
+      });
+      return;
+    }
+    
+    setSelectedLotto(lotto);
+    setDataRitiroPrevista(addDays(new Date(), 1));
+    setNotePrenotazione('');
+    setShowCentroIdInput(false); // Resetta lo stato del campo centro_id
+    setManualCentroId(''); // Resetta il valore del campo centro_id
+    setShowModalPrenotazione(true);
+  };
+  
+  // Conferma la prenotazione del lotto
+  const confermaPrenotazione = async () => {
+    if (!selectedLotto) {
+      Toast.show({
+        type: 'error',
+        text1: 'Errore',
+        text2: 'Nessun lotto selezionato per la prenotazione',
+      });
+      return;
+    }
+    
+    // Verifica se è necessario il centro_id e non è stato inserito
+    if (showCentroIdInput && (!manualCentroId || isNaN(parseInt(manualCentroId, 10)))) {
+      Toast.show({
+        type: 'info',
+        text1: 'Centro richiesto',
+        text2: 'Inserisci un ID centro valido per completare la prenotazione',
+        visibilityTime: 3000,
+      });
+      return;
+    }
+    
+    try {
+      setIsPrenotazioneLoading(true);
+      
+      // Prepara la data di ritiro nel formato corretto
+      const dataRitiro = dataRitiroPrevista 
+        ? format(dataRitiroPrevista, 'yyyy-MM-dd')
+        : format(addDays(new Date(), 1), 'yyyy-MM-dd');
+      
+      // Converte manualCentroId in numero se necessario
+      const overrideCentroId = showCentroIdInput && manualCentroId ? 
+        parseInt(manualCentroId, 10) : undefined;
+      
+      // Chiama il servizio di prenotazione
+      const result = await prenotaLotto(
+        selectedLotto.id,
+        dataRitiro,
+        notePrenotazione || null,
+        overrideCentroId
+      );
+      
+      if (result.success) {
+        // Chiudi il modale e mostra conferma
+        setShowModalPrenotazione(false);
+        Toast.show({
+          type: 'success',
+          text1: 'Prenotazione completata',
+          text2: result.message || 'Lotto prenotato con successo',
+          visibilityTime: 4000,
+        });
+        
+        // Aggiorna la lista dei lotti
+        invalidateCache();
+        loadLotti(true);
+        
+        // Reindirizza l'utente alla pagina delle prenotazioni dopo un breve delay
+        setTimeout(() => {
+          router.push('/prenotazioni');
+        }, 1000);
+      } else {
+        // Controlla se il problema è la mancanza del centro_id
+        if (result.missingCentroId) {
+          setShowCentroIdInput(true);
+          Toast.show({
+            type: 'info',
+            text1: 'Centro non trovato',
+            text2: 'Inserisci manualmente l\'ID del tuo centro per completare la prenotazione',
+            visibilityTime: 5000,
+          });
+        } else {
+          // Mostra errore
+          Toast.show({
+            type: 'error',
+            text1: 'Errore',
+            text2: result.message || 'Impossibile completare la prenotazione',
+            visibilityTime: 4000,
+          });
+        }
+      }
+    } catch (error: any) {
+      console.error('Errore durante la prenotazione:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Errore',
+        text2: error.message || 'Si è verificato un errore durante la prenotazione',
+        visibilityTime: 3000,
+      });
+    } finally {
+      setIsPrenotazioneLoading(false);
+    }
+  };
+  
+  // Gestisce il cambio della data nel datepicker
+  const handleDateChange = (date: Date | undefined) => {
+    setDataRitiroPrevista(date);
+  };
+  
+  // Funzioni di utilità per il modale
+  const getStatusName = (stato: string) => {
+    switch (stato) {
+      case 'Verde':
+        return 'Disponibile';
+      case 'Arancione':
+        return 'In scadenza';
+      case 'Rosso':
+        return 'Urgente';
+      default:
+        return stato;
+    }
+  };
+
+  const getStatusColor = (stato: string) => {
+    return getStateColor(stato);
+  };
+
+  const getStatusColorLight = (stato: string) => {
+    switch (stato) {
+      case STATI_LOTTI.VERDE:
+        return 'rgba(76, 175, 80, 0.2)';
+      case STATI_LOTTI.ARANCIONE:
+        return 'rgba(255, 152, 0, 0.2)';
+      case STATI_LOTTI.ROSSO:
+        return 'rgba(244, 67, 54, 0.2)';
+      default:
+        return 'rgba(33, 150, 243, 0.2)';
+    }
   };
 
   return (
     <View style={styles.container}>
       {/* Header con barra di ricerca e filtri */}
-      <Card style={styles.headerCard} elevation={4}>
-        <Card.Content style={styles.searchContainer}>
-          <Searchbar
-            placeholder="Cerca lotti per nome"
-            onChangeText={setSearchQuery}
-            value={searchQuery}
-            onSubmitEditing={onSearch}
-            style={styles.searchbar}
-          />
-          <IconButton
-            icon="filter-variant"
-            mode="contained"
-            onPress={() => setFiltersVisible(true)}
-            iconColor="white"
-            containerColor={PRIMARY_COLOR}
-            style={styles.filterButton}
-          />
-        </Card.Content>
-        
-        {/* Indicatori di filtri attivi */}
-        <Card.Content style={styles.filterChips}>
-          {filtri.stato && (
-            <Chip 
-              style={[
-                styles.chip, 
-                { 
-                  backgroundColor: (filtri.stato === 'Verde' 
-                    ? STATUS_COLORS.SUCCESS 
-                    : filtri.stato === 'Arancione' 
-                      ? STATUS_COLORS.WARNING 
-                      : STATUS_COLORS.ERROR) + '20',
-                }
-              ]}
-              textStyle={[
-                styles.chipText,
-                {
-                  color: filtri.stato === 'Verde' 
-                    ? STATUS_COLORS.SUCCESS 
-                    : filtri.stato === 'Arancione' 
-                      ? STATUS_COLORS.WARNING 
-                      : STATUS_COLORS.ERROR
-                }
-              ]}
-              onClose={() => setFiltri({ ...filtri, stato: undefined })}
-            >
-              Stato: {filtri.stato}
-            </Chip>
-          )}
-          
-          {filtri.cerca && (
-            <Chip 
-              style={styles.chip}
-              textStyle={styles.chipText}
-              onClose={() => setFiltri({ ...filtri, cerca: undefined })}
-              icon="magnify"
-            >
-              Cerca: "{filtri.cerca}"
-            </Chip>
-          )}
-          
-          {(filtri.stato || filtri.cerca) && (
+      <Surface style={styles.header}>
+        <Searchbar
+          placeholder="Cerca lotti..."
+          onChangeText={setSearchText}
+          value={searchText}
+          style={styles.searchBar}
+          onSubmitEditing={onSearch}
+          onClearIconPress={() => {
+            setSearchText('');
+            if (searchText) onSearch();
+          }}
+        />
+        <View style={styles.filterContainer}>
+          <Button 
+            icon="filter-variant" 
+            mode={filtersApplied ? "contained" : "outlined"}
+            onPress={() => setFilterModalVisible(true)}
+            style={[styles.filterButton, filtersApplied && styles.activeFilterButton]}
+          >
+            Filtri
+          </Button>
+          {user?.ruolo === RUOLI.OPERATORE && (
             <Button 
-              mode="text"
-              onPress={resetFiltri}
-              style={styles.resetButton}
-              labelStyle={styles.resetButtonLabel}
+              icon="plus" 
+              mode="contained" 
+              onPress={navigateToCreateLotto}
+              style={styles.addButton}
             >
-              Resetta filtri
+              Nuovo
             </Button>
           )}
-        </Card.Content>
-      </Card>
+        </View>
+        
+        {filtersApplied && (
+          <View style={styles.appliedFiltersContainer}>
+            <Text style={styles.appliedFiltersText} numberOfLines={1}>
+              {getFilterDescription()}
+            </Text>
+            <IconButton
+              icon="close-circle"
+              size={16}
+              onPress={resetFiltri}
+              style={styles.clearFiltersButton}
+            />
+          </View>
+        )}
+      </Surface>
       
-      {/* Descrizione dei filtri */}
-      <View style={styles.listHeader}>
-        <Text style={styles.listHeaderText}>
-          {searchQuery ? 
-            `Ricerca: "${searchQuery}" - ${filteredLotti.length} risultati` : 
-            getFilterDescription()
-          }
-        </Text>
-      </View>
-      
-      {/* Lista dei lotti */}
+      {/* Modal per filtrare i lotti */}
+      <StyledFilterModal
+        visible={filterModalVisible}
+        onDismiss={() => setFilterModalVisible(false)}
+        onApply={applyFilters}
+        onReset={resetFiltri}
+        selectedStato={selectedStato}
+        setSelectedStato={setSelectedStato}
+      >
+        <View style={styles.filterModalContent}>
+          <Text style={styles.filterSectionTitle}>Filtra per data di scadenza</Text>
+          <View style={styles.dateFilterContainer}>
+            <View style={styles.datePickerWrapper}>
+              <Text style={styles.datePickerLabel}>Data min</Text>
+              <DatePickerInput
+                locale="it"
+                label="Scadenza da"
+                value={filtriDate.dataMin}
+                onChange={(d) => setFiltriDate(prev => ({ ...prev, dataMin: d }))}
+                inputMode="start"
+                mode="outlined"
+                style={styles.datePicker}
+              />
+            </View>
+            <View style={styles.datePickerWrapper}>
+              <Text style={styles.datePickerLabel}>Data max</Text>
+              <DatePickerInput
+                locale="it"
+                label="Scadenza fino a"
+                value={filtriDate.dataMax}
+                onChange={(d) => setFiltriDate(prev => ({ ...prev, dataMax: d }))}
+                inputMode="end"
+                mode="outlined"
+                style={styles.datePicker}
+              />
+            </View>
+          </View>
+        </View>
+      </StyledFilterModal>
+
+      {/* Contenuto principale - Lista dei lotti */}
       <FlatList
-        data={searchQuery ? filteredLotti : lotti}
+        data={lotti}
         renderItem={({ item }) => (
-          <LottoCard lotto={item} onPress={() => navigateToLottoDetail(item)} />
+          <LottoCard
+            lotto={item}
+            onPress={navigateToLottoDetail}
+            onPrenota={handlePrenotazioneLotto}
+          />
         )}
         keyExtractor={(item) => item.id.toString()}
+        contentContainerStyle={styles.listContent}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
             colors={[PRIMARY_COLOR]}
-            tintColor={PRIMARY_COLOR}
           />
         }
-        ListEmptyComponent={
-          loading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={PRIMARY_COLOR} />
-              <Text style={styles.loadingText}>Caricamento lotti in corso...</Text>
+        ListEmptyComponent={() => (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>
+              {error || (isLoading ? 'Caricamento...' : 'Nessun lotto disponibile')}
+            </Text>
+            {!isLoading && (
+              <Button mode="outlined" onPress={onRefresh} style={styles.retryButton}>
+                Riprova
+              </Button>
+            )}
+          </View>
+        )}
+      />
+      
+      {/* Modal per la prenotazione */}
+      <Portal>
+        <Modal visible={showModalPrenotazione} onDismiss={() => setShowModalPrenotazione(false)} contentContainerStyle={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeaderContainer}>
+              <View style={styles.modalHeader}>
+                <View style={styles.modalTitleContainer}>
+                  <IconButton
+                    icon="calendar-check"
+                    size={24}
+                    iconColor="#fff"
+                    style={styles.modalIcon}
+                  />
+                  <Text style={styles.modalTitle}>Prenota Lotto</Text>
+                </View>
+              </View>
             </View>
-          ) : (
-            <View style={styles.emptyContainer}>
-              <MaterialCommunityIcons name="package-variant-closed" size={64} color="#888" />
-              <Text style={styles.emptyText}>Nessun lotto trovato</Text>
-              <Text style={styles.emptySubText}>
-                {searchQuery ? 
-                  'Nessun risultato trovato per questa ricerca' :
-                  filtri.stato || filtri.cerca 
-                    ? 'Prova a modificare i filtri di ricerca' 
-                    : 'I lotti saranno visualizzati qui quando disponibili'
-                }
-              </Text>
-              {(filtri.stato || filtri.cerca || searchQuery) && (
-                <Button 
+
+            {selectedLotto && (
+              <View style={styles.modalBodyContainer}>
+                <Text style={styles.sectionTitle}>Informazioni sul lotto</Text>
+                <View style={styles.lottoInfoContainer}>
+                  <View style={styles.lottoTitleSection}>
+                    <Text style={styles.lottoTitle}>
+                      {selectedLotto.nome}
+                    </Text>
+                    <Chip 
+                      style={[styles.statusChip, { backgroundColor: getStatusColorLight(selectedLotto.stato) }]} 
+                      textStyle={{ color: getStatusColor(selectedLotto.stato) }}
+                    >
+                      {getStatusName(selectedLotto.stato)}
+                    </Chip>
+                  </View>
+
+                  <View style={styles.detailsGrid}>
+                    <View style={styles.detailItem}>
+                      <Text style={styles.detailLabel}>Quantità</Text>
+                      <Text style={styles.detailValue}>{selectedLotto.quantita} {selectedLotto.unita_misura}</Text>
+                    </View>
+                    
+                    <View style={styles.detailItem}>
+                      <Text style={styles.detailLabel}>Scadenza</Text>
+                      <Text style={styles.detailValue}>{new Date(selectedLotto.data_scadenza).toLocaleDateString('it-IT')}</Text>
+                    </View>
+                    
+                    <View style={styles.detailItem}>
+                      <Text style={styles.detailLabel}>Centro di origine</Text>
+                      <Text style={styles.detailValue}>{selectedLotto.centro_nome || `Centro #${selectedLotto.centro_id}`}</Text>
+                    </View>
+
+                    <View style={styles.detailItem}>
+                      <Text style={styles.detailLabel}>Ritiro entro</Text>
+                      <Text style={styles.detailValue}>{selectedLotto.data_scadenza ? new Date(selectedLotto.data_scadenza).toLocaleDateString('it-IT') : 'Non specificato'}</Text>
+                    </View>
+                  </View>
+                </View>
+                
+                <View style={styles.viewDetailsButtonContainer}>
+                  <Button
+                    mode="outlined"
+                    onPress={() => {
+                      setShowModalPrenotazione(false);
+                      navigateToLottoDetail(selectedLotto);
+                    }}
+                    style={styles.viewDetailsButton}
+                    labelStyle={styles.viewDetailsButtonLabel}
+                    icon="information"
+                  >
+                    Visualizza scheda completa
+                  </Button>
+                </View>
+                
+                <Text style={styles.sectionTitle}>Data di ritiro prevista</Text>
+                <View style={styles.datePickerContainer}>
+                  <DatePickerInput
+                    locale="it"
+                    label="Data di ritiro"
+                    value={dataRitiroPrevista}
+                    onChange={(d) => setDataRitiroPrevista(d)}
+                    inputMode="start"
+                    style={styles.datePicker}
+                    mode="outlined"
+                    withDateFormatInLabel={false}
+                    validRange={{
+                      startDate: new Date(),
+                      endDate: selectedLotto.data_scadenza ? new Date(selectedLotto.data_scadenza) : undefined,
+                    }}
+                  />
+                </View>
+                
+                <Text style={styles.notesSectionTitle}>Note (opzionale)</Text>
+                <PaperTextInput
                   mode="outlined"
-                  onPress={resetFiltri}
-                  style={styles.emptyResetButton}
-                >
-                  Resetta filtri
-                </Button>
-              )}
+                  multiline
+                  numberOfLines={Platform.OS === 'ios' || Platform.OS === 'android' ? 2 : 3}
+                  value={notePrenotazione}
+                  onChangeText={setNotePrenotazione}
+                  placeholder="Aggiungi eventuali note per la prenotazione..."
+                  style={styles.notesInput}
+                  dense={Platform.OS === 'ios' || Platform.OS === 'android'}
+                />
+                
+                {showCentroIdInput && (
+                  <View style={styles.centroIdContainer}>
+                    <Text style={[styles.sectionTitle, {color: '#F44336'}]}>Centro (richiesto)</Text>
+                    <Text style={styles.centroIdHelp}>
+                      Il sistema non è riuscito a determinare automaticamente il tuo centro. 
+                      Inserisci l'ID del tuo centro per completare la prenotazione.
+                      Questo valore verrà salvato per future prenotazioni, così non dovrai reinserirlo.
+                    </Text>
+                    <PaperTextInput
+                      mode="outlined"
+                      value={manualCentroId}
+                      onChangeText={setManualCentroId}
+                      placeholder="ID del centro (numero)"
+                      keyboardType="number-pad"
+                      style={styles.centroIdInput}
+                      right={<PaperTextInput.Icon icon="office-building" />}
+                      outlineStyle={{borderColor: '#F44336', borderWidth: 2}}
+                      error={manualCentroId !== '' && isNaN(parseInt(manualCentroId, 10))}
+                    />
+                  </View>
+                )}
+              </View>
+            )}
+
+            <View style={styles.modalActions}>
+              <Button
+                mode="outlined"
+                onPress={() => setShowModalPrenotazione(false)}
+                style={styles.cancelButton}
+                labelStyle={styles.cancelButtonLabel}
+              >
+                Annulla
+              </Button>
+              <Button
+                mode="contained"
+                onPress={confermaPrenotazione}
+                loading={isPrenotazioneLoading}
+                disabled={isPrenotazioneLoading || !dataRitiroPrevista}
+                style={styles.confirmButton}
+                labelStyle={styles.confirmButtonLabel}
+                icon="check-circle"
+              >
+                Conferma
+              </Button>
             </View>
-          )
-        }
-      />
-      
-      {/* FAB per aggiungere nuovo lotto (solo per operatori/admin) */}
-      {canCreateLotto && (
-        <FAB
-          icon="plus"
-          style={styles.fab}
-          onPress={navigateToCreateLotto}
-          label="Nuovo lotto"
-        />
-      )}
-      
-      {/* Modale per i filtri */}
-      <StyledFilterModal
-        visible={filtersVisible}
-        onDismiss={() => setFiltersVisible(false)}
-        onApply={applyFilters}
-        onReset={resetFiltri}
-        title="Filtra Lotti"
-        selectedStato={selectedStato}
-        setSelectedStato={setSelectedStato}
-      />
+
+            <View style={styles.modalFooterNote}>
+              <Text style={styles.footerText}>
+                La prenotazione ti impegna a ritirare il lotto nella data selezionata
+              </Text>
+            </View>
+          </View>
+        </Modal>
+      </Portal>
     </View>
   );
 }
 
-// Funzione per ottenere il colore in base allo stato
+// Funzione di utilità per determinare il colore in base allo stato
 const getStateColor = (stato: string) => {
   switch (stato) {
-    case 'Verde':
+    case STATI_LOTTI.VERDE:
       return STATUS_COLORS.SUCCESS;
-    case 'Arancione':
+    case STATI_LOTTI.ARANCIONE:
       return STATUS_COLORS.WARNING;
-    case 'Rosso':
+    case STATI_LOTTI.ROSSO:
       return STATUS_COLORS.ERROR;
     default:
-      return '#DDDDDD';
+      return STATUS_COLORS.INFO;
   }
 };
 
@@ -342,107 +658,366 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
-  } as any,
-  headerCard: {
-    margin: 0,
-    borderRadius: 0,
+  },
+  header: {
+    padding: 16,
+    paddingTop: 8,
     elevation: 4,
-  } as any,
-  searchContainer: {
-    flexDirection: 'row',
-    paddingVertical: 8,
-    paddingHorizontal: 8,
-    alignItems: 'center',
     backgroundColor: '#fff',
-  } as any,
-  searchbar: {
-    flex: 1,
+  },
+  searchBar: {
     elevation: 0,
     backgroundColor: '#f0f0f0',
     borderRadius: 8,
-  } as any,
-  filterButton: {
-    marginLeft: 8,
-  } as any,
-  filterChips: {
+  },
+  filterContainer: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingVertical: 8,
-    paddingHorizontal: 4,
+    justifyContent: 'space-between',
+    marginTop: 8,
   },
-  chip: {
+  filterButton: {
+    flex: 1,
     marginRight: 8,
-    marginBottom: 8,
-    height: 36,
-    borderRadius: 18,
-    paddingHorizontal: 12,
+  },
+  activeFilterButton: {
+    backgroundColor: PRIMARY_COLOR,
+  },
+  addButton: {
+    backgroundColor: PRIMARY_COLOR,
+  },
+  appliedFiltersContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    marginTop: 8,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+    padding: 8,
   },
-  chipText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  whiteChipText: {
-    color: 'white',
-    fontWeight: 'bold',
-  },
-  resetButton: {
-    marginVertical: 0,
-    paddingVertical: 0,
-    height: 36,
-    alignSelf: 'center',
-  },
-  resetButtonLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  loadingContainer: {
+  appliedFiltersText: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  } as any,
-  loadingText: {
-    marginTop: 12,
+    fontSize: 12,
     color: '#666',
-    fontSize: 16,
-  } as any,
+  },
+  clearFiltersButton: {
+    margin: 0,
+  },
+  listContent: {
+    paddingVertical: 8,
+    paddingBottom: 80,
+  },
   emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
+    padding: 32,
     alignItems: 'center',
-    padding: 20,
-  } as any,
+    justifyContent: 'center',
+  },
   emptyText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    marginTop: 16,
+    fontSize: 16,
     color: '#666',
-  } as any,
-  emptySubText: {
-    fontSize: 14,
-    color: '#999',
     textAlign: 'center',
     marginBottom: 16,
-  } as any,
-  emptyResetButton: {
+  },
+  retryButton: {
     marginTop: 8,
-  } as any,
-  listHeader: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  } as any,
-  listHeaderText: {
+  },
+  filterModalContent: {
+    padding: 16,
+  },
+  filterSectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    color: '#555',
+  },
+  dateFilterContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  datePickerWrapper: {
+    width: '48%',
+  },
+  datePickerLabel: {
+    fontSize: 14,
+    marginBottom: 4,
+    color: '#666',
+  },
+  datePicker: {
+    backgroundColor: '#fff',
+    marginBottom: 12,
+    height: 60,
+    elevation: 1,
+  },
+  modalContainer: {
+    padding: Platform.OS === 'web' ? 20 : 10,
+    margin: Platform.OS === 'web' ? 20 : 10,
+    maxWidth: '100%',
+  },
+  modalContent: {
+    padding: 0,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    maxWidth: 550,
+    alignSelf: 'center',
+    width: '100%',
+    elevation: 4,
+    overflow: 'hidden',
+  },
+  modalHeaderContainer: {
+    backgroundColor: PRIMARY_COLOR,
+    padding: 16,
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    elevation: 2,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  modalTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  modalIcon: {
+    marginRight: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 20,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  lottoInfoContainer: {
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: PRIMARY_COLOR,
+  },
+  lottoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  lottoTitleSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  lottoTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    flex: 1,
+  },
+  modalSubtitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    flex: 1,
+  },
+  lottoDetailsSection: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 16,
+  },
+  detailItem: {
+    width: '50%',
+    marginBottom: 12,
+    paddingRight: 8,
+  },
+  detailLabel: {
     fontSize: 14,
     color: '#666',
-  } as any,
-  fab: {
-    position: 'absolute',
-    margin: 16,
-    right: 0,
-    bottom: 0,
+    marginBottom: 2,
+  },
+  detailValue: {
+    fontSize: 16,
+    color: '#333',
+    fontWeight: '500',
+  },
+  detailsButton: {
+    marginRight: 8,
+    borderColor: PRIMARY_COLOR,
+  },
+  detailsButtonLabel: {
+    color: PRIMARY_COLOR,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalFormContainer: {
+    marginVertical: 12,
+    padding: 16,
+    backgroundColor: '#fafafa',
+    borderRadius: 12,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    marginBottom: 12,
+    marginTop: 12,
+    color: '#333',
+  },
+  formField: {
+    marginBottom: 16,
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  inputIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  inputContent: {
+    flex: 1,
+  },
+  inputLabel: {
+    fontSize: 15,
+    fontWeight: '500',
+    marginBottom: 6,
+    marginTop: 12,
+    color: '#444',
+  },
+  notesInput: {
+    marginBottom: 16,
+    backgroundColor: '#fff',
+    minHeight: 80,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 16,
+    paddingTop: 12, 
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+    backgroundColor: '#fafafa',
+    alignItems: 'center',
+  },
+  cancelButton: {
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    flex: 1,
+    paddingVertical: 6,
+  },
+  cancelButtonLabel: {
+    color: '#666',
+    fontWeight: '600',
+    fontSize: 15,
+  },
+  confirmButton: {
+    borderRadius: 8,
     backgroundColor: PRIMARY_COLOR,
-  } as any,
+    flex: 1,
+    paddingVertical: 6,
+    elevation: 2,
+  },
+  confirmButtonLabel: {
+    color: 'white',
+    fontWeight: '600',
+    fontSize: 15,
+  },
+  modalFooterNote: {
+    padding: 16,
+    paddingTop: 0,
+    paddingBottom: 16,
+  },
+  footerText: {
+    fontSize: 14,
+    color: '#666',
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  statusChip: {
+    height: 28,
+    borderRadius: 14,
+    paddingHorizontal: 8,
+  },
+  statusIndicator: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    marginRight: 10,
+    borderWidth: 2,
+    borderColor: 'white',
+  },
+  modalBodyContainer: {
+    padding: Platform.OS === 'web' ? 20 : 16,
+  },
+  detailsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 4,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  infoLabel: {
+    fontSize: 14,
+    color: '#666',
+    width: 120,
+  },
+  infoValue: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+    flex: 1,
+  },
+  infoIcon: {
+    marginRight: 8, 
+    opacity: 0.7,
+  },
+  datePickerContainer: {
+    marginBottom: 16,
+  },
+  viewDetailsButtonContainer: {
+    marginTop: 8,
+    marginBottom: 16,
+    alignItems: 'flex-start',
+  },
+  viewDetailsButton: {
+    borderColor: PRIMARY_COLOR,
+    borderRadius: 8,
+  },
+  viewDetailsButtonLabel: {
+    color: PRIMARY_COLOR,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  notesSectionTitle: {
+    fontSize: 16,
+    fontWeight: '400',
+    marginBottom: 12,
+    marginTop: 12,
+    color: '#555',
+  },
+  centroIdContainer: {
+    marginBottom: 16,
+    backgroundColor: '#FFF4F2',
+    padding: 16,
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#F44336',
+  },
+  centroIdHelp: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+  },
+  centroIdInput: {
+    marginBottom: 16,
+    backgroundColor: '#fff',
+  },
 }); 
