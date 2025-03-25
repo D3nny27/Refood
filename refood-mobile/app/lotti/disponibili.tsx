@@ -20,6 +20,7 @@ interface Filtri {
   cerca?: string;
   scadenza_min?: string;
   scadenza_max?: string;
+  stato?: string;
 }
 
 export default function LottiDisponibiliScreen() {
@@ -27,6 +28,7 @@ export default function LottiDisponibiliScreen() {
   const router = useRouter();
   
   const [lotti, setLotti] = useState<Lotto[]>([]);
+  const [lottiNonFiltrati, setLottiNonFiltrati] = useState<Lotto[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +45,9 @@ export default function LottiDisponibiliScreen() {
   const [prenotazioneInCorso, setPrenotazioneInCorso] = useState(false);
   const [showCentroIdInput, setShowCentroIdInput] = useState(false);
   const [manualCentroId, setManualCentroId] = useState('');
+
+  // IMPLEMENTAZIONE FILTRO LOCALE PER LA RICERCA CON DEBOUNCE
+  const [debounceTimeout, setDebounceTimeout] = useState<NodeJS.Timeout | null>(null);
 
   // Funzione sicura per convertire stringhe di date in oggetti Date
   const safeParseDate = (dateString: string | undefined | null): Date | null => {
@@ -75,23 +80,60 @@ export default function LottiDisponibiliScreen() {
     }
   };
 
-  // Funzione per caricare i lotti disponibili
+  // Modifichiamo la funzione per caricare i lotti disponibili
   const loadLottiDisponibili = async (forceRefresh = false) => {
     try {
       setLoading(true);
       setError(null);
       
-      console.log('Caricamento lotti disponibili con filtri:', filtri);
+      console.log('Caricamento lotti disponibili con filtri:', JSON.stringify(filtri));
+      
+      // Crea una copia dei filtri senza la ricerca per l'API
+      const apiFiltri = { ...filtri };
+      delete apiFiltri.cerca; // Rimuovi il filtro 'cerca' perché lo applicheremo localmente
       
       try {
-        const result = await getLottiDisponibili(filtri, forceRefresh);
+        const result = await getLottiDisponibili(apiFiltri, forceRefresh);
         
         // Ordina i lotti per data di scadenza (i più vicini alla scadenza prima)
         const lottiOrdinati = result.lotti.sort((a: Lotto, b: Lotto) => {
           return new Date(a.data_scadenza).getTime() - new Date(b.data_scadenza).getTime();
         });
         
-        setLotti(lottiOrdinati);
+        // Salva tutti i lotti non filtrati
+        setLottiNonFiltrati(lottiOrdinati);
+        
+        // Applica il filtro di ricerca locale se necessario
+        if (searchQuery.trim()) {
+          console.log('Applicazione filtro locale per:', searchQuery.trim());
+          
+          // Normalizza il testo di ricerca (rimuovi caratteri speciali)
+          const testoDaCercare = searchQuery.trim().toLowerCase()
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // rimuove accenti
+          
+          // Filtra i lotti localmente con la stessa logica di handleSearchChange
+          const lottiFiltrati = lottiOrdinati.filter(lotto => {
+            // Normalizza i testi per la ricerca
+            const nome = (lotto.nome || "").toLowerCase()
+              .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            const descrizione = (lotto.descrizione || "").toLowerCase()
+              .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            const centroNome = (lotto.centro_nome || "").toLowerCase()
+              .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            
+            // Verifica se il testo di ricerca è contenuto in uno dei campi
+            return nome.includes(testoDaCercare) || 
+                   descrizione.includes(testoDaCercare) || 
+                   centroNome.includes(testoDaCercare);
+          });
+          
+          console.log(`Filtrati ${lottiFiltrati.length} lotti su ${lottiOrdinati.length}`);
+          setLotti(lottiFiltrati);
+        } else {
+          // Se non c'è testo di ricerca, mostra tutti i lotti
+          setLotti(lottiOrdinati);
+        }
+        
         console.log(`Caricati ${lottiOrdinati.length} lotti disponibili`);
       } catch (err: any) {
         console.error('Errore nel caricamento dei lotti disponibili:', err);
@@ -103,12 +145,13 @@ export default function LottiDisponibiliScreen() {
           // Attendiamo un breve periodo e riproviamo silenziosamente
           setTimeout(() => {
             // Tentativo silenzioso di recupero
-            getLottiDisponibili(filtri, true)
+            getLottiDisponibili(apiFiltri, true)
               .then((result) => {
                 if (result.lotti.length > 0) {
                   const lottiOrdinati = result.lotti.sort((a, b) => {
                     return new Date(a.data_scadenza).getTime() - new Date(b.data_scadenza).getTime();
                   });
+                  setLottiNonFiltrati(lottiOrdinati);
                   setLotti(lottiOrdinati);
                   setError(null);
                 }
@@ -139,21 +182,29 @@ export default function LottiDisponibiliScreen() {
     loadLottiDisponibili();
   }, []);
   
-  // Effetto per ricaricare i lotti quando i filtri cambiano
+  // Effetto per ricaricare i lotti quando i filtri cambiano (escluso il filtro cerca)
   useEffect(() => {
-    if (Object.keys(filtri).length > 0) {
+    // Estrai i filtri senza il filtro 'cerca'
+    const { cerca, ...altriFiltri } = filtri;
+    
+    // Se ci sono filtri diversi da 'cerca', ricarica i lotti
+    if (Object.keys(altriFiltri).length > 0) {
       loadLottiDisponibili(true);
     }
-  }, [filtri]);
+  }, [filtri.stato, filtri.categoria, filtri.centro_id, filtri.scadenza_min, filtri.scadenza_max]);
   
-  // Effetto per ricaricare i lotti quando la schermata ottiene il focus
+  // Modifico useFocusEffect per considerare anche i filtri
   useFocusEffect(
     useCallback(() => {
-      loadLottiDisponibili();
+      console.log("useFocusEffect attivato con filtri:", JSON.stringify(filtri));
+      
+      // Carica i dati con force refresh
+      loadLottiDisponibili(true);
+      
       return () => {
         // Cleanup
       };
-    }, [])
+    }, [filtri.stato, filtri.categoria, filtri.centro_id, filtri.scadenza_min, filtri.scadenza_max])  // Aggiungo filtri pertinenti come dipendenze, escludo cerca
   );
   
   // Funzione per gestire il pull-to-refresh
@@ -162,22 +213,139 @@ export default function LottiDisponibiliScreen() {
     loadLottiDisponibili(true);
   };
   
-  // Funzione per cercare
-  const onSearch = () => {
-    setFiltri({ ...filtri, cerca: searchQuery });
+  // IMPLEMENTAZIONE FILTRO LOCALE PER LA RICERCA CON DEBOUNCE
+  const handleSearchChange = (text: string) => {
+    // Aggiorna subito il testo visualizzato
+    setSearchQuery(text);
+    
+    // Cancella eventuali timer precedenti
+    if (debounceTimeout) {
+      clearTimeout(debounceTimeout);
+    }
+    
+    // Esegui la ricerca dopo un breve ritardo (200ms)
+    const timeoutId = setTimeout(() => {
+      console.log('Ricerca locale per:', text);
+      
+      if (text.trim()) {
+        // Normalizza il testo di ricerca (rimuovi caratteri speciali)
+        const testoDaCercare = text.trim().toLowerCase()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // rimuove accenti
+        
+        // Filtra i lotti localmente
+        const lottiFiltrati = lottiNonFiltrati.filter(lotto => {
+          // Normalizza i testi per la ricerca
+          const nome = (lotto.nome || "").toLowerCase()
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          const descrizione = (lotto.descrizione || "").toLowerCase()
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          const centroNome = (lotto.centro_nome || "").toLowerCase()
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          
+          // Verifica se il testo di ricerca è contenuto in uno dei campi
+          return nome.includes(testoDaCercare) || 
+                 descrizione.includes(testoDaCercare) || 
+                 centroNome.includes(testoDaCercare);
+        });
+        
+        console.log(`Filtrati ${lottiFiltrati.length} lotti su ${lottiNonFiltrati.length}`);
+        setLotti(lottiFiltrati);
+      } else {
+        // Se non c'è testo di ricerca, mostra tutti i lotti
+        setLotti(lottiNonFiltrati);
+        console.log('Rimosso filtro di ricerca locale');
+      }
+    }, 200); // 200ms di debounce
+    
+    // Salva il riferimento al timeout
+    setDebounceTimeout(timeoutId);
   };
   
+  // Funzione per cercare
+  const onSearch = () => {
+    handleSearchChange(searchQuery);
+    
+    if (searchQuery.trim()) {
+      // Mostra un toast per confermare la ricerca
+      Toast.show({
+        type: 'info',
+        text1: 'Ricerca attiva',
+        text2: `Ricerca locale per: "${searchQuery.trim()}"`,
+        visibilityTime: 2000,
+      });
+    }
+  };
+
+  // Funzione per applicare il filtro di stato (colore)
+  const applyStatoFilter = (stato: string | null) => {
+    const nuoviFiltri = { ...filtri };
+    
+    // Se è lo stesso stato, lo togliamo (toggle)
+    if (stato && filtri.stato === stato) {
+      delete nuoviFiltri.stato;
+      Toast.show({
+        type: 'info',
+        text1: 'Filtro rimosso',
+        text2: `Il filtro per stato "${stato}" è stato rimosso`
+      });
+    } else if (stato) {
+      // Altrimenti impostiamo il nuovo stato
+      nuoviFiltri.stato = stato;
+      Toast.show({
+        type: 'success',
+        text1: 'Filtro applicato',
+        text2: `Verranno mostrati solo i lotti in stato "${stato}"`
+      });
+    } else {
+      // Se è null, rimuoviamo il filtro di stato
+      delete nuoviFiltri.stato;
+      Toast.show({
+        type: 'info',
+        text1: 'Filtro rimosso',
+        text2: 'Il filtro per stato è stato rimosso'
+      });
+    }
+    
+    // Aggiorna i filtri
+    setFiltri(nuoviFiltri);
+  };
+
   // Funzione per resettare i filtri
   const resetFiltri = () => {
+    console.log("Resetting all filters");
+    
+    // Resetta tutti i filtri API
     setFiltri({});
+    
+    // Resetta la ricerca locale
     setSearchQuery('');
-    loadLottiDisponibili(true);
+    
+    // Se abbiamo già i lotti non filtrati, li usiamo
+    if (lottiNonFiltrati.length > 0) {
+      // Resetta la lista dei lotti al valore originale non filtrato
+      setLotti(lottiNonFiltrati);
+      
+      Toast.show({
+        type: 'success',
+        text1: 'Filtri reimpostati',
+        text2: 'Tutti i filtri sono stati rimossi'
+      });
+    } else {
+      // Se non abbiamo lotti in cache, ricarica i dati dal server
+      loadLottiDisponibili(true);
+      
+      Toast.show({
+        type: 'success',
+        text1: 'Filtri reimpostati',
+        text2: 'Ricaricamento dati in corso...'
+      });
+    }
   };
   
   // Funzione per applicare i filtri
   const applyFilters = () => {
     setFiltriVisibili(false);
-    // Qui implementare l'applicazione dei filtri avanzati
+    // Il filtro è già stato applicato quando è stato selezionato
   };
   
   // Funzione per navigare ai dettagli del lotto
@@ -494,44 +662,135 @@ export default function LottiDisponibiliScreen() {
     </Portal>
   );
 
+  // Aggiungiamo il modale di filtri
+  const renderFiltriModal = () => (
+    <Portal>
+      <Dialog
+        visible={filtriVisibili}
+        onDismiss={() => setFiltriVisibili(false)}
+        style={styles.filtriDialog}
+      >
+        <Dialog.Title>Filtri</Dialog.Title>
+        <Dialog.Content>
+          <Text style={styles.filterSectionTitle}>Stato Lotti</Text>
+          <View style={styles.colorFiltersContainer}>
+            <Chip
+              selected={filtri.stato === 'verde'}
+              onPress={() => applyStatoFilter('verde')}
+              style={[styles.colorFilterChip, styles.greenChip]}
+              textStyle={{ color: filtri.stato === 'verde' ? '#fff' : '#000' }}
+              selectedColor="#4CAF50"
+            >
+              Verde
+            </Chip>
+            <Chip
+              selected={filtri.stato === 'arancione'}
+              onPress={() => applyStatoFilter('arancione')}
+              style={[styles.colorFilterChip, styles.orangeChip]}
+              textStyle={{ color: filtri.stato === 'arancione' ? '#fff' : '#000' }}
+              selectedColor="#FFA000"
+            >
+              Arancione
+            </Chip>
+            <Chip
+              selected={filtri.stato === 'rosso'}
+              onPress={() => applyStatoFilter('rosso')}
+              style={[styles.colorFilterChip, styles.redChip]}
+              textStyle={{ color: filtri.stato === 'rosso' ? '#fff' : '#000' }}
+              selectedColor="#F44336"
+            >
+              Rosso
+            </Chip>
+          </View>
+        </Dialog.Content>
+        <Dialog.Actions>
+          <Button onPress={resetFiltri}>Reimposta</Button>
+          <Button 
+            mode="contained" 
+            onPress={() => setFiltriVisibili(false)}
+          >
+            Applica
+          </Button>
+        </Dialog.Actions>
+      </Dialog>
+    </Portal>
+  );
+
   return (
     <View style={styles.container}>
       {/* Header di ricerca */}
       <View style={styles.searchContainer}>
         <Searchbar
           placeholder="Cerca lotti disponibili"
-          onChangeText={setSearchQuery}
+          onChangeText={handleSearchChange}
           value={searchQuery}
           style={styles.searchbar}
-          onSubmitEditing={onSearch}
           icon="magnify"
+          onSubmitEditing={onSearch}
+        />
+        <IconButton
+          icon="magnify"
+          size={24}
+          onPress={onSearch}
+          style={styles.searchButton}
+          iconColor="#FFFFFF"
         />
         <IconButton
           icon="filter"
           size={24}
           onPress={() => setFiltriVisibili(true)}
-          style={styles.filterButton}
+          style={[
+            styles.filterButton,
+            Object.keys(filtri).length > 0 && styles.activeFilterButton
+          ]}
+          iconColor={Object.keys(filtri).length > 0 ? PRIMARY_COLOR : '#555'}
         />
       </View>
 
       {/* Mostra se ci sono filtri attivi */}
-      {Object.keys(filtri).length > 0 && (
+      {(Object.keys(filtri).length > 0 || searchQuery.trim()) && (
         <View style={styles.activeFiltersContainer}>
           <Text style={styles.activeFiltersText}>Filtri attivi:</Text>
-          {filtri.cerca && (
+          
+          {/* Chip per la ricerca (filtro locale) */}
+          {searchQuery.trim() && (
             <Chip 
               style={styles.filterChip} 
-              onClose={() => setFiltri({...filtri, cerca: undefined})}
+              onClose={() => {
+                // Reset solo della ricerca locale
+                setSearchQuery('');
+                // Riapplica i filtri senza ricerca
+                setLotti(lottiNonFiltrati);
+                console.log('Rimosso filtro di ricerca locale');
+              }}
             >
-              Ricerca: {filtri.cerca}
+              Ricerca: {searchQuery.trim()}
             </Chip>
           )}
+          
+          {/* Chip per lo stato (filtro API) */}
+          {filtri.stato && (
+            <Chip 
+              style={[
+                styles.filterChip, 
+                filtri.stato === 'verde' ? styles.greenChip : 
+                filtri.stato === 'arancione' ? styles.orangeChip : 
+                filtri.stato === 'rosso' ? styles.redChip : null
+              ]} 
+              onClose={() => applyStatoFilter(null)}
+            >
+              Stato: {filtri.stato}
+            </Chip>
+          )}
+          
+          {/* Button per resettare tutti i filtri */}
           <Button 
             mode="text" 
             onPress={resetFiltri}
             style={styles.resetButton}
+            icon="filter-remove"
           >
-            Resetta filtri
+            Resetta tutto
           </Button>
         </View>
       )}
@@ -585,8 +844,11 @@ export default function LottiDisponibiliScreen() {
         />
       )}
       
-      {/* Modale di prenotazione - Corretto il problema con renderDialog */}
+      {/* Modale di prenotazione */}
       {renderDialog()}
+      
+      {/* Modale dei filtri */}
+      {renderFiltriModal()}
     </View>
   );
 }
@@ -608,6 +870,12 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 8,
     backgroundColor: '#f0f0f0',
+  },
+  searchButton: {
+    margin: 0,
+    backgroundColor: PRIMARY_COLOR,
+    borderRadius: 4,
+    marginRight: 8,
   },
   filterButton: {
     margin: 0,
@@ -786,5 +1054,45 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#555',
     marginBottom: 16,
+  },
+  activeFilterButton: {
+    backgroundColor: 'rgba(0, 152, 74, 0.1)',
+  },
+  filtriDialog: {
+    backgroundColor: 'white',
+    borderRadius: 8,
+    paddingBottom: 8,
+  },
+  filterSectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 12,
+    color: '#333',
+  },
+  colorFiltersContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-start',
+    marginBottom: 16,
+  },
+  colorFilterChip: {
+    margin: 4,
+    minWidth: 80,
+    justifyContent: 'center',
+  },
+  greenChip: {
+    backgroundColor: 'rgba(76, 175, 80, 0.2)',
+    borderColor: '#4CAF50',
+    borderWidth: 1,
+  },
+  orangeChip: {
+    backgroundColor: 'rgba(255, 160, 0, 0.2)',
+    borderColor: '#FFA000',
+    borderWidth: 1,
+  },
+  redChip: {
+    backgroundColor: 'rgba(244, 67, 54, 0.2)',
+    borderColor: '#F44336',
+    borderWidth: 1,
   },
 }); 

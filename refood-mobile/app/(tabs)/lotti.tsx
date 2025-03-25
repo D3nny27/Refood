@@ -11,7 +11,6 @@ import { useFocusEffect } from '@react-navigation/native';
 import StyledFilterModal from '../../src/components/StyledFilterModal';
 import { RUOLI, PRIMARY_COLOR, STATUS_COLORS } from '../../src/config/constants';
 import { router } from 'expo-router';
-import { DatePickerInput } from 'react-native-paper-dates';
 import { it } from 'date-fns/locale';
 import { addDays, format } from 'date-fns';
 import { prenotaLotto } from '../../src/services/prenotazioniService';
@@ -26,10 +25,12 @@ const STATI_LOTTI = {
 export default function LottiScreen() {
   // Stati per gestire i dati e le interazioni dell'utente
   const [lotti, setLotti] = useState<Lotto[]>([]);
+  const [lottiNonFiltrati, setLottiNonFiltrati] = useState<Lotto[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [filtersApplied, setFiltersApplied] = useState(false);
   const [selectedStato, setSelectedStato] = useState<string | null>(null);
@@ -47,36 +48,32 @@ export default function LottiScreen() {
   // Ottieni l'utente autenticato
   const { user } = useAuth();
   
-  // Gestisce il filtro per le date
-  const [filtriDate, setFiltriDate] = useState({
-    dataMin: undefined as Date | undefined,
-    dataMax: undefined as Date | undefined,
-  });
-  
   // Costruisce i filtri da applicare alla richiesta
   const buildFiltri = (): LottoFiltri => {
     const filtri: LottoFiltri = {};
-    
-    // Aggiungi il testo di ricerca se presente
-    if (searchText) {
-      filtri.cerca = searchText;
-    }
     
     // Aggiungi il filtro per stato se selezionato
     if (selectedStato) {
       filtri.stato = selectedStato;
     }
     
-    // Aggiungi le date se impostate
-    if (filtriDate.dataMin) {
-      filtri.scadenza_min = filtriDate.dataMin.toISOString().split('T')[0];
-    }
-    
-    if (filtriDate.dataMax) {
-      filtri.scadenza_max = filtriDate.dataMax.toISOString().split('T')[0];
-    }
-    
     return filtri;
+  };
+  
+  // Funzione per filtrare localmente i lotti in base al testo di ricerca
+  const filtroLocale = (testo: string, lottiDaFiltrare: Lotto[]): Lotto[] => {
+    if (!testo.trim()) return lottiDaFiltrare;
+    
+    const testoNormalizzato = testo.trim().toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // rimuove accenti
+    
+    return lottiDaFiltrare.filter(lotto => {
+      const nome = (lotto.nome || "").toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      
+      // Cerca solo nel nome del lotto
+      return nome.includes(testoNormalizzato);
+    });
   };
   
   // Carica i lotti dal servizio API
@@ -85,18 +82,32 @@ export default function LottiScreen() {
       setIsLoading(true);
       setError(null);
       
-      // Costruisci i filtri
+      // Costruisci i filtri (senza includere il testo di ricerca)
       const filtri = buildFiltri();
       
       // Chiamata al servizio
       const response = await getLotti(filtri, forceRefresh);
-      setLotti(response.lotti || []);
       
-      if ((response.lotti || []).length === 0) {
-        if (Object.keys(filtri).length > 0) {
-          setError('Nessun lotto trovato con i filtri selezionati');
-        } else {
-          setError('Nessun lotto disponibile al momento');
+      // Salva tutti i lotti non filtrati
+      setLottiNonFiltrati(response.lotti || []);
+      
+      // Applica il filtro di ricerca locale se necessario
+      if (searchText.trim()) {
+        const lottiFiltrati = filtroLocale(searchText, response.lotti || []);
+        setLotti(lottiFiltrati);
+        
+        if (lottiFiltrati.length === 0) {
+          setError('Nessun lotto corrisponde alla tua ricerca');
+        }
+      } else {
+        setLotti(response.lotti || []);
+        
+        if ((response.lotti || []).length === 0) {
+          if (Object.keys(filtri).length > 0) {
+            setError('Nessun lotto trovato con i filtri selezionati');
+          } else {
+            setError('Nessun lotto disponibile al momento');
+          }
         }
       }
     } catch (err: any) {
@@ -113,6 +124,7 @@ export default function LottiScreen() {
     } finally {
       setIsLoading(false);
       setRefreshing(false);
+      setIsSearching(false);
     }
   };
   
@@ -134,7 +146,36 @@ export default function LottiScreen() {
     if (!isLoading && !refreshing) {
       loadLotti();
     }
-  }, [selectedStato, filtriDate.dataMin, filtriDate.dataMax]);
+  }, [selectedStato]);
+  
+  // Gestione della ricerca con debounce
+  useEffect(() => {
+    const debounceFn = setTimeout(() => {
+      if (!isLoading && !refreshing) {
+        if (lottiNonFiltrati.length > 0) {
+          // Se abbiamo già caricato i lotti, filtriamo localmente
+          setIsSearching(true);
+          const lottiFiltrati = filtroLocale(searchText, lottiNonFiltrati);
+          setLotti(lottiFiltrati);
+          
+          if (lottiFiltrati.length === 0 && searchText.trim()) {
+            setError('Nessun lotto corrisponde alla tua ricerca');
+          } else if (lottiFiltrati.length === 0) {
+            setError('Nessun lotto disponibile al momento');
+          } else {
+            setError(null);
+          }
+          
+          setIsSearching(false);
+        } else {
+          // Altrimenti, carichiamo i dati dal server
+          loadLotti();
+        }
+      }
+    }, 300);
+    
+    return () => clearTimeout(debounceFn);
+  }, [searchText]);
   
   // Gestisce l'azione di pull-to-refresh
   const onRefresh = () => {
@@ -143,18 +184,21 @@ export default function LottiScreen() {
     loadLotti(true);
   };
   
-  // Gestisce l'evento di ricerca
-  const onSearch = () => {
-    loadLotti(true);
+  // Gestione della cancellazione della ricerca
+  const handleClearSearch = () => {
+    setSearchText('');
+    // Ripristina i lotti non filtrati
+    setLotti(lottiNonFiltrati);
+    if (lottiNonFiltrati.length === 0) {
+      setError('Nessun lotto disponibile al momento');
+    } else {
+      setError(null);
+    }
   };
   
   // Resetta tutti i filtri
   const resetFiltri = () => {
     setSelectedStato(null);
-    setFiltriDate({
-      dataMin: undefined,
-      dataMax: undefined
-    });
     setFiltersApplied(false);
     
     // Ricarica i dati
@@ -164,9 +208,7 @@ export default function LottiScreen() {
   // Applica i filtri dalla modal
   const applyFilters = () => {
     // Determina se ci sono filtri applicati
-    const hasFilters = selectedStato !== null || 
-                      filtriDate.dataMin !== undefined || 
-                      filtriDate.dataMax !== undefined;
+    const hasFilters = selectedStato !== null;
     
     setFiltersApplied(hasFilters);
     setFilterModalVisible(false);
@@ -196,12 +238,8 @@ export default function LottiScreen() {
       filters.push(`Stato: ${selectedStato}`);
     }
     
-    if (filtriDate.dataMin) {
-      filters.push(`Scadenza da: ${format(filtriDate.dataMin, 'dd/MM/yyyy')}`);
-    }
-    
-    if (filtriDate.dataMax) {
-      filters.push(`Scadenza fino a: ${format(filtriDate.dataMax, 'dd/MM/yyyy')}`);
+    if (searchText.trim()) {
+      filters.push(`Ricerca: "${searchText.trim()}"`);
     }
     
     return filters.join(' • ');
@@ -329,11 +367,11 @@ export default function LottiScreen() {
   const getStatusName = (stato: string) => {
     switch (stato) {
       case 'Verde':
-        return 'Disponibile';
+        return 'Verde';
       case 'Arancione':
-        return 'In scadenza';
+        return 'Arancione';
       case 'Rosso':
-        return 'Urgente';
+        return 'Rosso';
       default:
         return stato;
     }
@@ -365,11 +403,9 @@ export default function LottiScreen() {
           onChangeText={setSearchText}
           value={searchText}
           style={styles.searchBar}
-          onSubmitEditing={onSearch}
-          onClearIconPress={() => {
-            setSearchText('');
-            if (searchText) onSearch();
-          }}
+          onSubmitEditing={() => loadLotti(true)}
+          loading={isSearching}
+          onClearIconPress={handleClearSearch}
         />
         <View style={styles.filterContainer}>
           <Button 
@@ -392,7 +428,7 @@ export default function LottiScreen() {
           )}
         </View>
         
-        {filtersApplied && (
+        {(filtersApplied || searchText.trim()) && (
           <View style={styles.appliedFiltersContainer}>
             <Text style={styles.appliedFiltersText} numberOfLines={1}>
               {getFilterDescription()}
@@ -400,7 +436,10 @@ export default function LottiScreen() {
             <IconButton
               icon="close-circle"
               size={16}
-              onPress={resetFiltri}
+              onPress={() => {
+                resetFiltri();
+                handleClearSearch();
+              }}
               style={styles.clearFiltersButton}
             />
           </View>
@@ -417,32 +456,73 @@ export default function LottiScreen() {
         setSelectedStato={setSelectedStato}
       >
         <View style={styles.filterModalContent}>
-          <Text style={styles.filterSectionTitle}>Filtra per data di scadenza</Text>
-          <View style={styles.dateFilterContainer}>
-            <View style={styles.datePickerWrapper}>
-              <Text style={styles.datePickerLabel}>Data min</Text>
-              <DatePickerInput
-                locale="it"
-                label="Scadenza da"
-                value={filtriDate.dataMin}
-                onChange={(d) => setFiltriDate(prev => ({ ...prev, dataMin: d }))}
-                inputMode="start"
-                mode="outlined"
-                style={styles.datePicker}
-              />
-            </View>
-            <View style={styles.datePickerWrapper}>
-              <Text style={styles.datePickerLabel}>Data max</Text>
-              <DatePickerInput
-                locale="it"
-                label="Scadenza fino a"
-                value={filtriDate.dataMax}
-                onChange={(d) => setFiltriDate(prev => ({ ...prev, dataMax: d }))}
-                inputMode="end"
-                mode="outlined"
-                style={styles.datePicker}
-              />
-            </View>
+          <Text style={styles.filterSectionTitle}>Filtra per stato</Text>
+          <View style={styles.stateFilterContainer}>
+            <Chip
+              selected={selectedStato === STATI_LOTTI.VERDE}
+              onPress={() => setSelectedStato(selectedStato === STATI_LOTTI.VERDE ? null : STATI_LOTTI.VERDE)}
+              style={[
+                styles.stateChip, 
+                { 
+                  backgroundColor: selectedStato === STATI_LOTTI.VERDE 
+                    ? 'rgba(76, 175, 80, 0.2)' 
+                    : 'transparent',
+                  borderColor: selectedStato === STATI_LOTTI.VERDE 
+                    ? '#4CAF50' 
+                    : '#ddd'
+                }
+              ]}
+              textStyle={{ 
+                color: getStateColor(STATI_LOTTI.VERDE),
+                fontWeight: selectedStato === STATI_LOTTI.VERDE ? 'bold' : 'normal'  
+              }}
+            >
+              Verde
+            </Chip>
+            
+            <Chip
+              selected={selectedStato === STATI_LOTTI.ARANCIONE}
+              onPress={() => setSelectedStato(selectedStato === STATI_LOTTI.ARANCIONE ? null : STATI_LOTTI.ARANCIONE)}
+              style={[
+                styles.stateChip, 
+                { 
+                  backgroundColor: selectedStato === STATI_LOTTI.ARANCIONE 
+                    ? 'rgba(255, 152, 0, 0.2)' 
+                    : 'transparent',
+                  borderColor: selectedStato === STATI_LOTTI.ARANCIONE 
+                    ? '#FFA000' 
+                    : '#ddd'
+                }
+              ]}
+              textStyle={{ 
+                color: getStateColor(STATI_LOTTI.ARANCIONE),
+                fontWeight: selectedStato === STATI_LOTTI.ARANCIONE ? 'bold' : 'normal'  
+              }}
+            >
+              Arancione
+            </Chip>
+            
+            <Chip
+              selected={selectedStato === STATI_LOTTI.ROSSO}
+              onPress={() => setSelectedStato(selectedStato === STATI_LOTTI.ROSSO ? null : STATI_LOTTI.ROSSO)}
+              style={[
+                styles.stateChip, 
+                { 
+                  backgroundColor: selectedStato === STATI_LOTTI.ROSSO 
+                    ? 'rgba(244, 67, 54, 0.2)' 
+                    : 'transparent',
+                  borderColor: selectedStato === STATI_LOTTI.ROSSO 
+                    ? '#F44336' 
+                    : '#ddd'
+                }
+              ]}
+              textStyle={{ 
+                color: getStateColor(STATI_LOTTI.ROSSO),
+                fontWeight: selectedStato === STATI_LOTTI.ROSSO ? 'bold' : 'normal'  
+              }}
+            >
+              Rosso
+            </Chip>
           </View>
         </View>
       </StyledFilterModal>
@@ -554,20 +634,7 @@ export default function LottiScreen() {
                 
                 <Text style={styles.sectionTitle}>Data di ritiro prevista</Text>
                 <View style={styles.datePickerContainer}>
-                  <DatePickerInput
-                    locale="it"
-                    label="Data di ritiro"
-                    value={dataRitiroPrevista}
-                    onChange={(d) => setDataRitiroPrevista(d)}
-                    inputMode="start"
-                    style={styles.datePicker}
-                    mode="outlined"
-                    withDateFormatInLabel={false}
-                    validRange={{
-                      startDate: new Date(),
-                      endDate: selectedLotto.data_scadenza ? new Date(selectedLotto.data_scadenza) : undefined,
-                    }}
-                  />
+                  {/* DatePickerInput is removed as per the instructions */}
                 </View>
                 
                 <Text style={styles.notesSectionTitle}>Note (opzionale)</Text>
@@ -720,33 +787,27 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   filterModalContent: {
-    padding: 16,
+    padding: 24,
   },
   filterSectionTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 8,
-    color: '#555',
+    marginBottom: 16,
+    color: '#333',
   },
-  dateFilterContainer: {
+  stateFilterContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginBottom: 16,
+    marginTop: 12,
+    gap: 12,
   },
-  datePickerWrapper: {
-    width: '48%',
-  },
-  datePickerLabel: {
-    fontSize: 14,
-    marginBottom: 4,
-    color: '#666',
-  },
-  datePicker: {
-    backgroundColor: '#fff',
-    marginBottom: 12,
-    height: 60,
-    elevation: 1,
+  stateChip: {
+    marginRight: 12,
+    marginBottom: 8,
+    borderWidth: 2,
+    borderColor: '#ddd',
+    height: 42,
+    paddingHorizontal: 16,
   },
   modalContainer: {
     padding: Platform.OS === 'web' ? 20 : 10,

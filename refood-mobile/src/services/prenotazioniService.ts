@@ -62,6 +62,14 @@ let prenotazioniCache = {
 // Costante per il tempo di freschezza dei dati (5 minuti)
 const DATA_FRESHNESS_THRESHOLD = 5 * 60 * 1000;
 
+// Funzione per invalidare la cache
+export const invalidateCache = () => {
+  prenotazioniCache.timestamp = 0;
+  prenotazioniCache.data = null;
+  prenotazioniCache.filtri = null;
+  console.log('Cache delle prenotazioni invalidata');
+};
+
 // Funzione per salvare il centro_id nella cache locale
 export const saveCentroId = async (centroId: number): Promise<boolean> => {
   try {
@@ -262,7 +270,7 @@ export const prenotaLotto = async (
     console.log('Risposta prenotazione:', JSON.stringify(response.data));
     
     // Invalida la cache
-    prenotazioniCache.timestamp = 0;
+    invalidateCache();
     
     return {
       success: true,
@@ -406,7 +414,47 @@ export const getPrenotazioni = async (filtri: PrenotazioneFiltri = {}, forceRefr
       
       // Convertiamo la mappa in array
       prenotazioni = Array.from(prenotazioniMap.values());
-      console.log(`Dopo rimozione duplicati: ${prenotazioni.length} prenotazioni`);
+      console.log(`Dopo rimozione duplicati per ID: ${prenotazioni.length} prenotazioni`);
+      
+      // NUOVA LOGICA: Controlla anche duplicati basati su lotto_id
+      // In alcuni casi, potremmo avere più prenotazioni per lo stesso lotto,
+      // che non dovrebbe essere possibile logicamente
+      console.log('Controllo duplicati di prenotazioni per lo stesso lotto...');
+      const prenotazioniPerLotto = new Map();
+      
+      for (const prenotazione of prenotazioni) {
+        // Ignora le prenotazioni senza lotto_id
+        if (!prenotazione.lotto_id) continue;
+        
+        if (!prenotazioniPerLotto.has(prenotazione.lotto_id)) {
+          prenotazioniPerLotto.set(prenotazione.lotto_id, prenotazione);
+        } else {
+          const prenotazioneEsistente = prenotazioniPerLotto.get(prenotazione.lotto_id);
+          const dateA = new Date(prenotazione.updated_at || prenotazione.data_prenotazione);
+          const dateB = new Date(prenotazioneEsistente.updated_at || prenotazioneEsistente.data_prenotazione);
+          
+          console.warn(`Trovata prenotazione duplicata per lotto ID ${prenotazione.lotto_id}:`);
+          console.warn(`  - Prenotazione1: ID=${prenotazioneEsistente.id}, Stato=${prenotazioneEsistente.stato}, Data=${dateB.toISOString()}`);
+          console.warn(`  - Prenotazione2: ID=${prenotazione.id}, Stato=${prenotazione.stato}, Data=${dateA.toISOString()}`);
+          
+          // Tieni la prenotazione più recente
+          if (dateA.getTime() > dateB.getTime()) {
+            console.warn(`  Mantengo la prenotazione più recente (ID=${prenotazione.id}, Stato=${prenotazione.stato})`);
+            prenotazioniPerLotto.set(prenotazione.lotto_id, prenotazione);
+          } else {
+            console.warn(`  Mantengo la prenotazione più recente (ID=${prenotazioneEsistente.id}, Stato=${prenotazioneEsistente.stato})`);
+          }
+        }
+      }
+      
+      // Verifica se sono stati trovati duplicati
+      if (prenotazioniPerLotto.size < prenotazioni.length) {
+        console.warn(`Trovate ${prenotazioni.length - prenotazioniPerLotto.size} prenotazioni duplicate per lotto_id`);
+        prenotazioni = Array.from(prenotazioniPerLotto.values());
+        console.log(`Dopo rimozione duplicati per lotto_id: ${prenotazioni.length} prenotazioni`);
+      } else {
+        console.log('Nessun duplicato trovato per lotto_id');
+      }
     }
     
     if (prenotazioni.length === 0) {
@@ -764,15 +812,6 @@ export const eliminaPrenotazione = async (id: number): Promise<any> => {
       error
     };
   }
-};
-
-// Funzione per invalidare la cache
-export const invalidateCache = () => {
-  prenotazioniCache = {
-    data: null,
-    timestamp: 0,
-    filtri: null
-  };
 };
 
 export default {

@@ -124,6 +124,15 @@ export default function PrenotazioniScreen() {
   // Effetto per ricaricare le prenotazioni quando i filtri cambiano
   useEffect(() => {
     if (Object.keys(filtri).length > 0) {
+      // Quando cambiano i filtri, svuota prima l'elenco delle prenotazioni
+      // per evitare di mostrare dati vecchi mentre si caricano quelli nuovi
+      setPrenotazioni([]);
+      setLoading(true);
+      
+      // Invalida la cache prima di ricaricare i dati
+      invalidateCache();
+      
+      // Ricarica le prenotazioni con i nuovi filtri
       loadPrenotazioni(true);
     }
   }, [filtri]);
@@ -159,15 +168,33 @@ export default function PrenotazioniScreen() {
   const resetFiltri = () => {
     setFiltri({});
     console.log('Filtri resettati, ricarico tutte le prenotazioni');
+    // Prima di ricaricare i dati, invalidare la cache
+    invalidateCache();
+    setLoading(true);
     loadPrenotazioni(true);
   };
   
   // Funzione per applicare i filtri per stato
   const applyStatusFilter = (stato: string) => {
+    // Se stiamo cliccando sullo stesso filtro già attivo, non fare nulla
+    if (filtri.stato === stato) {
+      console.log(`Filtro ${stato} già attivo, ricarico comunque i dati`);
+      // Forziamo comunque un refresh dei dati
+      setLoading(true);
+      invalidateCache();
+      loadPrenotazioni(true);
+      return;
+    }
+    
     console.log(`Applicazione filtro stato: ${stato}`);
+    // Mostra lo stato di caricamento prima di cambiare il filtro
+    setLoading(true);
+    
+    // Invalida la cache prima di cambiare filtro
+    invalidateCache();
+    
+    // Imposta il nuovo filtro
     setFiltri({ stato });
-    // Carica subito le prenotazioni dopo aver applicato il filtro
-    loadPrenotazioni(true);
   };
   
   // Funzione per navigare ai dettagli della prenotazione
