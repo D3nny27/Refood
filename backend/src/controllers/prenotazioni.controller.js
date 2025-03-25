@@ -913,6 +913,284 @@ const getPrenotazioniByCentro = async (req, res, next) => {
   }
 };
 
+/**
+ * Accetta una prenotazione
+ */
+const accettaPrenotazione = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { data_ritiro_prevista } = req.body;
+    
+    // Avvia una transazione
+    await db.exec('BEGIN TRANSACTION');
+    
+    try {
+      // Verifica che la prenotazione esista e sia in uno stato accettabile
+      const prenotazioneQuery = `
+        SELECT 
+          p.*,
+          l.prodotto, l.centro_origine_id,
+          cr.nome AS centro_ricevente_nome
+        FROM Prenotazioni p
+        JOIN Lotti l ON p.lotto_id = l.id
+        JOIN Centri cr ON p.centro_ricevente_id = cr.id
+        WHERE p.id = ?
+      `;
+      
+      const prenotazione = await db.get(prenotazioneQuery, [id]);
+      
+      if (!prenotazione) {
+        throw new ApiError(404, 'Prenotazione non trovata');
+      }
+      
+      // Verifica che l'utente abbia i permessi necessari (deve appartenere al centro origine)
+      if (req.user.ruolo !== 'Amministratore') {
+        const userCentriQuery = `
+          SELECT 1 FROM UtentiCentri 
+          WHERE utente_id = ? AND centro_id = ?
+        `;
+        
+        const userCanAccess = await db.get(
+          userCentriQuery, 
+          [req.user.id, prenotazione.centro_origine_id]
+        );
+        
+        if (!userCanAccess) {
+          throw new ApiError(403, 'Non hai i permessi per accettare questa prenotazione');
+        }
+      }
+      
+      // Verifica che la prenotazione sia in uno stato accettabile
+      if (prenotazione.stato !== 'Prenotato' && prenotazione.stato !== 'InAttesa') {
+        throw new ApiError(400, `Impossibile accettare la prenotazione nello stato ${prenotazione.stato}`);
+      }
+      
+      // Aggiorna lo stato della prenotazione
+      const updateQuery = `
+        UPDATE Prenotazioni 
+        SET stato = 'Confermato', data_ritiro = ?
+        WHERE id = ?
+      `;
+      
+      await db.run(updateQuery, [data_ritiro_prevista, id]);
+      
+      // Crea una notifica per il centro ricevente
+      const notificaQuery = `
+        INSERT INTO Notifiche (
+          titolo,
+          messaggio,
+          tipo,
+          priorita,
+          destinatario_id,
+          riferimento_id,
+          riferimento_tipo,
+          letto,
+          creato_il
+        )
+        SELECT 
+          'Prenotazione confermata',
+          'La tua prenotazione per il lotto "' || ? || '" è stata confermata. ' || 
+          'Data ritiro: ' || COALESCE(?, 'Da stabilire'), 
+          'Prenotazione',
+          'Alta',
+          u.id,
+          ?,
+          'Prenotazione',
+          0,
+          CURRENT_TIMESTAMP
+        FROM Utenti u
+        JOIN UtentiCentri uc ON u.id = uc.utente_id
+        WHERE uc.centro_id = ?
+      `;
+      
+      await db.run(
+        notificaQuery, 
+        [
+          prenotazione.prodotto,
+          data_ritiro_prevista,
+          id,
+          prenotazione.centro_ricevente_id
+        ]
+      );
+      
+      // Ottieni i dettagli aggiornati della prenotazione
+      const prenotazioneUpdatedQuery = `
+        SELECT 
+          p.*,
+          l.prodotto, l.quantita, l.unita_misura, l.data_scadenza,
+          co.nome AS centro_origine_nome,
+          cr.nome AS centro_ricevente_nome
+        FROM Prenotazioni p
+        JOIN Lotti l ON p.lotto_id = l.id
+        JOIN Centri co ON l.centro_origine_id = co.id
+        JOIN Centri cr ON p.centro_ricevente_id = cr.id
+        WHERE p.id = ?
+      `;
+      
+      const prenotazioneUpdated = await db.get(prenotazioneUpdatedQuery, [id]);
+      
+      // Commit della transazione
+      await db.exec('COMMIT');
+      
+      res.json({
+        success: true,
+        message: 'Prenotazione confermata con successo',
+        prenotazione: prenotazioneUpdated
+      });
+    } catch (error) {
+      // In caso di errore, annulla la transazione
+      await db.exec('ROLLBACK');
+      throw error;
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Rifiuta una prenotazione
+ */
+const rifiutaPrenotazione = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { motivo } = req.body;
+    
+    // Avvia una transazione
+    await db.exec('BEGIN TRANSACTION');
+    
+    try {
+      // Verifica che la prenotazione esista e sia in uno stato accettabile
+      const prenotazioneQuery = `
+        SELECT 
+          p.*,
+          l.prodotto, l.centro_origine_id,
+          cr.nome AS centro_ricevente_nome
+        FROM Prenotazioni p
+        JOIN Lotti l ON p.lotto_id = l.id
+        JOIN Centri cr ON p.centro_ricevente_id = cr.id
+        WHERE p.id = ?
+      `;
+      
+      const prenotazione = await db.get(prenotazioneQuery, [id]);
+      
+      if (!prenotazione) {
+        throw new ApiError(404, 'Prenotazione non trovata');
+      }
+      
+      // Verifica che l'utente abbia i permessi necessari (deve appartenere al centro origine)
+      if (req.user.ruolo !== 'Amministratore') {
+        const userCentriQuery = `
+          SELECT 1 FROM UtentiCentri 
+          WHERE utente_id = ? AND centro_id = ?
+        `;
+        
+        const userCanAccess = await db.get(
+          userCentriQuery, 
+          [req.user.id, prenotazione.centro_origine_id]
+        );
+        
+        if (!userCanAccess) {
+          throw new ApiError(403, 'Non hai i permessi per rifiutare questa prenotazione');
+        }
+      }
+      
+      // Verifica che la prenotazione sia in uno stato accettabile
+      if (prenotazione.stato !== 'Prenotato' && prenotazione.stato !== 'InAttesa') {
+        throw new ApiError(400, `Impossibile rifiutare la prenotazione nello stato ${prenotazione.stato}`);
+      }
+      
+      // Aggiorna lo stato della prenotazione
+      const updateQuery = `
+        UPDATE Prenotazioni 
+        SET stato = 'Rifiutato', note = COALESCE(note || '\n', '') || ?
+        WHERE id = ?
+      `;
+      
+      const motivoCompleto = `Prenotazione rifiutata. Motivo: ${motivo || 'Non specificato'}`;
+      await db.run(updateQuery, [motivoCompleto, id]);
+      
+      // Crea una notifica per il centro ricevente
+      const notificaQuery = `
+        INSERT INTO Notifiche (
+          titolo,
+          messaggio,
+          tipo,
+          priorita,
+          destinatario_id,
+          riferimento_id,
+          riferimento_tipo,
+          letto,
+          creato_il
+        )
+        SELECT 
+          'Prenotazione rifiutata',
+          'La tua prenotazione per il lotto "' || ? || '" è stata rifiutata. ' || 
+          'Motivo: ' || COALESCE(?, 'Non specificato'), 
+          'Prenotazione',
+          'Alta',
+          u.id,
+          ?,
+          'Prenotazione',
+          0,
+          CURRENT_TIMESTAMP
+        FROM Utenti u
+        JOIN UtentiCentri uc ON u.id = uc.utente_id
+        WHERE uc.centro_id = ?
+      `;
+      
+      await db.run(
+        notificaQuery, 
+        [
+          prenotazione.prodotto,
+          motivo || 'Non specificato',
+          id,
+          prenotazione.centro_ricevente_id
+        ]
+      );
+      
+      // Sblocca il lotto per renderlo nuovamente disponibile
+      const updateLottoQuery = `
+        UPDATE Lotti
+        SET stato = 'Verde'
+        WHERE id = ?
+      `;
+      
+      await db.run(updateLottoQuery, [prenotazione.lotto_id]);
+      
+      // Ottieni i dettagli aggiornati della prenotazione
+      const prenotazioneUpdatedQuery = `
+        SELECT 
+          p.*,
+          l.prodotto, l.quantita, l.unita_misura, l.data_scadenza,
+          co.nome AS centro_origine_nome,
+          cr.nome AS centro_ricevente_nome
+        FROM Prenotazioni p
+        JOIN Lotti l ON p.lotto_id = l.id
+        JOIN Centri co ON l.centro_origine_id = co.id
+        JOIN Centri cr ON p.centro_ricevente_id = cr.id
+        WHERE p.id = ?
+      `;
+      
+      const prenotazioneUpdated = await db.get(prenotazioneUpdatedQuery, [id]);
+      
+      // Commit della transazione
+      await db.exec('COMMIT');
+      
+      res.json({
+        success: true,
+        message: 'Prenotazione rifiutata con successo',
+        prenotazione: prenotazioneUpdated
+      });
+    } catch (error) {
+      // In caso di errore, annulla la transazione
+      await db.exec('ROLLBACK');
+      throw error;
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getPrenotazioni,
   getPrenotazioneById,
@@ -920,5 +1198,7 @@ module.exports = {
   updatePrenotazione,
   addTrasporto,
   cancelPrenotazione,
-  getPrenotazioniByCentro
+  getPrenotazioniByCentro,
+  accettaPrenotazione,
+  rifiutaPrenotazione
 }; 

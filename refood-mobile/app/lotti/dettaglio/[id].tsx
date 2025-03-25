@@ -64,7 +64,37 @@ const UNITA_MISURA_OPTIONS = [
 
 const formatDate = (date: Date | null) => {
   if (!date) return 'Data non impostata';
-  return format(date, 'dd MMMM yyyy', { locale: it });
+  
+  try {
+    // Verifico che la data sia valida
+    if (isNaN(date.getTime())) {
+      console.warn('Data non valida:', date);
+      return 'Data non valida';
+    }
+    
+    return format(date, 'dd/MM/yyyy', { locale: it });
+  } catch (error) {
+    console.error('Errore nella formattazione della data:', error);
+    return 'Errore formato data';
+  }
+};
+
+// Funzione per formattare le date con orario
+const formatDateTime = (date: Date | null) => {
+  if (!date) return 'Data non impostata';
+  
+  try {
+    // Verifico che la data sia valida
+    if (isNaN(date.getTime())) {
+      console.warn('Data non valida:', date);
+      return 'Data non valida';
+    }
+    
+    return format(date, 'dd/MM/yyyy HH:mm', { locale: it });
+  } catch (error) {
+    console.error('Errore nella formattazione della data e ora:', error);
+    return 'Errore formato data';
+  }
 };
 
 const DettaglioLottoScreen = () => {
@@ -142,12 +172,98 @@ const DettaglioLottoScreen = () => {
     }
   }, [prenotazioneModalVisible]);
 
-  // Carica i dati del lotto all'avvio
+  // Funzione di utilità per il debug delle date
+  const debugDateValue = (label: string, value: any): void => {
+    try {
+      let debugInfo = `${label}: `;
+      
+      // Analisi del tipo di valore
+      debugInfo += `(tipo: ${typeof value}) `;
+      
+      if (value === null) {
+        debugInfo += 'NULL';
+      } else if (value === undefined) {
+        debugInfo += 'UNDEFINED';
+      } else if (typeof value === 'string') {
+        debugInfo += `"${value}" `;
+        
+        // Prova a creare una data dalla stringa per vedere se è valida
+        try {
+          const testDate = new Date(value);
+          debugInfo += `→ Date: ${testDate} (${isNaN(testDate.getTime()) ? 'INVALIDA' : 'valida'})`;
+        } catch (error) {
+          const err = error as Error;
+          debugInfo += `→ NON convertibile in Date: ${err.message || 'errore sconosciuto'}`;
+        }
+      } else if (value instanceof Date) {
+        debugInfo += `Date object: ${value.toString()} `;
+        debugInfo += `(getTime: ${isNaN(value.getTime()) ? 'INVALIDA' : value.getTime()})`;
+        debugInfo += `(ISO: ${isNaN(value.getTime()) ? 'INVALIDA' : value.toISOString()})`;
+      } else {
+        debugInfo += `${JSON.stringify(value)}`;
+      }
+      
+      // Log generale
+      console.log(debugInfo);
+      
+      // Per date critiche, mostra un toast per debug
+      if (label.includes('CRITICO')) {
+        Toast.show({
+          type: 'info',
+          text1: 'Debug data',
+          text2: debugInfo.substring(0, 100) + (debugInfo.length > 100 ? '...' : ''),
+          position: 'bottom',
+          visibilityTime: 4000,
+        });
+      }
+      
+    } catch (error) {
+      const err = error as Error;
+      console.error('Errore nella funzione debugDateValue:', err.message || String(err));
+    }
+  };
+
+  // Funzione di utilità per il parsing sicuro delle date
+  const safeParseDate = (dateString: string | undefined | null): Date | null => {
+    if (!dateString) return null;
+    
+    try {
+      // Verifica se la data è in formato ISO (contiene T) o solo data (YYYY-MM-DD)
+      const dateParts = dateString.split('T')[0].split('-');
+      if (dateParts.length === 3) {
+        // Crea la data usando anno-mese-giorno (con mese indicizzato da 0)
+        const year = parseInt(dateParts[0], 10);
+        const month = parseInt(dateParts[1], 10) - 1; // Mese è 0-based in JavaScript
+        const day = parseInt(dateParts[2], 10);
+        
+        // Verifica validità dei componenti
+        if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
+          const date = new Date(year, month, day);
+          
+          // Verifica ulteriormente che la data sia valida
+          if (!isNaN(date.getTime())) {
+            return date;
+          }
+        }
+      }
+      console.warn('Impossibile parsare la data in modo sicuro:', dateString);
+      return null;
+    } catch (error) {
+      console.error('Errore nel parsing della data:', error);
+      return null;
+    }
+  };
+
+  // Carica i dati del lotto
   useEffect(() => {
     const fetchLotto = async () => {
       try {
         setLoading(true);
         const lottoData = await getLottoById(Number(id));
+        
+        // Debug della data ricevuta
+        debugDateValue('LOTTO RICEVUTO - data_scadenza', lottoData.data_scadenza);
+        
         setLotto(lottoData);
         
         // Popola i campi del form con i dati del lotto
@@ -158,8 +274,10 @@ const DettaglioLottoScreen = () => {
         
         // Assicurati che la data di scadenza sia valida
         try {
-          const scadenzaDate = new Date(lottoData.data_scadenza);
-          if (!isNaN(scadenzaDate.getTime())) {
+          // Usa il parsing sicuro
+          const scadenzaDate = safeParseDate(lottoData.data_scadenza);
+          if (scadenzaDate) {
+            debugDateValue('Data di scadenza parsata', scadenzaDate);
             setDataScadenza(scadenzaDate);
           } else {
             // Se la data non è valida, imposta la data corrente
@@ -333,41 +451,24 @@ const DettaglioLottoScreen = () => {
 
   // Annulla le modifiche
   const handleCancel = () => {
+    // Debug della data originale
+    debugDateValue('CRITICO - data_scadenza originale nel lotto', lotto.data_scadenza);
+    
     // Resetta i campi ai valori originali
     setNome(lotto.nome);
     setDescrizione(lotto.descrizione || '');
     setQuantita(lotto.quantita.toString());
     setUnitaMisura(lotto.unita_misura);
     
-    // Gestisci la data di scadenza in modo sicuro
-    try {
-      const scadenzaDate = new Date(lotto.data_scadenza);
-      if (!isNaN(scadenzaDate.getTime())) {
-        setDataScadenza(scadenzaDate);
-      } else {
-        console.warn('Data di scadenza non valida nel reset:', lotto.data_scadenza);
-        setDataScadenza(new Date());
-      }
-    } catch (dateError) {
-      console.error('Errore nella conversione della data nel reset:', dateError);
+    // Usa la funzione safeParseDate per il parsing sicuro
+    const parsedDate = safeParseDate(lotto.data_scadenza);
+    if (parsedDate) {
+      debugDateValue('Data di scadenza ripristinata', parsedDate);
+      setDataScadenza(parsedDate);
+    } else {
+      console.warn('Impossibile parsare la data di scadenza durante il reset, imposto la data corrente');
       setDataScadenza(new Date());
     }
-    
-    // Cerca il centro corrispondente dall'elenco dei centri
-    if (Array.isArray(centri)) {
-      const centro = centri.find(c => c.id === lotto.centro_id);
-      if (centro) {
-        setCentroSelezionato(centro);
-      }
-    }
-    
-    // Resetta gli errori e disabilita la modalità di modifica
-    setErrors({
-      nome: false,
-      quantita: false,
-      dataScadenza: false,
-      centro: false,
-    });
     
     setEditMode(false);
   };
@@ -581,24 +682,17 @@ const DettaglioLottoScreen = () => {
                 </View>
                 
                 <View style={styles.infoRow}>
-                  <Ionicons name="time" size={20} color="#666" />
-                  <Text style={styles.infoText}>
-                    Creato il: <Text style={styles.infoValue}>
-                      {lotto.createdAt ? format(new Date(lotto.createdAt), 'dd/MM/yyyy HH:mm') : 'Data non disponibile'}
-                    </Text>
+                  <Text style={styles.infoLabel}>Creato il:</Text>
+                  <Text style={styles.infoValue}>
+                    {lotto.createdAt ? formatDateTime(safeParseDate(lotto.createdAt)) : 'Data non disponibile'}
                   </Text>
                 </View>
-                
-                {lotto.updatedAt && lotto.updatedAt !== lotto.createdAt && (
-                  <View style={styles.infoRow}>
-                    <Ionicons name="refresh" size={20} color="#666" />
-                    <Text style={styles.infoText}>
-                      Modificato il: <Text style={styles.infoValue}>
-                        {format(new Date(lotto.updatedAt), 'dd/MM/yyyy HH:mm')}
-                      </Text>
-                    </Text>
-                  </View>
-                )}
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Ultimo aggiornamento:</Text>
+                  <Text style={styles.infoValue}>
+                    {lotto.updatedAt ? formatDateTime(safeParseDate(lotto.updatedAt)) : 'Data non disponibile'}
+                  </Text>
+                </View>
 
                 {/* Pulsante di prenotazione per i centri beneficiari */}
                 {canPrenotareLotto && (
@@ -1335,6 +1429,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 16,
     backgroundColor: '#f9f9f9',
+  },
+  infoLabel: {
+    fontWeight: 'bold',
   },
 });
 

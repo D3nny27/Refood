@@ -38,6 +38,7 @@ import pushNotificationService from '../../src/services/pushNotificationService'
 import notificheService from '../../src/services/notificheService';
 import logger from '../../src/utils/logger';
 import { emitEvent, APP_EVENTS } from '../../src/utils/events';
+import { format } from 'date-fns';
 
 // Definizione delle unità di misura disponibili, raggruppate per tipo
 const UNITA_MISURA_GROUPS = {
@@ -145,25 +146,57 @@ const NuovoLottoScreen = () => {
     }
   }, [user]);
 
-  // Gestisce il cambio della data di scadenza
-  const handleDateChange = (event: any, selectedDate?: Date) => {
-    setShowDatePicker(false);
-    if (selectedDate) {
-      setDataScadenza(selectedDate);
-      validateField('dataScadenza', selectedDate);
+  // Funzione per formattare le date in modo sicuro
+  const formatDate = (date: Date | null) => {
+    if (!date) return 'Data non impostata';
+    
+    try {
+      // Verifico che la data sia valida
+      if (isNaN(date.getTime())) {
+        console.warn('Data non valida:', date);
+        return 'Data non valida';
+      }
+      
+      return format(date, 'dd/MM/yyyy', { locale: it });
+    } catch (error) {
+      console.error('Errore nella formattazione della data:', error);
+      return 'Errore formato data';
     }
   };
 
   // Funzione per incrementare la data del numero di giorni specificato
   const incrementDate = (days: number) => {
-    const currentDate = dataScadenza || new Date();
-    const newDate = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth(),
-      currentDate.getDate() + days
-    );
-    setDataScadenza(newDate);
-    validateField('dataScadenza', newDate);
+    try {
+      // Verifica che dataScadenza sia un oggetto Date valido
+      if (dataScadenza && !isNaN(dataScadenza.getTime())) {
+        // Crea una nuova data basata su dataScadenza per evitare mutazioni
+        const newDate = new Date(dataScadenza);
+        // Usa setDate che gestisce automaticamente il cambio di mese/anno
+        newDate.setDate(newDate.getDate() + days);
+        
+        // Verifica che la nuova data sia valida
+        if (!isNaN(newDate.getTime())) {
+          console.log(`Data incrementata di ${days} giorni:`, newDate);
+          setDataScadenza(newDate);
+          validateField('dataScadenza', newDate);
+          return;
+        }
+      }
+      
+      // Fallback in caso di errore: usa la data di oggi + incremento
+      console.warn('Utilizzo data fallback per incrementDate');
+      const today = new Date();
+      today.setDate(today.getDate() + days);
+      setDataScadenza(today);
+      validateField('dataScadenza', today);
+    } catch (error) {
+      console.error('Errore nell\'incremento della data:', error);
+      // Fallback in caso di errore: usa la data di oggi
+      const today = new Date();
+      today.setDate(today.getDate() + days);
+      setDataScadenza(today);
+      validateField('dataScadenza', today);
+    }
   };
 
   // Valida un campo specifico
@@ -223,13 +256,18 @@ const NuovoLottoScreen = () => {
     console.log('Inizio processo di creazione lotto...');
     
     try {
+      // Verifica la validità della data prima di procedere
+      if (!dataScadenza || isNaN(dataScadenza.getTime())) {
+        throw new Error('Data di scadenza non valida');
+      }
+      
       // Prepara i dati del lotto
       const lottoData = {
         nome,
         descrizione,
         quantita: parseFloat(quantita),
         unita_misura: unitaMisura,
-        data_scadenza: dataScadenza?.toISOString().split('T')[0] as string,
+        data_scadenza: dataScadenza.toISOString().split('T')[0] as string,
         centro_id: centroSelezionato?.id || 1, // Usa l'ID del centro selezionato
       };
       
@@ -369,14 +407,51 @@ const NuovoLottoScreen = () => {
     }
   };
 
-  // Formatta la data per la visualizzazione
-  const formatDate = (date: Date | null): string => {
-    if (!date) return '';
-    return date.toLocaleDateString('it-IT', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
+  // Gestisce il cambio della data di scadenza
+  const handleDateChange = (event: any, selectedDate?: Date) => {
+    setShowDatePicker(false);
+    if (selectedDate && !isNaN(selectedDate.getTime())) {
+      console.log('Data selezionata dal DatePicker:', selectedDate);
+      setDataScadenza(selectedDate);
+      validateField('dataScadenza', selectedDate);
+    } else if (selectedDate) {
+      console.warn('Il DatePicker ha restituito una data non valida:', selectedDate);
+      // Fallback alla data di oggi
+      const today = new Date();
+      setDataScadenza(today);
+      validateField('dataScadenza', today);
+    }
+  };
+
+  // Funzione per validare e convertire stringhe di data (per web datepicker)
+  const validateAndParseWebDate = (dateString: string) => {
+    try {
+      // Verifica la format YYYY-MM-DD
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+        throw new Error('Formato data non valido');
+      }
+      
+      const parts = dateString.split('-');
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1; // 0-based in JavaScript
+      const day = parseInt(parts[2], 10);
+      
+      if (isNaN(year) || isNaN(month) || isNaN(day)) {
+        throw new Error('Componenti data non validi');
+      }
+      
+      const date = new Date(year, month, day);
+      
+      // Verifica validità data
+      if (isNaN(date.getTime())) {
+        throw new Error('Data risultante non valida');
+      }
+      
+      return date;
+    } catch (error) {
+      console.error('Errore nel parsing della data web:', error);
+      return new Date(); // Fallback alla data corrente
+    }
   };
 
   return (
@@ -591,9 +666,16 @@ const NuovoLottoScreen = () => {
                   min={new Date().toISOString().split('T')[0]}
                   value={dataScadenza?.toISOString().split('T')[0]}
                   onChange={(e) => {
-                    const date = new Date(e.target.value);
-                    setDataScadenza(date);
-                    validateField('dataScadenza', date);
+                    try {
+                      console.log('Input web datestring:', e.target.value);
+                      if (e.target.value) {
+                        const date = validateAndParseWebDate(e.target.value);
+                        setDataScadenza(date);
+                        validateField('dataScadenza', date);
+                      }
+                    } catch (error) {
+                      console.error('Errore nel date picker web:', error);
+                    }
                   }}
                 />
               ) : (

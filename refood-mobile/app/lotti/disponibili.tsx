@@ -44,6 +44,37 @@ export default function LottiDisponibiliScreen() {
   const [showCentroIdInput, setShowCentroIdInput] = useState(false);
   const [manualCentroId, setManualCentroId] = useState('');
 
+  // Funzione sicura per convertire stringhe di date in oggetti Date
+  const safeParseDate = (dateString: string | undefined | null): Date | null => {
+    if (!dateString) return null;
+    
+    try {
+      // Verifica se la data è in formato ISO (contiene T) o solo data (YYYY-MM-DD)
+      const dateParts = dateString.split('T')[0].split('-');
+      if (dateParts.length === 3) {
+        // Crea la data usando anno-mese-giorno (con mese indicizzato da 0)
+        const year = parseInt(dateParts[0], 10);
+        const month = parseInt(dateParts[1], 10) - 1; // Mese è 0-based in JavaScript
+        const day = parseInt(dateParts[2], 10);
+        
+        // Verifica validità dei componenti
+        if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
+          const date = new Date(year, month, day);
+          
+          // Verifica ulteriormente che la data sia valida
+          if (!isNaN(date.getTime())) {
+            return date;
+          }
+        }
+      }
+      console.warn('Impossibile parsare la data in modo sicuro:', dateString);
+      return null;
+    } catch (error) {
+      console.error('Errore nel parsing della data:', error, dateString);
+      return null;
+    }
+  };
+
   // Funzione per caricare i lotti disponibili
   const loadLottiDisponibili = async (forceRefresh = false) => {
     try {
@@ -172,11 +203,15 @@ export default function LottiDisponibiliScreen() {
   // Funzione per formattare la data
   const formatDate = (dateString: string) => {
     try {
-      const date = new Date(dateString);
-      return format(date, 'dd/MM/yyyy', { locale: it });
+      const date = safeParseDate(dateString);
+      if (date && !isNaN(date.getTime())) {
+        return format(date, 'dd/MM/yyyy', { locale: it });
+      } else {
+        return 'Data non valida';
+      }
     } catch (err) {
       console.error('Errore nella formattazione della data:', err);
-      return dateString;
+      return 'Errore formato data';
     }
   };
   
@@ -284,11 +319,18 @@ export default function LottiDisponibiliScreen() {
   const getGiorniRimanenti = (dataScadenza: string) => {
     try {
       const oggi = new Date();
-      const scadenza = new Date(dataScadenza);
+      const scadenza = safeParseDate(dataScadenza);
+      
+      if (!scadenza || isNaN(scadenza.getTime())) {
+        console.warn('Data di scadenza non valida per il calcolo dei giorni rimanenti:', dataScadenza);
+        return 0;
+      }
+      
       const diffTime = scadenza.getTime() - oggi.getTime();
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
       return diffDays;
     } catch (err) {
+      console.error('Errore nel calcolo dei giorni rimanenti:', err);
       return 0;
     }
   };

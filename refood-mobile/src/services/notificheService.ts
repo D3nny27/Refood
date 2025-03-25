@@ -225,10 +225,20 @@ class NotificheService {
       // Se abbiamo dati in cache e stiamo usando notifiche mock in sviluppo, restituiamo direttamente la cache
       if (__DEV__ && API_CONFIG.USE_MOCK_NOTIFICATIONS && this.lastFetchedNotifiche.data.length > 0) {
         logger.log('NotificheService: Usando dati cache per notifiche (modalità mock)');
+        
+        // Ordina notifiche per data di creazione, più recenti in cima
+        const notificheOrdinate = [...this.lastFetchedNotifiche.data].sort((a, b) => {
+          // Usa dataCreazione se disponibile, altrimenti data
+          const dataA = a.dataCreazione || a.data || '';
+          const dataB = b.dataCreazione || b.data || '';
+          
+          return new Date(dataB).getTime() - new Date(dataA).getTime();
+        });
+        
         return {
-          data: this.lastFetchedNotifiche.data,
+          data: notificheOrdinate,
           pagination: {
-            total: this.lastFetchedNotifiche.data.length,
+            total: notificheOrdinate.length,
             currentPage: 1,
             totalPages: 1
           }
@@ -239,7 +249,10 @@ class NotificheService {
       const queryParams = new URLSearchParams({ 
         page: page.toString(), 
         limit: limit.toString(),
-        ...filtri as Record<string, string>
+        ...filtri as Record<string, string>,
+        // Aggiungiamo il parametro di ordinamento per il backend
+        sort: 'creato_il',
+        order: 'DESC'
       });
       
       logger.log(`NotificheService: Richiesta notifiche con params: ${queryParams.toString()}`);
@@ -249,17 +262,59 @@ class NotificheService {
         timeout: API_CONFIG.REQUEST_TIMEOUT
       });
       
-      logger.log(`NotificheService: Ricevute ${response.data?.data?.length || 0} notifiche`);
+      logger.log(`NotificheService: Ricevute ${response.data.data?.length || 0} notifiche`);
       
-      // Aggiorna la cache locale se è la prima pagina
-      if (page === 1) {
-        this.lastFetchedNotifiche = {
-          timestamp: Date.now(),
-          data: response.data.data
+      // Verifica se la risposta è nel formato atteso
+      if (response.data && (response.data.data || response.data.notifiche)) {
+        let notificheData = response.data.data || response.data.notifiche || [];
+        
+        // Assicuriamo che le notifiche siano ordinate per data di creazione (più recenti prima)
+        if (notificheData.length > 0) {
+          notificheData = notificheData.sort((a: Notifica, b: Notifica) => {
+            // Usa dataCreazione se disponibile, altrimenti data
+            const dataA = a.dataCreazione || a.data || '';
+            const dataB = b.dataCreazione || b.data || '';
+            
+            return new Date(dataB).getTime() - new Date(dataA).getTime();
+          });
+        }
+        
+        // Salva le notifiche nella cache solo se è la prima pagina
+        if (page === 1) {
+          this.lastFetchedNotifiche = {
+            data: notificheData,
+            timestamp: Date.now()
+          };
+        } else if (this.lastFetchedNotifiche.data) {
+          // Se non è la prima pagina, aggiungi le nuove notifiche alla cache esistente
+          // Assicurandoci di eliminare eventuali duplicati (stesso ID)
+          const existingIds = new Set(this.lastFetchedNotifiche.data.map(n => n.id));
+          const newNotifiche = notificheData.filter((n: Notifica) => !existingIds.has(n.id));
+          
+          // Aggiungiamo le nuove notifiche e riordiniamo l'intero array
+          this.lastFetchedNotifiche.data = [...this.lastFetchedNotifiche.data, ...newNotifiche]
+            .sort((a: Notifica, b: Notifica) => {
+              const dataA = a.dataCreazione || a.data || '';
+              const dataB = b.dataCreazione || b.data || '';
+              
+              return new Date(dataB).getTime() - new Date(dataA).getTime();
+            });
+          
+          this.lastFetchedNotifiche.timestamp = Date.now();
+        }
+        
+        return {
+          data: notificheData,
+          pagination: response.data.pagination || {
+            total: notificheData.length,
+            currentPage: page,
+            totalPages: Math.ceil(notificheData.length / limit)
+          }
         };
+      } else {
+        logger.warn('NotificheService: Formato di risposta non supportato:', response.data);
+        throw new Error('Formato di risposta del server non supportato');
       }
-      
-      return response.data;
     } catch (error) {
       logger.error('NotificheService: Errore nel recupero delle notifiche', error);
       

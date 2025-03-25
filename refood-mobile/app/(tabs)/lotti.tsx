@@ -380,7 +380,7 @@ export default function LottiScreen() {
           >
             Filtri
           </Button>
-          {user?.ruolo === RUOLI.OPERATORE && (
+          {(user?.ruolo === RUOLI.OPERATORE || user?.ruolo === RUOLI.AMMINISTRATORE) && (
             <Button 
               icon="plus" 
               mode="contained" 

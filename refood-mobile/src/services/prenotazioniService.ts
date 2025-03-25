@@ -3,6 +3,7 @@ import { API_URL } from '../config/constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../config/constants';
 import { Lotto } from './lottiService';
+import notificheService from './notificheService';
 
 // Chiave per memorizzare il centro_id nella cache locale
 const CENTRO_ID_STORAGE_KEY = 'user_centro_id';
@@ -11,17 +12,27 @@ const CENTRO_ID_STORAGE_KEY = 'user_centro_id';
 export interface Prenotazione {
   id: number;
   lotto_id: number;
-  centro_id: number;
+  centro_ricevente_id: number;
+  centro_id?: number; // Mantenuto per retrocompatibilità
   data_prenotazione: string;
   data_ritiro_prevista: string | null;
   data_ritiro_effettiva: string | null;
-  stato: 'Richiesta' | 'Confermata' | 'Completata' | 'Annullata';
+  stato: 'Prenotato' | 'InAttesa' | 'Confermato' | 'Rifiutato' | 'InTransito' | 'Consegnato' | 'Annullato' | 'Eliminato';
   note: string | null;
   created_at: string;
   updated_at: string;
   // Dati relazionati
   lotto?: Lotto;
   centro_nome?: string;
+  // Campi che possono arrivare "appiattiti" direttamente nella risposta dell'API
+  prodotto?: string;
+  quantita?: number;
+  unita_misura?: string;
+  data_scadenza?: string;
+  centro_origine_nome?: string;
+  centro_ricevente_nome?: string;
+  data_ritiro?: string;
+  data_consegna?: string;
 }
 
 // Interfaccia per la risposta della prenotazione
@@ -317,92 +328,163 @@ export const prenotaLotto = async (
   }
 };
 
-// Funzione per ottenere le prenotazioni
-export const getPrenotazioni = async (filtri?: PrenotazioneFiltri, forceRefresh = false) => {
+// Funzione per ottenere l'elenco delle prenotazioni
+export const getPrenotazioni = async (filtri: PrenotazioneFiltri = {}, forceRefresh = false) => {
   try {
-    console.log('Richiesta prenotazioni con filtri:', filtri ? JSON.stringify(filtri) : 'nessun filtro');
+    console.log('=== INIZIO RICHIESTA getPrenotazioni ===');
+    console.log('Filtri richiesti:', JSON.stringify(filtri, null, 2));
     
-    // Verifica se possiamo usare la cache
-    const now = Date.now();
-    const cacheAge = now - prenotazioniCache.timestamp;
-    const filtriEqual = JSON.stringify(filtri) === JSON.stringify(prenotazioniCache.filtri);
-    
-    if (!forceRefresh && prenotazioniCache.data && filtriEqual && cacheAge < DATA_FRESHNESS_THRESHOLD) {
-      console.log('Usando prenotazioni dalla cache locale (età cache:', Math.round(cacheAge/1000), 'secondi)');
-      return prenotazioniCache.data;
-    }
-    
+    // Ottieni le credenziali di autenticazione
     const headers = await getAuthHeader();
+    console.log('Headers di autenticazione ottenuti');
     
-    // Costruisce i parametri di query dai filtri
-    let queryParams = '';
-    if (filtri) {
-      const params = new URLSearchParams();
-      Object.entries(filtri).forEach(([key, value]) => {
-        if (value) params.append(key, value.toString());
-      });
-      queryParams = `?${params.toString()}`;
+    // Costruisci i parametri di query
+    const params: any = {};
+    
+    if (filtri.stato) {
+      params.stato = filtri.stato;
+      console.log(`Applicando filtro stato: ${filtri.stato}`);
     }
     
-    console.log(`Richiesta GET ${API_URL}/prenotazioni${queryParams}`);
+    if (filtri.data_inizio) {
+      params.data_inizio = filtri.data_inizio;
+      console.log(`Applicando filtro data_inizio: ${filtri.data_inizio}`);
+    }
     
-    const response = await axios.get(`${API_URL}/prenotazioni${queryParams}`, { 
+    if (filtri.data_fine) {
+      params.data_fine = filtri.data_fine;
+      console.log(`Applicando filtro data_fine: ${filtri.data_fine}`);
+    }
+    
+    if (filtri.centro_id) {
+      params.centro_id = filtri.centro_id;
+      console.log(`Applicando filtro centro_id: ${filtri.centro_id}`);
+    }
+    
+    console.log(`API request: GET ${API_URL}/prenotazioni con params:`, params);
+    
+    // Effettua la richiesta API con timeout di 30 secondi
+    console.log('Invio richiesta al server...');
+    const startTime = Date.now();
+    
+    const response = await axios.get(`${API_URL}/prenotazioni`, { 
       headers,
-      timeout: 15000
+      params,
+      timeout: 30000 // Manteniamo il timeout di 30 secondi
     });
     
-    console.log('Risposta del server:', JSON.stringify(response.data));
+    const endTime = Date.now();
+    console.log(`Risposta ricevuta in ${endTime - startTime}ms con status ${response.status}`);
     
-    // Estrazione e normalizzazione dei dati
-    const prenotazioniData = response.data.data || response.data.prenotazioni || [];
+    // Trasforma i dati per includere informazioni aggiuntive
+    let prenotazioni = response.data.data || response.data.prenotazioni || [];
     
-    // Trasforma i dati delle prenotazioni per assicurare che abbiano la struttura corretta
-    const prenotazioniProcessate = prenotazioniData.map((pren: any) => {
-      // Crea oggetto lotto se abbiamo i dati del prodotto
-      let lotto = undefined;
-      if (pren.prodotto) {
-        lotto = {
-          id: pren.lotto_id,
-          nome: pren.prodotto,
-          quantita: pren.quantita,
-          unita_misura: pren.unita_misura,
-          data_scadenza: pren.data_scadenza,
-          centro_nome: pren.centro_origine_nome
-        };
+    console.log(`Ricevute ${prenotazioni.length} prenotazioni dal server`);
+    console.log(`Dati di risposta: ${JSON.stringify(response.data, null, 2).substring(0, 200)}...`); // Tronca per non avere log troppo lunghi
+    
+    // Assicuriamoci che non ci siano prenotazioni duplicate con lo stesso ID
+    // Se ci sono duplicati, manteniamo solo la versione più recente
+    if (prenotazioni.length > 0) {
+      console.log('Controllo duplicati nelle prenotazioni...');
+      const prenotazioniMap = new Map();
+      
+      // Ordiniamo prima per data di aggiornamento (più recente prima)
+      prenotazioni.sort((a: any, b: any) => {
+        const dateA = new Date(a.updated_at || a.data_prenotazione);
+        const dateB = new Date(b.updated_at || b.data_prenotazione);
+        return dateB.getTime() - dateA.getTime();
+      });
+      
+      // Poi inseriamo nella mappa solo la prima occorrenza di ogni ID
+      for (const prenotazione of prenotazioni) {
+        if (!prenotazioniMap.has(prenotazione.id)) {
+          prenotazioniMap.set(prenotazione.id, prenotazione);
+        } else {
+          console.warn(`Trovata prenotazione duplicata con ID ${prenotazione.id}, stato: ${prenotazione.stato}. Mantengo solo la versione più recente.`);
+        }
       }
       
-      // Assicurati che tutti i campi necessari siano presenti
-      return {
-        ...pren,
-        lotto: pren.lotto || lotto, // Usa i dati del lotto se presenti, altrimenti usa quelli che abbiamo creato
-        centro_nome: pren.centro_nome || pren.centro_ricevente_nome // Usa il nome del centro se presente
-      };
-    });
+      // Convertiamo la mappa in array
+      prenotazioni = Array.from(prenotazioniMap.values());
+      console.log(`Dopo rimozione duplicati: ${prenotazioni.length} prenotazioni`);
+    }
     
-    // Formattazione della risposta
+    if (prenotazioni.length === 0) {
+      console.log('Nessuna prenotazione trovata con i filtri specificati');
+    } else {
+      console.log(`Prima prenotazione ricevuta: ID=${prenotazioni[0].id}, Stato=${prenotazioni[0].stato}`);
+    }
+    
+    // Aggiungi dati del lotto se disponibili
+    if (response.data.lotti && response.data.centri) {
+      console.log(`Arricchimento prenotazioni con ${response.data.lotti.length} lotti e ${response.data.centri.length} centri`);
+      
+      // Crea una mappa di ricerca rapida per lotti e centri
+      const lottiMap = response.data.lotti.reduce((map: Record<number, any>, lotto: any) => {
+        map[lotto.id] = lotto;
+        return map;
+      }, {});
+      
+      const centriMap = response.data.centri.reduce((map: Record<number, any>, centro: any) => {
+        map[centro.id] = centro;
+        return map;
+      }, {});
+      
+      // Arricchisci le prenotazioni con i dati relazionati
+      prenotazioni = prenotazioni.map((prenotazione: any) => {
+        const lotto = lottiMap[prenotazione.lotto_id];
+        const centro = centriMap[prenotazione.centro_ricevente_id];
+        
+        return {
+          ...prenotazione,
+          lotto: lotto || undefined,
+          centro_nome: centro ? centro.nome : undefined
+        };
+      });
+      
+      console.log('Prenotazioni arricchite con successo');
+    } else {
+      console.log('Dati di lotti e centri non disponibili nella risposta');
+    }
+    
+    // Prepara il risultato finale con conteggi dalla risposta se disponibili
     const result = {
-      prenotazioni: prenotazioniProcessate,
-      pagination: response.data.pagination || null
+      prenotazioni,
+      total: response.data.pagination?.total || response.data.total || prenotazioni.length,
+      page: response.data.pagination?.page || response.data.page || 1,
+      pages: response.data.pagination?.pages || response.data.pages || 1
     };
     
-    console.log(`Ricevute e processate ${prenotazioniProcessate.length} prenotazioni`);
-    
-    // Aggiorna la cache
-    prenotazioniCache = {
-      data: result,
-      timestamp: now,
-      filtri: filtri || null
-    };
+    console.log(`Preparato risultato finale con ${prenotazioni.length} prenotazioni`);
+    console.log('=== FINE RICHIESTA getPrenotazioni ===');
     
     return result;
   } catch (error: any) {
-    console.error('Errore nel recupero delle prenotazioni:', error);
+    console.error('=== ERRORE IN getPrenotazioni ===');
+    console.error('Errore completo:', error);
     
-    // Gestione specifica errori
-    if (error.code === 'ECONNABORTED' || error.code === 'ERR_CANCELED') {
+    // Log dettagliato dell'errore
+    if (error.response) {
+      // La richiesta è stata fatta e il server ha risposto con un codice di stato che non è 2xx
+      console.error('Errore di risposta dal server:');
+      console.error('Status:', error.response.status);
+      console.error('Data:', JSON.stringify(error.response.data));
+      console.error('Headers:', JSON.stringify(error.response.headers));
+    } else if (error.request) {
+      // La richiesta è stata fatta ma non è stata ricevuta alcuna risposta
+      console.error('Nessuna risposta ricevuta dal server');
+      console.error('Request:', error.request);
+    } else {
+      // Qualcosa è andato storto nella configurazione della richiesta
+      console.error('Errore nella configurazione della richiesta:', error.message);
+    }
+    
+    // Gestione specifica per vari tipi di errori
+    if (error.code === 'ECONNABORTED') {
       throw new Error('Timeout durante il caricamento delle prenotazioni. Verifica la connessione al server.');
     } else if (error.response) {
       // Il server ha risposto con un errore
+      console.error('Risposta di errore dal server:', error.response.status);
       if (error.response.status === 401) {
         throw new Error('Sessione scaduta. Effettua nuovamente il login.');
       } else {
@@ -446,148 +528,251 @@ export const getPrenotazioneById = async (id: number) => {
   }
 };
 
-// Funzione per annullare una prenotazione
+/**
+ * Annulla una prenotazione.
+ * @param id ID della prenotazione
+ * @param motivo Motivo dell'annullamento
+ * @returns Risultato dell'operazione
+ */
 export const annullaPrenotazione = async (id: number, motivo: string = '') => {
   try {
-    console.log(`Annullamento prenotazione ${id} in corso...`);
-    
     const headers = await getAuthHeader();
     
-    const payload = {
-      motivo
-    };
-    
-    const response = await axios.post(`${API_URL}/prenotazioni/${id}/annulla`, payload, {
-      headers: {
-        ...headers,
-        'Content-Type': 'application/json'
-      },
-      timeout: 15000
-    });
-    
-    console.log(`Risposta annullamento prenotazione ${id}:`, JSON.stringify(response.data));
+    // Effettua una richiesta PUT per annullare la prenotazione
+    const response = await axios.put(
+      `${API_URL}/prenotazioni/${id}/annulla`, 
+      { motivo },
+      { headers }
+    );
     
     // Invalida la cache
-    prenotazioniCache.timestamp = 0;
+    invalidateCache();
     
     return {
       success: true,
       message: response.data.message || 'Prenotazione annullata con successo',
       prenotazione: response.data.prenotazione
     };
-  } catch (error: any) {
-    console.error(`Errore nell'annullamento della prenotazione ${id}:`, error);
+  } catch (error) {
+    console.error('Errore durante l\'annullamento della prenotazione:', error);
     
-    if (error.response) {
+    if (axios.isAxiosError(error) && error.response) {
       return {
         success: false,
-        message: error.response.data?.message || 'Errore nell\'annullamento della prenotazione',
+        message: error.response.data.message || 'Errore durante l\'annullamento della prenotazione',
         error: error.response.data
       };
     }
     
     return {
       success: false,
-      message: error.message || 'Errore nell\'annullamento della prenotazione',
+      message: 'Errore di rete durante l\'annullamento della prenotazione',
       error
     };
   }
 };
 
-// Funzione per confermare una prenotazione (per gli operatori)
-export const confermaPrenotazione = async (id: number, data_ritiro_prevista: string | null = null) => {
+/**
+ * Accetta una prenotazione.
+ * @param id ID della prenotazione
+ * @param data_ritiro_prevista Data prevista per il ritiro
+ * @returns Risultato dell'operazione
+ */
+export const accettaPrenotazione = async (id: number, data_ritiro_prevista: string | null = null): Promise<any> => {
   try {
-    console.log(`Conferma prenotazione ${id} in corso...`);
-    
     const headers = await getAuthHeader();
     
-    const payload = {
-      data_ritiro_prevista
-    };
-    
-    const response = await axios.post(`${API_URL}/prenotazioni/${id}/conferma`, payload, {
-      headers: {
-        ...headers,
-        'Content-Type': 'application/json'
-      },
-      timeout: 15000
-    });
-    
-    console.log(`Risposta conferma prenotazione ${id}:`, JSON.stringify(response.data));
+    const response = await axios.put(
+      `${API_URL}/prenotazioni/${id}/accetta`, 
+      { data_ritiro_prevista },
+      { headers }
+    );
     
     // Invalida la cache
-    prenotazioniCache.timestamp = 0;
+    invalidateCache();
+    
+    if (response.data.prenotazione) {
+      // Prepara un messaggio per la notifica
+      const prenotazione = response.data.prenotazione;
+      
+      // Aggiunge una notifica per gli amministratori
+      if (prenotazione.lotto && notificheService) {
+        const dataRitiro = data_ritiro_prevista 
+          ? new Date(data_ritiro_prevista).toLocaleDateString() 
+          : 'non specificata';
+          
+        await notificheService.addNotificaToAmministratori(
+          prenotazione.centro_id,
+          'Prenotazione confermata',
+          `La prenotazione del lotto "${prenotazione.lotto.nome}" è stata confermata. Data di ritiro prevista: ${dataRitiro}.`
+        );
+      }
+    }
     
     return {
       success: true,
       message: response.data.message || 'Prenotazione confermata con successo',
       prenotazione: response.data.prenotazione
     };
-  } catch (error: any) {
-    console.error(`Errore nella conferma della prenotazione ${id}:`, error);
+  } catch (error) {
+    console.error('Errore durante l\'accettazione della prenotazione:', error);
     
-    if (error.response) {
+    if (axios.isAxiosError(error) && error.response) {
       return {
         success: false,
-        message: error.response.data?.message || 'Errore nella conferma della prenotazione',
+        message: error.response.data.message || 'Errore durante l\'accettazione della prenotazione',
         error: error.response.data
       };
     }
     
     return {
       success: false,
-      message: error.message || 'Errore nella conferma della prenotazione',
+      message: 'Errore di rete durante l\'accettazione della prenotazione',
       error
     };
   }
 };
 
-// Funzione per completare una prenotazione (ritiro effettuato)
-export const completaPrenotazione = async (id: number, note: string = '') => {
+/**
+ * Rifiuta una prenotazione.
+ * @param id ID della prenotazione
+ * @param motivo Motivo del rifiuto
+ * @returns Risultato dell'operazione
+ */
+export const rifiutaPrenotazione = async (id: number, motivo: string = ''): Promise<any> => {
   try {
-    console.log(`Completamento prenotazione ${id} in corso...`);
-    
     const headers = await getAuthHeader();
     
-    const payload = {
-      note
-    };
-    
-    const response = await axios.post(`${API_URL}/prenotazioni/${id}/completa`, payload, {
-      headers: {
-        ...headers,
-        'Content-Type': 'application/json'
-      },
-      timeout: 15000
-    });
-    
-    console.log(`Risposta completamento prenotazione ${id}:`, JSON.stringify(response.data));
+    const response = await axios.put(
+      `${API_URL}/prenotazioni/${id}/rifiuta`, 
+      { motivo },
+      { headers }
+    );
     
     // Invalida la cache
-    prenotazioniCache.timestamp = 0;
+    invalidateCache();
+    
+    if (response.data.prenotazione && notificheService) {
+      // Prepara un messaggio per la notifica
+      const prenotazione = response.data.prenotazione;
+      
+      // Aggiunge una notifica per gli amministratori
+      if (prenotazione.lotto) {
+        const motivoText = motivo ? ` Motivo: "${motivo}"` : '';
+        
+        await notificheService.addNotificaToAmministratori(
+          prenotazione.centro_id,
+          'Prenotazione rifiutata',
+          `La prenotazione del lotto "${prenotazione.lotto.nome}" è stata rifiutata.${motivoText}`
+        );
+      }
+    }
     
     return {
       success: true,
-      message: response.data.message || 'Prenotazione completata con successo',
+      message: response.data.message || 'Prenotazione rifiutata con successo',
       prenotazione: response.data.prenotazione
     };
-  } catch (error: any) {
-    console.error(`Errore nel completamento della prenotazione ${id}:`, error);
+  } catch (error) {
+    console.error('Errore durante il rifiuto della prenotazione:', error);
     
-    if (error.response) {
+    if (axios.isAxiosError(error) && error.response) {
       return {
         success: false,
-        message: error.response.data?.message || 'Errore nel completamento della prenotazione',
+        message: error.response.data.message || 'Errore durante il rifiuto della prenotazione',
         error: error.response.data
       };
     }
     
     return {
       success: false,
-      message: error.message || 'Errore nel completamento della prenotazione',
+      message: 'Errore di rete durante il rifiuto della prenotazione',
       error
     };
   }
+};
+
+/**
+ * Elimina una prenotazione (solo per amministratori).
+ * @param id ID della prenotazione
+ * @returns Risultato dell'operazione
+ */
+export const eliminaPrenotazione = async (id: number): Promise<any> => {
+  try {
+    const headers = await getAuthHeader();
+    
+    // Prima di eliminare, ottieni i dettagli per le notifiche
+    let dettagliPrenotazione: Prenotazione | null = null;
+    try {
+      const dettagli = await getPrenotazioneById(id);
+      if (dettagli.prenotazione) {
+        dettagliPrenotazione = dettagli.prenotazione;
+      }
+    } catch (err) {
+      console.error('Impossibile ottenere dettagli prenotazione prima dell\'eliminazione:', err);
+    }
+    
+    const response = await axios.delete(
+      `${API_URL}/prenotazioni/${id}`, 
+      { headers }
+    );
+    
+    // Invalida la cache
+    invalidateCache();
+    
+    if (dettagliPrenotazione && notificheService) {
+      // Se abbiamo i dettagli, invia notifiche
+      if (dettagliPrenotazione.lotto) {
+        // Notifica al centro di origine
+        if (dettagliPrenotazione.lotto.centro_id) {
+          await notificheService.addNotificaToAmministratori(
+            dettagliPrenotazione.lotto.centro_id,
+            'Prenotazione eliminata',
+            `La prenotazione del lotto "${dettagliPrenotazione.lotto.nome}" è stata eliminata da un amministratore.`
+          );
+        }
+        
+        // Notifica al centro ricevente
+        if (dettagliPrenotazione.centro_id) {
+          await notificheService.addNotificaToAmministratori(
+            dettagliPrenotazione.centro_id,
+            'Prenotazione eliminata',
+            `La prenotazione che avevi effettuato per il lotto "${dettagliPrenotazione.lotto.nome}" è stata eliminata da un amministratore.`
+          );
+        }
+      }
+    }
+    
+    return {
+      success: true,
+      message: response.data.message || 'Prenotazione eliminata con successo'
+    };
+  } catch (error) {
+    console.error('Errore durante l\'eliminazione della prenotazione:', error);
+    
+    if (axios.isAxiosError(error) && error.response) {
+      return {
+        success: false,
+        message: error.response.data.message || 'Errore durante l\'eliminazione della prenotazione',
+        error: error.response.data
+      };
+    }
+    
+    return {
+      success: false,
+      message: 'Errore di rete durante l\'eliminazione della prenotazione',
+      error
+    };
+  }
+};
+
+// Funzione per invalidare la cache
+export const invalidateCache = () => {
+  prenotazioniCache = {
+    data: null,
+    timestamp: 0,
+    filtri: null
+  };
 };
 
 export default {
@@ -595,6 +780,7 @@ export default {
   getPrenotazioni,
   getPrenotazioneById,
   annullaPrenotazione,
-  confermaPrenotazione,
-  completaPrenotazione
+  accettaPrenotazione,
+  rifiutaPrenotazione,
+  eliminaPrenotazione
 }; 

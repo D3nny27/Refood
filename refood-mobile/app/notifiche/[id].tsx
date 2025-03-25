@@ -13,10 +13,19 @@ import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
 
 // Funzione per formattare la data
-const formatDateTime = (date: string | Date): string => {
-  if (!date) return '';
-  const dateObj = typeof date === 'string' ? new Date(date) : date;
-  return format(dateObj, "d MMMM yyyy 'alle' HH:mm", { locale: it });
+const formatDate = (dateString: string | null): string => {
+  if (!dateString) return 'Data non disponibile';
+  
+  try {
+    const dateObj = new Date(dateString);
+    if (isNaN(dateObj.getTime())) {
+      return 'Data non valida';
+    }
+    return format(dateObj, "d/MM/yyyy 'alle' HH:mm", { locale: it });
+  } catch (error) {
+    console.error('Errore nella formattazione della data:', error);
+    return 'Errore nel formato data';
+  }
 };
 
 // Prevenire rendering multipli controllando se l'ID è "index"
@@ -156,7 +165,7 @@ export default function DettaglioNotifica() {
             <Card.Content>
               <Title style={styles.title}>{notifica.titolo}</Title>
               <Paragraph style={styles.date}>
-                {formatDateTime(notifica.dataCreazione)}
+                {formatDate(notifica.dataCreazione)}
               </Paragraph>
               
               <View style={styles.separator} />

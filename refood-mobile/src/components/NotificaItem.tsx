@@ -53,12 +53,17 @@ const NotificaItem: React.FC<NotificaItemProps> = ({ notifica, onPress }) => {
   };
 
   // Formatta la data della notifica
-  const formatDate = (dateString: string): string => {
+  const formatDateTime = (dateString: string | null) => {
+    if (!dateString) return '';
+    
     try {
       const date = new Date(dateString);
-      return format(date, 'dd MMM yyyy, HH:mm', { locale: it });
+      if (isNaN(date.getTime())) {
+        return dateString;
+      }
+      return format(date, 'dd/MM/yyyy, HH:mm', { locale: it });
     } catch (error) {
-      console.error('Errore nella formattazione della data:', error);
+      console.error('Errore nel formato data:', error);
       return dateString;
     }
   };
@@ -101,7 +106,7 @@ const NotificaItem: React.FC<NotificaItemProps> = ({ notifica, onPress }) => {
           <View style={styles.textContent}>
             <Title style={styles.title}>{notifica.titolo}</Title>
             <Paragraph style={styles.message}>{notifica.messaggio}</Paragraph>
-            <Text style={styles.date}>{formatDate(notifica.data)}</Text>
+            <Text style={styles.date}>{formatDateTime(notifica.data)}</Text>
           </View>
           
           <View style={styles.actionsContainer}>

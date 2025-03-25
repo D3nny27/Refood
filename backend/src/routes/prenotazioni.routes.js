@@ -265,7 +265,7 @@ router.post('/:id/trasporto', [
  *     summary: Annulla una prenotazione
  *     tags: [Prenotazioni]
  *     security:
- *       - bearerAuth: []
+ *       - BearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -274,7 +274,7 @@ router.post('/:id/trasporto', [
  *           type: integer
  *         description: ID della prenotazione
  *     requestBody:
- *       required: true
+ *       required: false
  *       content:
  *         application/json:
  *           schema:
@@ -282,20 +282,97 @@ router.post('/:id/trasporto', [
  *             properties:
  *               motivo:
  *                 type: string
+ *                 description: Motivo dell'annullamento
  *     responses:
  *       200:
  *         description: Prenotazione annullata con successo
- *       400:
- *         description: Prenotazione non può essere annullata
+ *       401:
+ *         description: Non autorizzato
+ *       403:
+ *         description: Permessi insufficienti
  *       404:
  *         description: Prenotazione non trovata
  */
-router.post('/:id/annulla', [
-  authenticate,
-  param('id').isInt().withMessage('ID prenotazione deve essere un numero intero'),
-  body('motivo').optional().isString().withMessage('Motivo deve essere una stringa'),
-  validator.validate
-], prenotazioniController.cancelPrenotazione);
+router.post('/:id/annulla', authenticate, prenotazioniController.cancelPrenotazione);
+
+/**
+ * @swagger
+ * /prenotazioni/{id}/accetta:
+ *   put:
+ *     summary: Accetta una prenotazione
+ *     tags: [Prenotazioni]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID della prenotazione
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               data_ritiro_prevista:
+ *                 type: string
+ *                 format: date
+ *                 description: Data prevista per il ritiro del lotto
+ *     responses:
+ *       200:
+ *         description: Prenotazione accettata con successo
+ *       400:
+ *         description: La prenotazione non può essere accettata nello stato corrente
+ *       401:
+ *         description: Non autorizzato
+ *       403:
+ *         description: Permessi insufficienti
+ *       404:
+ *         description: Prenotazione non trovata
+ */
+router.put('/:id/accetta', authenticate, prenotazioniController.accettaPrenotazione);
+
+/**
+ * @swagger
+ * /prenotazioni/{id}/rifiuta:
+ *   put:
+ *     summary: Rifiuta una prenotazione
+ *     tags: [Prenotazioni]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID della prenotazione
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               motivo:
+ *                 type: string
+ *                 description: Motivo del rifiuto
+ *     responses:
+ *       200:
+ *         description: Prenotazione rifiutata con successo
+ *       400:
+ *         description: La prenotazione non può essere rifiutata nello stato corrente
+ *       401:
+ *         description: Non autorizzato
+ *       403:
+ *         description: Permessi insufficienti
+ *       404:
+ *         description: Prenotazione non trovata
+ */
+router.put('/:id/rifiuta', authenticate, prenotazioniController.rifiutaPrenotazione);
 
 /**
  * @swagger
