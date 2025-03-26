@@ -11,11 +11,18 @@ Il progetto è diviso in due parti principali:
 
 ## Funzionalità Principali
 
-- Gestione dei centri di distribuzione
-- Tracciamento dei lotti alimentari
-- Sistema di prenotazione
-- Dashboard amministrativa
-- Monitoraggio delle scadenze
+- Gestione dei centri di distribuzione e riciclaggio
+- Tracciamento dei lotti alimentari con sistema di stati basato sulle scadenze
+- Sistema di prenotazione e consegna delle eccedenze alimentari
+- Dashboard amministrativa con statistiche sull'impatto ambientale
+- Sistema di notifiche in-app e push notifications
+- Gestione utenti con diversi ruoli (Amministratore, UTENTE, CENTRO_SOCIALE, CENTRO_RICICLAGGIO)
+
+## Novità Recenti
+
+- **Sistema di Registrazione**: Implementato endpoint completo per la registrazione di nuovi utenti
+- **Gestione Notifiche Migliorata**: Supporto per notifiche push e tracciamento lettura
+- **Statistiche Ambientali**: Calcolo dell'impatto positivo in termini di CO2 risparmiata
 
 ## Documentazione
 
@@ -23,17 +30,21 @@ Il progetto include documentazione dettagliata:
 
 ### Panoramica Tecnica
 - [Panoramica Tecnica Generale](docs/technical_overview.md) - Visione d'insieme del progetto
+- [Guida Utente](docs/user_guide.md) - Manuale d'uso per utenti finali
 
 ### Documentazione Backend
 - [Architettura Backend](docs/backend_architecture.md) - Struttura e componenti del backend
 - [API Endpoints](docs/api_endpoints.md) - Descrizione dettagliata delle API
 - [JWT Authentication](docs/jwt_authentication.md) - Sistema di autenticazione
 - [Schema Database](docs/schema_description.md) - Struttura del database
+- [Sistema di Registrazione](docs/auth_registration.md) - Dettagli sull'implementazione della registrazione utenti
 
 ### Documentazione Frontend
 - [Architettura Frontend](docs/frontend/architecture.md) - Struttura e componenti del frontend
 - [Guida alle Schermate](docs/frontend/screens.md) - Descrizione delle principali schermate
 - [Servizi API](docs/frontend/api-services.md) - Interazione con il backend
+- [WebSocket Service](docs/frontend/websocket-service.md) - Comunicazione real-time
+- [Notifiche Context](docs/frontend/notifiche-context.md) - Sistema di notifiche
 
 ## Requisiti Tecnici
 
@@ -60,6 +71,26 @@ npx expo start
 cd backend
 npm install
 npm run dev
+```
+
+## Variabili d'Ambiente
+
+### Backend (.env)
+```
+PORT=3000
+NODE_ENV=development
+DB_PATH=../database/refood.db
+JWT_SECRET=your_secret_key
+JWT_ACCESS_EXPIRATION=3600
+JWT_REFRESH_EXPIRATION=604800
+CORS_ORIGIN=*
+LOG_LEVEL=debug
+API_PREFIX=/api/v1
+```
+
+### Frontend (config.ts)
+```typescript
+API_URL=http://192.168.123.160:3000/api/v1
 ```
 
 ## Contribuire al Progetto

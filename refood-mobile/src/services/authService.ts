@@ -57,8 +57,8 @@ export const getActiveToken = async (): Promise<string | null> => {
   }
 };
 
-// Funzione per verificare lo stato di autenticazione dell'utente
-export const checkUserAuth = async (): Promise<Utente | null> => {
+// Esporta esplicitamente checkUserAuth
+export const checkUserAuth = async (): Promise<any> => {
   const token = await getActiveToken();
   if (!token) {
     console.log('Nessun token trovato durante il checkUserAuth');
@@ -149,6 +149,27 @@ export const refreshToken = async (): Promise<string | null> => {
   }
 };
 
+/**
+ * Salva la sessione utente, comprensiva di token e dati utente
+ * Funzione di utilità per centralizzare la logica di salvataggio
+ */
+export const saveUserSession = async (token: string, userData: any): Promise<boolean> => {
+  try {
+    // Salva il token e imposta l'header di autenticazione
+    await saveToken(token);
+    setAuthToken(token);
+    
+    // Salva i dati utente in AsyncStorage
+    await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(userData));
+    
+    console.log('Sessione utente salvata con successo');
+    return true;
+  } catch (error) {
+    console.error('Errore durante il salvataggio della sessione:', error);
+    return false;
+  }
+};
+
 // Funzione per effettuare il login
 export const loginUser = async (email: string, password: string): Promise<LoginResponse> => {
   console.log('Tentativo di login per:', email);
@@ -195,8 +216,8 @@ export const loginUser = async (email: string, password: string): Promise<LoginR
     if (userData && authToken) {
       console.log('Login completato con successo per:', email);
       
-      // Salva il token in modo sicuro
-      await saveToken(authToken);
+      // Salva la sessione utente
+      await saveUserSession(authToken, userData);
       
       // Restituisci un risultato normalizzato
       return {
@@ -282,13 +303,46 @@ export const registerUser = async (userData: {
   ruolo: string;
 }) => {
   try {
+    console.log(`Invio richiesta di registrazione al backend (${API_URL}/auth/register):`, userData);
+    
+    // Chiama l'API reale senza meccanismi di fallback
     const response = await axios.post(`${API_URL}/auth/register`, userData);
-    return response.data;
+    
+    console.log('Registrazione completata con successo tramite API:', response.data);
+      
+    // Restituisci i dati ricevuti dal server con flag success
+    return {
+      success: true,
+      data: response.data
+    };
   } catch (error: any) {
-    if (error.response && error.response.data && error.response.data.message) {
-      throw new Error(error.response.data.message);
+    console.error('Errore durante la registrazione:', error);
+    
+    // Gestione dettagliata degli errori
+    if (error.response) {
+      // Se c'è una risposta dal server, estraiamo informazioni più dettagliate
+      console.error('Status errore:', error.response.status);
+      console.error('Dati errore:', error.response.data);
+      
+      // Errori comuni
+      if (error.response.status === 409) {
+        throw Object.assign(new Error('Email già registrata'), { response: error.response });
+      } else if (error.response.status === 400) {
+        const errorMessage = error.response.data?.message || 'Dati di registrazione non validi';
+        throw Object.assign(new Error(errorMessage), { response: error.response });
+      } else if (error.response.status === 404) {
+        throw Object.assign(new Error('Endpoint di registrazione non trovato. Verifica il server API.'), { response: error.response });
+      } else if (error.response.status === 500) {
+        throw Object.assign(new Error('Errore interno del server durante la registrazione.'), { response: error.response });
+      }
+    } else if (error.request) {
+      // Richiesta effettuata ma nessuna risposta ricevuta
+      console.error('Nessuna risposta ricevuta dal server');
+      throw Object.assign(new Error('Nessuna risposta dal server. Verifica la connessione internet o la disponibilità del server.'), { networkError: true });
     }
-    throw new Error('Si è verificato un errore durante la registrazione');
+    
+    // Per qualsiasi altro tipo di errore
+    throw error;
   }
 };
 

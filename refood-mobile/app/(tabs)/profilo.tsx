@@ -1,15 +1,18 @@
-import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
-import { Button, Card, Avatar, List, Divider, useTheme } from 'react-native-paper';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { Button, Card, Avatar, List, Divider, useTheme, Dialog, Portal, Paragraph } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../src/context/AuthContext';
 import { RUOLI, PRIMARY_COLOR } from '../../src/config/constants';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../../src/config/constants';
+import { useState } from 'react';
 
 export default function ProfiloScreen() {
   const { user, logout, forceAuthUpdate } = useAuth();
   const theme = useTheme();
+  const [logoutDialogVisible, setLogoutDialogVisible] = useState(false);
+  const [developmentDialogVisible, setDevelopmentDialogVisible] = useState(false);
 
   // Funzione di logout forzata che pulisce tutto
   const forceLogout = async () => {
@@ -63,30 +66,15 @@ export default function ProfiloScreen() {
     }
   };
 
-  // Funzione di gestione del logout con Alert di conferma
+  // Funzione di gestione del logout con Dialog di conferma
   const handleLogout = () => {
-    console.log('ProfiloScreen - handleLogout: mostrando Alert di conferma');
-    
-    Alert.alert(
-      'Conferma Logout',
-      'Sei sicuro di voler effettuare il logout?',
-      [
-        {
-          text: 'Annulla',
-          style: 'cancel',
-          onPress: () => console.log('ProfiloScreen - handleLogout: annullato dall\'utente')
-        },
-        {
-          text: 'Logout',
-          style: 'destructive',
-          onPress: () => {
-            console.log('ProfiloScreen - handleLogout: confermato, avvio forceLogout');
-            forceLogout();
-          }
-        }
-      ],
-      { cancelable: false }
-    );
+    console.log('ProfiloScreen - handleLogout: mostrando Dialog di conferma');
+    setLogoutDialogVisible(true);
+  };
+
+  // Handler per funzionalità in sviluppo
+  const handleDevelopmentFeature = () => {
+    setDevelopmentDialogVisible(true);
   };
 
   // Verifica se l'utente è amministratore
@@ -156,7 +144,7 @@ export default function ProfiloScreen() {
             title="Modifica Profilo"
             left={props => <List.Icon {...props} icon="account-edit" />}
             right={props => <List.Icon {...props} icon="chevron-right" />}
-            onPress={() => Alert.alert('Info', 'Funzionalità in sviluppo')}
+            onPress={handleDevelopmentFeature}
             style={styles.listItem}
           />
           <Divider />
@@ -164,7 +152,7 @@ export default function ProfiloScreen() {
             title="Cambia Password"
             left={props => <List.Icon {...props} icon="lock-reset" />}
             right={props => <List.Icon {...props} icon="chevron-right" />}
-            onPress={() => Alert.alert('Info', 'Funzionalità in sviluppo')}
+            onPress={handleDevelopmentFeature}
             style={styles.listItem}
           />
           <Divider />
@@ -172,7 +160,7 @@ export default function ProfiloScreen() {
             title="Notifiche"
             left={props => <List.Icon {...props} icon="bell-outline" />}
             right={props => <List.Icon {...props} icon="chevron-right" />}
-            onPress={() => Alert.alert('Info', 'Funzionalità in sviluppo')}
+            onPress={handleDevelopmentFeature}
             style={styles.listItem}
           />
         </Card.Content>
@@ -193,6 +181,41 @@ export default function ProfiloScreen() {
       </Button>
 
       <Text style={styles.version}>ReFood v1.0.0</Text>
+
+      {/* Dialog di conferma logout - compatibile con web e mobile */}
+      <Portal>
+        <Dialog visible={logoutDialogVisible} onDismiss={() => setLogoutDialogVisible(false)}>
+          <Dialog.Title>Conferma Logout</Dialog.Title>
+          <Dialog.Content>
+            <Paragraph>Sei sicuro di voler effettuare il logout?</Paragraph>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setLogoutDialogVisible(false)}>Annulla</Button>
+            <Button 
+              onPress={() => {
+                setLogoutDialogVisible(false);
+                forceLogout();
+              }}
+              textColor="#f44336"
+            >
+              Logout
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
+      {/* Dialog per funzionalità in sviluppo */}
+      <Portal>
+        <Dialog visible={developmentDialogVisible} onDismiss={() => setDevelopmentDialogVisible(false)}>
+          <Dialog.Title>Informazione</Dialog.Title>
+          <Dialog.Content>
+            <Paragraph>Questa funzionalità è in fase di sviluppo.</Paragraph>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setDevelopmentDialogVisible(false)}>OK</Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
     </ScrollView>
   );
 }

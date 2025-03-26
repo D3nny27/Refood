@@ -7,12 +7,14 @@ Benvenuti nella documentazione del progetto ReFood. Questa guida fornisce una pa
 ### Panoramica
 
 - [Panoramica Tecnica](technical_overview.md) - Visione d'insieme dell'architettura e stack tecnologico
+- [Guida Utente](user_guide.md) - Manuale d'uso per utenti finali dell'applicazione
 
 ### Backend
 
 - [Architettura Backend](backend_architecture.md) - Struttura e componenti principali del backend
 - [API Endpoints](api_endpoints.md) - Documentazione dettagliata delle API REST
 - [Sistema di Autenticazione JWT](jwt_authentication.md) - Implementazione dell'autenticazione e autorizzazione
+- [Sistema di Registrazione](auth_registration.md) - Dettagli sull'implementazione della registrazione utenti
 - [Schema del Database](schema_description.md) - Descrizione delle tabelle e relazioni
 - [Query di Esempio](queries_example.sql) - Query SQL di esempio per operazioni comuni
 
@@ -34,6 +36,13 @@ Benvenuti nella documentazione del progetto ReFood. Questa guida fornisce una pa
 - [Guida al Contributo](CONTRIBUTING.md) - Linee guida per contribuire al progetto
 - [Standard di Codice](CODING_STANDARDS.md) - Convenzioni e best practices
 
+## Novità e Aggiornamenti
+
+### 26 Marzo 2025
+- Implementato sistema di registrazione utenti completo
+- Aggiornata documentazione API per includere l'endpoint di registrazione
+- Aggiunta guida utente completa per l'applicazione
+
 ## Come Utilizzare la Documentazione
 
 La documentazione è organizzata per permettere diversi approcci di lettura:
@@ -42,6 +51,7 @@ La documentazione è organizzata per permettere diversi approcci di lettura:
 2. **Per sviluppatori backend**: Concentratevi sull'architettura backend e sugli endpoint API
 3. **Per amministratori di sistema**: Revisionate l'architettura tecnica e i requisiti di sistema
 4. **Per nuovi membri del team**: Seguite la documentazione in ordine, iniziando dalla panoramica tecnica
+5. **Per utenti finali**: Consultate la guida utente per istruzioni operative
 
 ## Mantenere la Documentazione Aggiornata
 

@@ -126,4 +126,38 @@ export const getActiveToken = async () => {
   return await AsyncStorage.getItem('accessToken');
 };
 
+export const registerUser = async (nome: string, cognome: string, email: string, password: string) => {
+  try {
+    // Simuliamo il ritardo di una chiamata API reale
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Per test: genera un errore se si usa una email specifica
+    if (email === 'test@test.com') {
+      const error = new Error('Email già in uso');
+      // @ts-ignore
+      error.response = { status: 409 };
+      throw error;
+    }
+    
+    console.log('Simulando registrazione utente:', { nome, cognome, email });
+    
+    // Restituisce un successo simulato
+    return {
+      success: true,
+      data: {
+        user: {
+          id: Math.floor(Math.random() * 1000),
+          nome,
+          cognome,
+          email,
+          ruolo: 'UTENTE'
+        }
+      }
+    };
+  } catch (error) {
+    console.error('Errore durante la registrazione:', error);
+    throw error;
+  }
+};
+
 export default api; 

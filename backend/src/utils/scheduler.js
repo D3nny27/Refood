@@ -36,6 +36,9 @@ class Scheduler {
         
         const oggi = new Date().toISOString().split('T')[0]; // Formato YYYY-MM-DD
         
+        // ID utente di sistema per i cambi di stato automatici
+        const SYSTEM_USER_ID = 2; // Utente amministratore con ID 2
+        
         // Trova lotti che dovrebbero passare in stato arancione
         // (giorni_permanenza prima della scadenza)
         const lottiDaArancione = await db.all(`
@@ -63,11 +66,12 @@ class Scheduler {
             await db.run(`
               INSERT INTO LogCambioStato 
               (lotto_id, stato_precedente, stato_nuovo, cambiato_il, cambiato_da) 
-              VALUES (?, ?, ?, datetime('now'), NULL)
+              VALUES (?, ?, ?, datetime('now'), ?)
             `, [
               lotto.id, 
               lotto.stato, 
-              'Arancione'
+              'Arancione',
+              SYSTEM_USER_ID
             ]);
           }
           
@@ -100,11 +104,12 @@ class Scheduler {
             await db.run(`
               INSERT INTO LogCambioStato 
               (lotto_id, stato_precedente, stato_nuovo, cambiato_il, cambiato_da) 
-              VALUES (?, ?, ?, datetime('now'), NULL)
+              VALUES (?, ?, ?, datetime('now'), ?)
             `, [
               lotto.id, 
               lotto.stato, 
-              'Rosso'
+              'Rosso',
+              SYSTEM_USER_ID
             ]);
           }
           

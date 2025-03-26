@@ -1,11 +1,17 @@
 import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { loginUser, logoutUser, checkUserAuth } from '../services/authService';
-import { getActiveToken } from '../services/authService';
+import { 
+  loginUser, 
+  logoutUser, 
+  checkUserAuth, 
+  registerUser, 
+  getActiveToken, 
+  saveUserSession 
+} from '../services/authService';
+import { setAuthToken } from '../services/api';
 import { STORAGE_KEYS } from '../config/constants';
 import { Platform, AppState, AppStateStatus } from 'react-native';
 import { Utente } from '../types/user';
-import { setAuthToken } from '../services/api';
 import logger from '../utils/logger';
 import Toast from 'react-native-toast-message';
 import { listenEvent, APP_EVENTS } from '../utils/events';
@@ -21,9 +27,11 @@ interface AuthContextType {
   isLoading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<boolean>;
+  register: (nome: string, cognome: string, email: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   clearError: () => void;
   refreshUserStatus: () => Promise<void>;
+  loginWithCredentials: (email: string, password: string) => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -336,16 +344,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const response = await loginUser(email, password);
       
       if (response.token && response.utente) {
-        // Salva il token in modo sicuro
-        setAuthToken(response.token);
-        await AsyncStorage.setItem(STORAGE_KEYS.USER_TOKEN, response.token);
-        
-        // Salva i dati utente
-        if (!Platform.isTV && typeof window !== 'undefined') {
-          await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(response.utente));
-        }
-        
-        // Aggiorna lo stato dell'autenticazione
+        // Imposta i dati nella sessione e nello stato
         setUser(response.utente);
         setIsAuthenticated(true);
         console.log('Login completato con successo per:', email);
@@ -370,6 +369,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else {
         setError('Si è verificato un errore durante il login. Riprova più tardi.');
       }
+      
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * Effettua direttamente il login con credenziali
+   * Utile per il login automatico dopo la registrazione
+   */
+  const loginWithCredentials = async (email: string, password: string): Promise<boolean> => {
+    try {
+      logger.log('Tentativo di login diretto con:', email);
+      setIsLoading(true);
+      clearError();
+      
+      // Esegui la richiesta di login
+      const response = await loginUser(email, password);
+      
+      if (response && response.token && response.utente) {
+        // Aggiorna lo stato dell'autenticazione
+        setUser(response.utente);
+        setIsAuthenticated(true);
+        
+        logger.log('Login diretto completato con successo');
+        
+        // Mostra un toast di successo
+        Toast.show({
+          type: 'success',
+          text1: 'Accesso effettuato',
+          text2: `Benvenuto, ${response.utente.nome}!`,
+          visibilityTime: 3000,
+        });
+        
+        return true;
+      } else {
+        throw new Error('Dati di autenticazione non validi.');
+      }
+    } catch (error: any) {
+      logger.error('Errore durante il login diretto:', error);
+      
+      // Non mostrare errori all'utente per il login automatico
+      // ma registra l'errore nei log
       
       return false;
     } finally {
@@ -444,6 +487,84 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // Funzione per registrare un nuovo utente
+  const register = async (nome: string, cognome: string, email: string, password: string): Promise<boolean> => {
+    try {
+      setIsLoading(true);
+      clearError();
+      
+      // Chiama il servizio di registrazione con i dati correttamente formattati
+      const userData = {
+        nome,
+        cognome,
+        email,
+        password,
+        ruolo: 'UTENTE' // Impostiamo un ruolo di default per i nuovi utenti
+      };
+      
+      // Passa l'oggetto userData alla funzione registerUser
+      const response = await registerUser(userData);
+      
+      if (response && response.success) {
+        logger.log('Registrazione completata con successo per:', email);
+        
+        // Mostra un messaggio di successo
+        Toast.show({
+          type: 'success',
+          text1: 'Registrazione completata',
+          text2: 'Puoi accedere con le tue credenziali',
+          visibilityTime: 4000,
+        });
+        
+        return true;
+      } else {
+        throw new Error('Errore durante la registrazione. Riprova più tardi.');
+      }
+    } catch (error: any) {
+      logger.error('Errore durante la registrazione:', error);
+      
+      // Gestione migliorata degli errori
+      if (error.response) {
+        // Errori basati sullo status HTTP
+        switch (error.response.status) {
+          case 409:
+            setError('Email già in uso. Prova con un altro indirizzo email.');
+            break;
+          case 400:
+            // Estrai il messaggio dal server se disponibile
+            const serverMessage = error.response.data?.message;
+            if (serverMessage && typeof serverMessage === 'string') {
+              setError(`Errore di validazione: ${serverMessage}`);
+            } else {
+              setError('I dati inseriti non sono validi. Verifica tutti i campi.');
+            }
+            break;
+          case 404:
+            setError('Servizio di registrazione non disponibile. Contatta l\'amministratore.');
+            break;
+          case 500:
+            setError('Errore sul server. Riprova più tardi o contatta l\'assistenza.');
+            break;
+          default:
+            setError(`Errore durante la registrazione (Codice: ${error.response.status}).`);
+        }
+      } else if (error.request) {
+        // Errori di rete
+        setError('Impossibile connettersi al server. Verifica la tua connessione internet.');
+      } else if (error.message) {
+        // Usa il messaggio dell'errore se disponibile
+        setError(error.message);
+      } else {
+        // Errore generico
+        setError('Si è verificato un errore durante la registrazione. Riprova più tardi.');
+      }
+      
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Funzione per pulire gli errori
   const clearError = () => {
     setError(null);
@@ -459,7 +580,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         logout,
         clearError,
-        refreshUserStatus
+        refreshUserStatus,
+        register,
+        loginWithCredentials
       }}
     >
       {children}

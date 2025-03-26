@@ -1,20 +1,50 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Image, ImageBackground, Animated } from 'react-native';
-import { TextInput, Button, Text, HelperText, Surface, Card, Divider } from 'react-native-paper';
+import { TextInput, Button, Text, HelperText, Surface, Card, Divider, Banner } from 'react-native-paper';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { PRIMARY_COLOR } from '../config/constants';
 import Toast from 'react-native-toast-message';
 import logger from '../utils/logger';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 
 const LoginScreen = () => {
+  // Stato generale
+  const [isLoginMode, setIsLoginMode] = useState(true);
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const { login, register, error, clearError, isLoading, isAuthenticated } = useAuth();
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  
+  // Banner di registrazione completata
+  const [showRegistrationBanner, setShowRegistrationBanner] = useState(false);
+
+  // Campi del login
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [passwordVisible, setPasswordVisible] = useState(false);
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
-  const { login, error, clearError, isLoading, isAuthenticated } = useAuth();
-  const [fadeAnim] = useState(new Animated.Value(0)); // Animazione per il messaggio di errore
+
+  // Campi aggiuntivi per la registrazione
+  const [nome, setNome] = useState('');
+  const [cognome, setCognome] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [nomeError, setNomeError] = useState('');
+  const [cognomeError, setCognomeError] = useState('');
+  const [confirmPasswordError, setConfirmPasswordError] = useState('');
+
+  // Toggle tra login e registrazione
+  const toggleAuthMode = () => {
+    clearError();
+    setIsLoginMode(!isLoginMode);
+    // Resetta gli errori quando si cambia modalità
+    setEmailError('');
+    setPasswordError('');
+    setNomeError('');
+    setCognomeError('');
+    setConfirmPasswordError('');
+  };
 
   useEffect(() => {
     logger.log('LoginScreen - isAuthenticated cambiato:', isAuthenticated);
@@ -31,11 +61,11 @@ const LoginScreen = () => {
   // Mostra Toast quando cambia l'errore
   useEffect(() => {
     if (error) {
-      // Mostra Toast per l errore
+      // Mostra Toast per l'errore
       Toast.show({
         type: "error",
         position: "bottom",
-        text1: "Accesso non riuscito",
+        text1: isLoginMode ? "Accesso non riuscito" : "Registrazione non riuscita",
         text2: error,
         visibilityTime: 4000,
         autoHide: true,
@@ -48,8 +78,31 @@ const LoginScreen = () => {
     } else {
       fadeAnim.setValue(0);
     }
-  }, [error, fadeAnim]);
+  }, [error, fadeAnim, isLoginMode]);
 
+  // Effetto per controllare i parametri di navigazione e mostrare banner di registrazione completata
+  useEffect(() => {
+    if (params.registrationSuccess === 'true') {
+      // Mostra il banner
+      setShowRegistrationBanner(true);
+      
+      // Mostra anche il toast
+      Toast.show({
+        type: 'success',
+        text1: 'Registrazione completata con successo! 🎉',
+        text2: 'Inserisci le tue credenziali per accedere',
+        visibilityTime: 6000,
+        position: 'top',
+      });
+      
+      // Pre-compila l'email se passata
+      if (params.email && typeof params.email === 'string') {
+        setEmail(params.email);
+      }
+    }
+  }, [params]);
+
+  // Validazioni
   const validateEmail = () => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!email) {
@@ -77,6 +130,40 @@ const LoginScreen = () => {
     }
   };
 
+  const validateNome = () => {
+    if (!nome) {
+      setNomeError('Il nome è obbligatorio');
+      return false;
+    } else {
+      setNomeError('');
+      return true;
+    }
+  };
+
+  const validateCognome = () => {
+    if (!cognome) {
+      setCognomeError('Il cognome è obbligatorio');
+      return false;
+    } else {
+      setCognomeError('');
+      return true;
+    }
+  };
+
+  const validateConfirmPassword = () => {
+    if (!confirmPassword) {
+      setConfirmPasswordError('La conferma password è obbligatoria');
+      return false;
+    } else if (confirmPassword !== password) {
+      setConfirmPasswordError('Le password non coincidono');
+      return false;
+    } else {
+      setConfirmPasswordError('');
+      return true;
+    }
+  };
+
+  // Gestione login
   const handleLogin = async () => {
     // Valida i campi di input
     const isEmailValid = validateEmail();
@@ -86,6 +173,36 @@ const LoginScreen = () => {
       logger.log('LoginScreen - Tentativo di login con:', email);
       const success = await login(email, password);
       logger.log('LoginScreen - Risultato login:', success ? 'successo' : 'fallito');
+    }
+  };
+
+  // Gestione registrazione
+  const handleRegistration = async () => {
+    // Valida i campi di input
+    const isNomeValid = validateNome();
+    const isCognomeValid = validateCognome();
+    const isEmailValid = validateEmail();
+    const isPasswordValid = validatePassword();
+    const isConfirmPasswordValid = validateConfirmPassword();
+
+    if (isNomeValid && isCognomeValid && isEmailValid && isPasswordValid && isConfirmPasswordValid) {
+      logger.log('LoginScreen - Tentativo di registrazione con:', email);
+      const success = await register(nome, cognome, email, password);
+      logger.log('LoginScreen - Risultato registrazione:', success ? 'successo' : 'fallito');
+      
+      if (success) {
+        Toast.show({
+          type: "success",
+          position: "bottom",
+          text1: "Registrazione completata",
+          text2: "Puoi accedere con le tue credenziali",
+          visibilityTime: 4000,
+          autoHide: true,
+        });
+        
+        // Switcha alla modalità login per permettere l'accesso
+        setIsLoginMode(true);
+      }
     }
   };
 
@@ -101,6 +218,30 @@ const LoginScreen = () => {
           style={styles.container}
         >
           <ScrollView contentContainerStyle={styles.scrollView}>
+            {/* Banner di registrazione completata */}
+            {showRegistrationBanner && (
+              <Banner
+                visible={showRegistrationBanner}
+                actions={[
+                  {
+                    label: 'OK',
+                    onPress: () => setShowRegistrationBanner(false),
+                  },
+                ]}
+                icon={({size}) => (
+                  <MaterialCommunityIcons
+                    name="check-circle"
+                    size={size}
+                    color={PRIMARY_COLOR}
+                  />
+                )}
+                style={styles.registrationBanner}
+              >
+                <Text style={styles.bannerTitle}>Registrazione completata con successo!</Text>
+                <Text>Ora puoi accedere con le tue credenziali.</Text>
+              </Banner>
+            )}
+            
             <View style={styles.logoContainer}>
               <MaterialCommunityIcons name="food-apple" size={64} color="#fff" />
               <Text style={styles.appName}>Refood</Text>
@@ -109,9 +250,47 @@ const LoginScreen = () => {
 
             <Card style={styles.formCard} elevation={5}>
               <Card.Content style={styles.formContainer}>
-                <Text style={styles.loginTitle}>Accedi</Text>
+                <Text style={styles.loginTitle}>{isLoginMode ? 'Accedi' : 'Registrati'}</Text>
                 <Divider style={styles.divider} />
                 
+                {/* Campi nome e cognome solo per la registrazione */}
+                {!isLoginMode && (
+                  <>
+                    <View style={styles.inputWrapper}>
+                      <TextInput
+                        label="Nome"
+                        value={nome}
+                        onChangeText={setNome}
+                        onBlur={validateNome}
+                        error={!!nomeError}
+                        style={styles.input}
+                        mode="outlined"
+                        outlineColor={PRIMARY_COLOR}
+                        activeOutlineColor={PRIMARY_COLOR}
+                        left={<TextInput.Icon icon="account" />}
+                      />
+                      {nomeError ? <HelperText type="error">{nomeError}</HelperText> : null}
+                    </View>
+
+                    <View style={styles.inputWrapper}>
+                      <TextInput
+                        label="Cognome"
+                        value={cognome}
+                        onChangeText={setCognome}
+                        onBlur={validateCognome}
+                        error={!!cognomeError}
+                        style={styles.input}
+                        mode="outlined"
+                        outlineColor={PRIMARY_COLOR}
+                        activeOutlineColor={PRIMARY_COLOR}
+                        left={<TextInput.Icon icon="account" />}
+                      />
+                      {cognomeError ? <HelperText type="error">{cognomeError}</HelperText> : null}
+                    </View>
+                  </>
+                )}
+                
+                {/* Campo email comune per entrambi */}
                 <View style={styles.inputWrapper}>
                   <TextInput
                     label="Email"
@@ -130,6 +309,7 @@ const LoginScreen = () => {
                   {emailError ? <HelperText type="error">{emailError}</HelperText> : null}
                 </View>
 
+                {/* Campo password comune per entrambi */}
                 <View style={styles.inputWrapper}>
                   <TextInput
                     label="Password"
@@ -153,24 +333,57 @@ const LoginScreen = () => {
                   {passwordError ? <HelperText type="error">{passwordError}</HelperText> : null}
                 </View>
 
+                {/* Conferma password solo per la registrazione */}
+                {!isLoginMode && (
+                  <View style={styles.inputWrapper}>
+                    <TextInput
+                      label="Conferma Password"
+                      value={confirmPassword}
+                      onChangeText={setConfirmPassword}
+                      onBlur={validateConfirmPassword}
+                      secureTextEntry={!passwordVisible}
+                      error={!!confirmPasswordError}
+                      style={styles.input}
+                      mode="outlined"
+                      outlineColor={PRIMARY_COLOR}
+                      activeOutlineColor={PRIMARY_COLOR}
+                      left={<TextInput.Icon icon="lock-check" />}
+                    />
+                    {confirmPasswordError ? <HelperText type="error">{confirmPasswordError}</HelperText> : null}
+                  </View>
+                )}
+
+                {/* Pulsante di azione */}
                 <Button
                   mode="contained"
-                  onPress={handleLogin}
+                  onPress={isLoginMode ? handleLogin : handleRegistration}
                   loading={isLoading}
                   disabled={isLoading}
-                  style={styles.loginButton}
+                  style={styles.actionButton}
                   buttonColor={PRIMARY_COLOR}
-                  icon="login"
+                  icon={isLoginMode ? "login" : "account-plus"}
                 >
-                  Accedi
+                  {isLoginMode ? 'Accedi' : 'Registrati'}
                 </Button>
                 
+                {/* Link per password dimenticata solo per login */}
+                {isLoginMode && (
+                  <Button
+                    mode="text"
+                    onPress={() => logger.log('Password dimenticata')}
+                    style={styles.forgotPasswordButton}
+                  >
+                    Password dimenticata?
+                  </Button>
+                )}
+                
+                {/* Toggle tra login e registrazione */}
                 <Button
                   mode="text"
-                  onPress={() => logger.log('Password dimenticata')}
-                  style={styles.forgotPasswordButton}
+                  onPress={toggleAuthMode}
+                  style={styles.toggleModeButton}
                 >
-                  Password dimenticata?
+                  {isLoginMode ? "Non hai un account? Registrati" : "Hai già un account? Accedi"}
                 </Button>
               </Card.Content>
             </Card>
@@ -270,12 +483,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   } as any,
-  loginButton: {
+  actionButton: {
     marginTop: 20,
     paddingVertical: 8,
     borderRadius: 8,
   } as any,
   forgotPasswordButton: {
+    marginTop: 10,
+  } as any,
+  toggleModeButton: {
     marginTop: 10,
   } as any,
   footer: {
@@ -286,6 +502,15 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     opacity: 0.7,
+  } as any,
+  registrationBanner: {
+    marginBottom: 20,
+  } as any,
+  bannerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: PRIMARY_COLOR,
+    marginBottom: 10,
   } as any,
 });
 

@@ -1,5 +1,8 @@
-import React, { createContext, useState, useEffect, useContext } from 'react';
-import { login as loginApi, logout as logoutApi, checkAuth } from '../services/authService';
+import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
+import { login as loginApi, logout as logoutApi, checkAuth, registerUser } from '../services/authService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Toast } from 'react-native-toast-message';
+import { logger } from '../utils/logger';
 
 // Tipi
 interface User {
@@ -16,6 +19,7 @@ interface AuthContextType {
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  register: (nome: string, cognome: string, email: string, password: string) => Promise<boolean>;
 }
 
 // Contesto
@@ -74,12 +78,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // Funzione per pulire gli errori
+  const clearError = () => {
+    setError(null);
+  };
+
+  // Funzione per registrare un nuovo utente
+  const register = async (nome: string, cognome: string, email: string, password: string): Promise<boolean> => {
+    try {
+      setIsLoading(true);
+      clearError();
+      
+      // Chiamata al servizio di registrazione
+      const response = await registerUser(nome, cognome, email, password);
+      
+      if (response && response.success) {
+        logger.log('Registrazione completata con successo per:', email);
+        
+        // Mostriamo un messaggio di successo ma non effettuiamo automaticamente il login
+        Toast.show({
+          type: 'success',
+          text1: 'Registrazione completata',
+          text2: 'Puoi accedere con le tue credenziali',
+          visibilityTime: 4000,
+        });
+        
+        return true;
+      } else {
+        throw new Error('Errore durante la registrazione');
+      }
+    } catch (error: any) {
+      logger.error('Errore durante la registrazione:', error);
+      
+      // Gestione migliorata degli errori
+      if (error.response && error.response.status === 409) {
+        setError('Email già in uso. Prova con un altro indirizzo email.');
+      } else if (error.message && error.message.includes('Network Error')) {
+        setError('Impossibile connettersi al server. Verifica la tua connessione internet.');
+      } else {
+        setError('Si è verificato un errore durante la registrazione. Riprova più tardi.');
+      }
+      
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const value = {
     user,
     isLoading,
     error,
     login,
     logout,
+    register,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

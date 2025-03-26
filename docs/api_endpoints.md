@@ -42,6 +42,45 @@ Autentica un utente e restituisce i token JWT.
 }
 ```
 
+### Registrazione
+**POST** `/auth/register`
+
+Registra un nuovo utente nell'applicazione.
+
+**Request Body:**
+```json
+{
+  "nome": "Mario",
+  "cognome": "Rossi",
+  "email": "mario.rossi@example.com",
+  "password": "password123",
+  "ruolo": "UTENTE"
+}
+```
+
+**Response (201 Created):**
+```json
+{
+  "status": "success",
+  "message": "Utente registrato con successo",
+  "success": true,
+  "data": {
+    "user": {
+      "id": 42,
+      "nome": "Mario",
+      "cognome": "Rossi",
+      "email": "mario.rossi@example.com",
+      "ruolo": "UTENTE"
+    }
+  }
+}
+```
+
+**Possibili errori:**
+- **400 Bad Request**: Dati di registrazione non validi
+- **409 Conflict**: Email già registrata
+- **500 Internal Server Error**: Errore interno durante la registrazione
+
 ### Refresh Token
 **POST** `/auth/refresh-token`
 
