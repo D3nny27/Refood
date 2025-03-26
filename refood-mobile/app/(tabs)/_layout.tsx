@@ -84,6 +84,16 @@ export default function TabLayout() {
       />
       
       <Tabs.Screen
+        name="statistiche"
+        options={{
+          title: 'Statistiche',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="analytics-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      
+      <Tabs.Screen
         name="notifiche"
         options={{
           title: 'Notifiche',

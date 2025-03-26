@@ -13,26 +13,37 @@ const LOCAL_IP = '192.168.123.160'; // Indirizzo IP aggiornato
 // Porta del server backend
 const SERVER_PORT = '3000';
 
-// URL di base per le API
-// Per i test con il server stub delle notifiche, modifica questo URL in:
-// export const API_URL = 'http://localhost:3001/api/v1';
-export let API_URL = 'https://refood-be.stage.app-it-up.com/api/v1';
+// URL di base per le API - inizializzato con un valore provvisorio
+export let API_URL = '';
 
-// Per Android, usa 10.0.2.2 che è l'alias dell'host locale per l'emulatore
-if (Platform.OS === 'android') {
-  // Usa 10.0.2.2 per gli emulatori Android, IP locale per dispositivi fisici
-  API_URL = __DEV__ && !Platform.isTV 
-    ? `http://${LOCAL_IP}:${SERVER_PORT}/api/v1` 
-    : `http://10.0.2.2:${SERVER_PORT}/api/v1`;
-} 
-// Per iOS, usa localhost per emulatori, IP locale per dispositivi fisici
-else if (Platform.OS === 'ios') {
-  API_URL = __DEV__ && !Platform.isTV 
-    ? `http://${LOCAL_IP}:${SERVER_PORT}/api/v1` 
-    : `http://localhost:${SERVER_PORT}/api/v1`;
+// In modalità sviluppo, utilizziamo sempre l'URL locale
+if (__DEV__) {
+  // Per Android, usa 10.0.2.2 per gli emulatori o l'IP locale per i dispositivi fisici
+  if (Platform.OS === 'android') {
+    // Su emulatore utilizziamo 10.0.2.2, su dispositivo fisico l'IP locale
+    API_URL = Platform.isTV 
+      ? `http://10.0.2.2:${SERVER_PORT}/api/v1` 
+      : `http://${LOCAL_IP}:${SERVER_PORT}/api/v1`;
+  } 
+  // Per iOS, usa localhost per emulatori o l'IP locale per dispositivi fisici
+  else if (Platform.OS === 'ios') {
+    API_URL = Platform.isTV 
+      ? `http://localhost:${SERVER_PORT}/api/v1` 
+      : `http://${LOCAL_IP}:${SERVER_PORT}/api/v1`;
+  } 
+  // Per il web o altre piattaforme, usa localhost
+  else {
+    API_URL = `http://localhost:${SERVER_PORT}/api/v1`;
+  }
+  
+  console.log(`[DEV] Usando server locale - API_URL: ${API_URL}`);
+} else {
+  // In produzione usiamo sempre l'URL di produzione
+  API_URL = 'https://refood-be.stage.app-it-up.com/api/v1';
+  console.log(`[PROD] Usando server di produzione - API_URL: ${API_URL}`);
 }
 
-console.log(`Usando API_URL: ${API_URL} per la piattaforma: ${Platform.OS}`);
+console.log(`Configurazione API completata per piattaforma: ${Platform.OS}, dev mode: ${__DEV__ ? 'attivo' : 'disattivo'}`);
 
 // Chiavi per AsyncStorage
 export const STORAGE_KEYS = {

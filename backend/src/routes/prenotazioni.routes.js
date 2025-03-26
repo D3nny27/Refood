@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, param, query } = require('express-validator');
 const validator = require('../middlewares/validator');
-const { authenticate, authorize, belongsToCenter } = require('../middlewares/auth');
+const { authenticate, authorize, belongsToCenter, authMiddleware, isAuthorized } = require('../middlewares/auth');
 const prenotazioniController = require('../controllers/prenotazioni.controller');
 
 const router = express.Router();
@@ -408,5 +408,9 @@ router.get('/centro/:centro_id', [
   validator.validate,
   belongsToCenter(req => req.params.centro_id)
 ], prenotazioniController.getPrenotazioniByCentro);
+
+// Aggiungo la nuova rotta per la pulizia delle prenotazioni duplicate
+// Questa rotta dovrebbe essere accessibile solo agli amministratori
+router.post('/cleanup-duplicates', authenticate, authorize(['Amministratore']), prenotazioniController.cleanupDuplicatePrenotazioni);
 
 module.exports = router; 

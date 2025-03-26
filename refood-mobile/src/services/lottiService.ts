@@ -86,7 +86,7 @@ export const invalidateCache = () => {
 };
 
 // Funzione per ottenere la lista dei lotti con filtri opzionali
-export const getLotti = async (filtri: LottoFiltri = {}, forceRefresh = false): Promise<LottiResponse> => {
+export const getLotti = async (filtri: LottoFiltri = {}, forceRefresh = false, mostraTutti = false): Promise<LottiResponse> => {
   try {
     // Usa la cache in memoria per migliorare le prestazioni
     const cacheKey = `lotti_${JSON.stringify(filtri)}`;
@@ -131,7 +131,60 @@ export const getLotti = async (filtri: LottoFiltri = {}, forceRefresh = false): 
         ? lottiData.map(normalizeLotto) 
         : [];
       
-      // Formattazione della risposta
+      // Se mostraTutti è false, filtra i lotti per rimuovere quelli con prenotazioni attive
+      if (!mostraTutti) {
+        try {
+          // Richiedo tutte le prenotazioni attive
+          const prenotazioniResponse = await axios.get(`${API_URL}/prenotazioni`, {
+            headers,
+            params: { 
+              // Filtro solo per prenotazioni in stati attivi
+              stato: 'Prenotato,Confermato,InAttesa,InTransito' 
+            },
+            timeout: 15000
+          });
+          
+          // Estrai le prenotazioni dalla risposta
+          const prenotazioni = prenotazioniResponse.data.data || 
+                            prenotazioniResponse.data.prenotazioni || [];
+          
+          // Crea un set di IDs dei lotti già prenotati
+          const lottiPrenotatiIds = new Set();
+          prenotazioni.forEach((p: any) => {
+            if (p.lotto_id) {
+              lottiPrenotatiIds.add(p.lotto_id);
+            }
+          });
+          
+          console.log(`Trovati ${lottiPrenotatiIds.size} lotti con prenotazioni attive`);
+          
+          // Filtra i lotti escludendo quelli già prenotati
+          const lottiFiltrati = normalizedLotti.filter(lotto => !lottiPrenotatiIds.has(lotto.id));
+          
+          console.log(`Rimossi ${normalizedLotti.length - lottiFiltrati.length} lotti già prenotati`);
+          console.log(`Restituisco ${lottiFiltrati.length} lotti effettivamente disponibili`);
+          
+          // Formattazione della risposta
+          const result: LottiResponse = {
+            lotti: lottiFiltrati,
+            pagination: response.data.pagination || null
+          };
+          
+          // Aggiorna la cache
+          lottiCache = {
+            data: result,
+            timestamp: now,
+            filtri
+          };
+          
+          return result;
+        } catch (prenotErr) {
+          console.warn('Errore nel controllo delle prenotazioni attive:', prenotErr);
+          console.warn('Restituisco i lotti senza filtro per prenotazioni');
+        }
+      }
+      
+      // Formattazione della risposta (se mostraTutti è true o se c'è stato un errore nel filtraggio)
       const result: LottiResponse = {
         lotti: normalizedLotti,
         pagination: response.data.pagination || null
@@ -307,7 +360,30 @@ export const updateLotto = async (lottoId: number, lottoData: Partial<Lotto>, no
     if (lottoData.nome !== undefined) payload.prodotto = lottoData.nome;
     if (lottoData.quantita !== undefined) payload.quantita = lottoData.quantita;
     if (lottoData.unita_misura !== undefined) payload.unita_misura = lottoData.unita_misura;
-    if (lottoData.data_scadenza !== undefined) payload.data_scadenza = lottoData.data_scadenza;
+    if (lottoData.data_scadenza !== undefined) {
+      // Assicuriamoci che la data sia nel formato corretto (YYYY-MM-DD)
+      let dataScadenza = lottoData.data_scadenza;
+      
+      // Se è un oggetto Date, formattalo come stringa
+      if (typeof dataScadenza === 'object' && dataScadenza instanceof Date) {
+        dataScadenza = dataScadenza.toISOString().split('T')[0];
+      } else if (typeof dataScadenza === 'string') {
+        // Se è già una stringa, assicuriamoci che sia nel formato corretto YYYY-MM-DD
+        // Prova a convertirla in Date e poi di nuovo in stringa per normalizzarla
+        try {
+          const date = new Date(dataScadenza);
+          if (!isNaN(date.getTime())) {
+            dataScadenza = date.toISOString().split('T')[0];
+          }
+        } catch (e) {
+          console.error('Errore nella conversione della data:', e);
+          // Se fallisce, mantieni il valore originale
+        }
+      }
+      
+      payload.data_scadenza = dataScadenza;
+      console.log(`Data scadenza normalizzata: ${payload.data_scadenza}`);
+    }
     if (lottoData.descrizione !== undefined) payload.descrizione = lottoData.descrizione;
     if (lottoData.stato !== undefined) payload.stato = lottoData.stato;
     
@@ -380,7 +456,7 @@ export const updateLotto = async (lottoId: number, lottoData: Partial<Lotto>, no
     return {
       success: true,
       message: 'Lotto aggiornato con successo',
-      lotto: normalizeLotto(response.data)
+      lotto: normalizeLotto(response.data.lotto || response.data)
     };
   } catch (error: any) {
     console.error('Errore nell\'aggiornamento del lotto:', error);
@@ -404,9 +480,9 @@ export const updateLotto = async (lottoId: number, lottoData: Partial<Lotto>, no
 };
 
 // Funzione migliorata per i lotti disponibili con gestione degli errori 500
-export const getLottiDisponibili = async (filtri?: LottoFiltri, forceRefresh = false): Promise<{lotti: Lotto[]}> => {
+export const getLottiDisponibili = async (filtri?: LottoFiltri, forceRefresh = false, mostraTutti = false): Promise<{lotti: Lotto[]}> => {
   try {
-    console.log('Richiesta lotti disponibili con filtri:', filtri ? JSON.stringify(filtri) : 'nessun filtro');
+    console.log('Richiesta lotti disponibili con filtri:', filtri ? JSON.stringify(filtri) : 'nessun filtro', 'mostraTutti:', mostraTutti);
     
     const headers = await getAuthHeader();
     
@@ -436,9 +512,59 @@ export const getLottiDisponibili = async (filtri?: LottoFiltri, forceRefresh = f
       
       console.log(`Ricevuti e normalizzati ${normalizedLotti.length} lotti disponibili`);
       
-      return {
-        lotti: normalizedLotti
-      };
+      // Se mostraTutti è true, restituisci tutti i lotti senza filtrare quelli prenotati
+      if (mostraTutti) {
+        console.log('Richiesto di mostrare tutti i lotti, inclusi quelli già prenotati.');
+        return {
+          lotti: normalizedLotti
+        };
+      }
+      
+      // MIGLIORAMENTO: Verifico quali lotti hanno già prenotazioni attive e li escludo
+      console.log('Verifico quali lotti hanno già prenotazioni attive...');
+      
+      try {
+        // Richiedo tutte le prenotazioni attive
+        const prenotazioniResponse = await axios.get(`${API_URL}/prenotazioni`, {
+          headers,
+          params: { 
+            // Filtro solo per prenotazioni in stati attivi
+            stato: 'Prenotato,Confermato,InAttesa,InTransito' 
+          },
+          timeout: 15000
+        });
+        
+        // Estrai le prenotazioni dalla risposta
+        const prenotazioni = prenotazioniResponse.data.data || 
+                          prenotazioniResponse.data.prenotazioni || [];
+        
+        // Crea un set di IDs dei lotti già prenotati
+        const lottiPrenotatiIds = new Set();
+        prenotazioni.forEach((p: any) => {
+          if (p.lotto_id) {
+            lottiPrenotatiIds.add(p.lotto_id);
+          }
+        });
+        
+        console.log(`Trovati ${lottiPrenotatiIds.size} lotti con prenotazioni attive`);
+        
+        // Filtra i lotti escludendo quelli già prenotati
+        const lottiFiltrati = normalizedLotti.filter(lotto => !lottiPrenotatiIds.has(lotto.id));
+        
+        console.log(`Rimossi ${normalizedLotti.length - lottiFiltrati.length} lotti già prenotati`);
+        console.log(`Restituisco ${lottiFiltrati.length} lotti effettivamente disponibili`);
+        
+        return {
+          lotti: lottiFiltrati
+        };
+      } catch (prenotErr) {
+        console.warn('Errore nel controllo delle prenotazioni attive:', prenotErr);
+        console.warn('Restituisco i lotti senza filtro per prenotazioni');
+        // In caso di errore, restituisci i lotti originali
+        return {
+          lotti: normalizedLotti
+        };
+      }
     } catch (error) {
       console.error('Errore nella chiamata al server per i lotti disponibili:', error);
       

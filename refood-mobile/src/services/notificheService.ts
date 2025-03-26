@@ -30,6 +30,10 @@ interface ApiNotificheResponse {
 // Chiave per salvare le notifiche locali in AsyncStorage
 const LOCAL_NOTIFICATIONS_STORAGE_KEY = STORAGE_KEYS.LOCAL_NOTIFICATIONS || 'refood-local-notifications';
 
+// Variabili per il polling delle notifiche
+let notifichePollingInterval: NodeJS.Timeout | null = null;
+let pollingIntervalDuration: number = 30000; // Default: 30 secondi
+
 /**
  * Servizio per la gestione delle notifiche
  */
@@ -589,40 +593,45 @@ class NotificheService {
   }
 
   /**
-   * Avvia il polling per le notifiche non lette
+   * Avvia il polling periodico per verificare nuove notifiche
+   * @param onNewNotificheCount Callback da chiamare quando cambia il conteggio delle notifiche
+   * @param intervalMs Intervallo di polling in millisecondi (default: 30000ms)
    */
-  avviaPollingNotifiche(callback: (count: number) => void): void {
-    if (this.pollingInterval !== null) {
-      this.interrompiPollingNotifiche();
-    }
+  avviaPollingNotifiche(
+    onNewNotificheCount: (count: number) => void,
+    intervalMs: number = 30000
+  ): void {
+    // Termina eventuali polling esistenti
+    this.interrompiPollingNotifiche();
     
+    // Imposta il nuovo intervallo
+    this.pollingDelay = intervalMs;
     this.isPolling = true;
     
-    // Esegue il callback immediatamente con i dati attuali
-    this.getNotificheNonLette()
-      .then(count => callback(count))
-      .catch(err => logger.error('Errore nel polling iniziale:', err));
-    
-    // Avvia il polling periodico
-    this.pollingInterval = setInterval(async () => {
-      if (!this.isPolling) return;
-      
+    // Funzione di polling
+    const pollNotifiche = async () => {
       try {
         const count = await this.getNotificheNonLette();
-        callback(count);
+        onNewNotificheCount(count);
       } catch (error) {
-        logger.error('Errore durante il polling delle notifiche:', error);
+        console.error('Errore durante il polling delle notifiche:', error);
       }
-    }, this.pollingDelay);
+    };
     
-    logger.log(`Polling notifiche avviato (ogni ${this.pollingDelay/1000} secondi)`);
+    // Esegui un primo polling immediato
+    pollNotifiche();
+    
+    // Imposta l'intervallo di polling
+    this.pollingInterval = setInterval(pollNotifiche, this.pollingDelay);
+    
+    logger.log(`Polling notifiche avviato con intervallo di ${this.pollingDelay}ms`);
   }
 
   /**
-   * Interrompe il polling delle notifiche
+   * Interrompe il polling periodico delle notifiche
    */
   interrompiPollingNotifiche(): void {
-    if (this.pollingInterval !== null) {
+    if (this.pollingInterval) {
       clearInterval(this.pollingInterval);
       this.pollingInterval = null;
       this.isPolling = false;
@@ -885,7 +894,7 @@ class NotificheService {
   }
 
   /**
-   * Invia una notifica a tutti gli amministratori di un centro
+   * Invia una notifica agli amministratori di un centro
    * @param centroId ID del centro
    * @param titolo Titolo della notifica
    * @param contenuto Corpo della notifica
@@ -1016,6 +1025,212 @@ class NotificheService {
     }
   }
 
+  /**
+   * Invia una notifica agli operatori di un centro
+   * @param centroId ID del centro
+   * @param titolo Titolo della notifica
+   * @param contenuto Corpo della notifica
+   * @returns Promise<void>
+   */
+  public async addNotificaToOperatori(
+    centroId: number | null = null, 
+    titolo: string, 
+    contenuto: string
+  ): Promise<void> {
+    try {
+      // Crea una notifica locale
+      const notificaLocale = this.addLocalNotifica(
+        titolo,
+        contenuto, 
+        false, // non letta
+        true   // sincronizza con il server
+      );
+      
+      logger.log('Notifica locale per operatori aggiunta al contesto con ID:', notificaLocale.id);
+      
+      // Se non è specificato un centroId, otteniamo un centro valido dal backend
+      if (centroId === null) {
+        try {
+          const response = await this.getResilient<any>(
+            `${API_CONFIG.NOTIFICATIONS_API_URL}/centro-test`, 
+            {}, 
+            null
+          );
+          
+          if (response && response.success && response.data && response.data.centro) {
+            centroId = response.data.centro.id;
+            console.log(`Ottenuto automaticamente il centro ID ${centroId} per le notifiche agli operatori`);
+          } else {
+            console.error('Impossibile ottenere un centro valido per le notifiche agli operatori:', response);
+            return;
+          }
+        } catch (error) {
+          console.error('Errore nel recupero del centro per le notifiche agli operatori:', error);
+          return;
+        }
+      }
+      
+      // Controllo finale che il centroId sia valido
+      if (!centroId) {
+        console.error('CentroId non valido per inviare notifica agli operatori');
+        return;
+      }
+
+      // Recupera il token di autenticazione
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      
+      if (!token) {
+        console.warn('Token non disponibile per inviare notifica agli operatori');
+        // La notifica locale è già stata aggiunta sopra
+        return;
+      }
+      
+      // Prepara i dati della notifica per gli operatori
+      const notificaData = {
+        titolo,
+        messaggio: contenuto,
+        tipo: 'CambioStato',
+        priorita: 'Media'
+      };
+      
+      console.log(`Invio notifica agli operatori del centro ${centroId}: ${titolo}`);
+      
+      // Invia la notifica al backend usando un endpoint specifico per gli operatori
+      const response = await fetch(`${API_CONFIG.NOTIFICATIONS_API_URL}/operatori-centro/${centroId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(notificaData)
+      });
+      
+      if (!response.ok) {
+        // Se l'endpoint specifico non esiste, prova con l'endpoint generico
+        if (response.status === 404) {
+          console.warn('Endpoint specifico per operatori non trovato, uso endpoint generico per amministratori');
+          // Utilizziamo l'endpoint degli amministratori come fallback
+          await this.addNotificaToAmministratori(centroId, titolo, contenuto);
+          return;
+        }
+        
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Errore nell\'invio della notifica agli operatori:', 
+          response.status, errorData.message || response.statusText);
+        
+        // La notifica locale è già stata aggiunta sopra
+        return;
+      }
+      
+      const data = await response.json();
+      console.log('Notifica inviata agli operatori con successo:', data);
+      
+      // Emetti manualmente un evento di refresh delle notifiche 
+      // per garantire che il contesto venga aggiornato
+      emitEvent(APP_EVENTS.REFRESH_NOTIFICATIONS);
+      
+    } catch (error) {
+      console.error('Errore nell\'invio della notifica agli operatori:', error);
+      
+      // La notifica locale è già stata aggiunta sopra
+    }
+  }
+
+  /**
+   * Invia una notifica agli utenti di un centro sociale
+   * @param centroId ID del centro sociale
+   * @param titolo Titolo della notifica
+   * @param contenuto Corpo della notifica
+   * @returns Promise<void>
+   */
+  public async addNotificaToCentroSociale(
+    centroId: number | null = null, 
+    titolo: string, 
+    contenuto: string
+  ): Promise<void> {
+    try {
+      // Crea una notifica locale
+      const notificaLocale = this.addLocalNotifica(
+        titolo,
+        contenuto, 
+        false, // non letta
+        true   // sincronizza con il server
+      );
+      
+      logger.log('Notifica locale per centro sociale aggiunta al contesto con ID:', notificaLocale.id);
+      
+      // Se non è specificato un centroId, otteniamo un centro valido dal backend
+      if (centroId === null) {
+        console.error('CentroId non specificato per inviare notifica al centro sociale');
+        return;
+      }
+      
+      // Controllo finale che il centroId sia valido
+      if (!centroId) {
+        console.error('CentroId non valido per inviare notifica al centro sociale');
+        return;
+      }
+
+      // Recupera il token di autenticazione
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      
+      if (!token) {
+        console.warn('Token non disponibile per inviare notifica al centro sociale');
+        // La notifica locale è già stata aggiunta sopra
+        return;
+      }
+      
+      // Prepara i dati della notifica per il centro sociale
+      const notificaData = {
+        titolo,
+        messaggio: contenuto,
+        tipo: 'Prenotazione',
+        priorita: 'Media'
+      };
+      
+      console.log(`Invio notifica al centro sociale ${centroId}: ${titolo}`);
+      
+      // Invia la notifica al backend usando un endpoint specifico per i centri sociali
+      const response = await fetch(`${API_CONFIG.NOTIFICATIONS_API_URL}/centro-sociale/${centroId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(notificaData)
+      });
+      
+      if (!response.ok) {
+        // Se l'endpoint specifico non esiste, prova con l'endpoint generico
+        if (response.status === 404) {
+          console.warn('Endpoint specifico per centro sociale non trovato, uso endpoint generico per amministratori');
+          // Utilizziamo l'endpoint degli amministratori come fallback
+          await this.addNotificaToAmministratori(centroId, titolo, contenuto);
+          return;
+        }
+        
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Errore nell\'invio della notifica al centro sociale:', 
+          response.status, errorData.message || response.statusText);
+        
+        // La notifica locale è già stata aggiunta sopra
+        return;
+      }
+      
+      const data = await response.json();
+      console.log('Notifica inviata al centro sociale con successo:', data);
+      
+      // Emetti manualmente un evento di refresh delle notifiche 
+      // per garantire che il contesto venga aggiornato
+      emitEvent(APP_EVENTS.REFRESH_NOTIFICATIONS);
+      
+    } catch (error) {
+      console.error('Errore nell\'invio della notifica al centro sociale:', error);
+      
+      // La notifica locale è già stata aggiunta sopra
+    }
+  }
+  
   /**
    * Configura la richiesta API con parametri e gestione errori
    */

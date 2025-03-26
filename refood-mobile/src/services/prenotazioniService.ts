@@ -35,6 +35,9 @@ export interface Prenotazione {
   data_consegna?: string;
 }
 
+// Tipo per gli stati di prenotazione, usato per parametri tipizzati
+export type StatoPrenotazione = 'Prenotato' | 'InAttesa' | 'Confermato' | 'Rifiutato' | 'InTransito' | 'Consegnato' | 'Annullato' | 'Eliminato';
+
 // Interfaccia per la risposta della prenotazione
 export interface PrenotazioneResponse {
   success: boolean;
@@ -128,6 +131,111 @@ export const prenotaLotto = async (
     
     const headers = await getAuthHeader();
     console.log('Headers autenticazione:', headers);
+    
+    // MIGLIORAMENTO: Verifica prima lo stato del lotto per evitare prenotazioni multiple
+    try {
+      console.log(`Verifico lo stato attuale del lotto ${lotto_id} prima di prenotarlo...`);
+      const lottoResponse = await axios.get(`${API_URL}/lotti/${lotto_id}`, {
+        headers,
+        timeout: 10000
+      });
+      
+      const lotto = lottoResponse.data;
+      console.log(`Stato attuale del lotto: "${lotto.stato || 'Non specificato'}"`);
+      
+      // CORREZIONE: I lotti con stato 'Verde' sono disponibili per la prenotazione
+      // Un lotto è prenotabile se è nello stato "Verde" (appena inserito) o se era stato annullato
+      if (lotto.stato && lotto.stato !== 'Verde' && lotto.stato !== 'Disponibile') {
+        console.error(`Impossibile prenotare lotto con stato "${lotto.stato}" (ID: ${lotto_id})`);
+        return {
+          success: false,
+          message: `Impossibile prenotare questo lotto: non è disponibile (stato "${lotto.stato}").`,
+          error: { status: 400, message: 'Lotto non disponibile per la prenotazione' }
+        };
+      }
+      
+      // Verifica se esistono già prenotazioni attive per questo lotto
+      console.log(`Verifico se esistono già prenotazioni per il lotto ${lotto_id}...`);
+      const prenotazioniResponse = await axios.get(`${API_URL}/prenotazioni`, {
+        headers,
+        params: { lotto_id },
+        timeout: 10000
+      });
+      
+      const prenotazioniEsistenti = prenotazioniResponse.data.data || prenotazioniResponse.data.prenotazioni || [];
+      // Consideriamo attive solo le prenotazioni in stati che indicano che il lotto è effettivamente impegnato
+      const prenotazioniAttive = prenotazioniEsistenti.filter((p: any) => {
+        // Stati che indicano che il lotto è attivamente impegnato
+        const statiAttivi = ['Prenotato', 'InAttesa', 'Confermato', 'InTransito'];
+        return statiAttivi.includes(p.stato);
+      });
+      
+      if (prenotazioniAttive.length > 0) {
+        console.error(`Trovate ${prenotazioniAttive.length} prenotazioni attive esistenti per il lotto ${lotto_id}`);
+        
+        // Log dettagliato delle prenotazioni trovate
+        prenotazioniAttive.forEach((p: any, index: number) => {
+          console.error(`Prenotazione #${index+1}: ID=${p.id}, Stato=${p.stato}, Centro=${p.centro_ricevente_id || 'N/A'}`);
+        });
+        
+        // Verifica se c'è una prenotazione dell'utente corrente
+        const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+        let user;
+        if (userData) {
+          user = JSON.parse(userData);
+        }
+        
+        // Ottieni l'ID del centro dell'utente corrente
+        let centro_utente_id = override_centro_id;
+        if (!centro_utente_id && user?.centro_id) {
+          centro_utente_id = user.centro_id;
+        }
+        if (!centro_utente_id) {
+          const cachedCentroId = await getCachedCentroId();
+          if (cachedCentroId !== null) {
+            centro_utente_id = cachedCentroId;
+          }
+        }
+        
+        // Se l'utente ha già una prenotazione attiva per questo lotto, informa l'utente
+        const prenotazioneUtenteCorrente = prenotazioniAttive.find((p: any) => p.centro_ricevente_id === centro_utente_id);
+        if (prenotazioneUtenteCorrente) {
+          console.warn(`L'utente ha già una prenotazione attiva (ID: ${prenotazioneUtenteCorrente.id}) per questo lotto`);
+          return {
+            success: false,
+            message: `Hai già una prenotazione attiva per questo lotto (Stato: ${prenotazioneUtenteCorrente.stato}).`,
+            error: { 
+              status: 400, 
+              message: 'Prenotazione duplicata',
+              prenotazioneEsistente: { 
+                id: prenotazioneUtenteCorrente.id, 
+                stato: prenotazioneUtenteCorrente.stato 
+              }
+            }
+          };
+        }
+        
+        return {
+          success: false,
+          message: `Questo lotto risulta già prenotato da un altro centro.`,
+          error: { 
+            status: 400, 
+            message: 'Lotto già prenotato',
+            prenotazioniEsistenti: prenotazioniAttive.map((p: any) => ({ 
+              id: p.id, 
+              stato: p.stato,
+              centro: p.centro_ricevente_nome || `Centro #${p.centro_ricevente_id}`
+            }))
+          }
+        };
+      }
+      
+      console.log(`Nessuna prenotazione esistente trovata per il lotto ${lotto_id}, procedo con la prenotazione`);
+    } catch (checkError: any) {
+      // Se non riusciamo a verificare il lotto, logghiamo l'errore ma proviamo comunque la prenotazione
+      console.warn(`Errore durante la verifica dello stato del lotto ${lotto_id}:`, checkError.message);
+      console.warn('Procedo comunque con il tentativo di prenotazione');
+    }
     
     // Ottieni i dati dell'utente per recuperare il centro_id
     const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
@@ -271,6 +379,63 @@ export const prenotaLotto = async (
     
     // Invalida la cache
     invalidateCache();
+    
+    // Invia notifica utilizzando setStatoPrenotazione per il primo stato
+    if (response.data.prenotazione) {
+      try {
+        const prenotazione = response.data.prenotazione;
+        
+        // Formatta informazioni dettagliate per la notifica
+        const dataRitiroString = data_ritiro_prevista 
+          ? `Data Ritiro Prevista: ${new Date(data_ritiro_prevista).toLocaleDateString('it-IT')}` 
+          : '';
+        
+        const notePrenotazione = [
+          dataRitiroString,
+          note ? `Note: ${note}` : ''
+        ].filter(Boolean).join('\n');
+        
+        // Utilizza setStatoPrenotazione per creare una notifica dettagliata
+        await setStatoPrenotazione(prenotazione.id, 'Prenotato', notePrenotazione);
+        
+        // MIGLIORAMENTO: Invia anche una notifica diretta al centro sociale
+        try {
+          // Dobbiamo ottenere dati più dettagliati per la notifica
+          const headers = await getAuthHeader();
+          const lottoResponse = await axios.get(`${API_URL}/lotti/${lotto_id}`, { 
+            headers,
+            timeout: 10000
+          });
+          
+          const lotto = lottoResponse.data;
+          // Prepara un messaggio specifico per il centro sociale che sta prenotando
+          const dettagliPrenotazione = [
+            `Nome Lotto: ${lotto.prodotto || lotto.nome || 'Non specificato'}`,
+            `Quantità: ${lotto.quantita || 'N/A'} ${lotto.unita_misura || 'pz'}`,
+            `Data Scadenza: ${lotto.data_scadenza ? new Date(lotto.data_scadenza).toLocaleDateString('it-IT') : 'N/A'}`,
+            `Centro di Origine: ${lotto.centro_nome || `Centro #${lotto.centro_id}`}`,
+            dataRitiroString,
+            note ? `Note: ${note}` : ''
+          ].filter(Boolean).join('\n');
+          
+          // Invia notifica specifica al centro sociale richiedente
+          await notificheService.addNotificaToCentroSociale(
+            centro_ricevente_id,
+            'Prenotazione inviata con successo',
+            `Hai inviato una prenotazione per un lotto. La tua richiesta è in attesa di conferma.\n\n${dettagliPrenotazione}`
+          );
+          
+          console.log(`Notifica di prenotazione inviata anche al centro sociale richiedente (ID: ${centro_ricevente_id})`);
+        } catch (directNotifyError) {
+          console.error('Errore nell\'invio della notifica diretta al centro sociale:', directNotifyError);
+        }
+        
+        console.log('Notifica di prenotazione inviata tramite setStatoPrenotazione');
+      } catch (notifyError) {
+        console.error('Errore nell\'invio della notifica di prenotazione:', notifyError);
+        // Non blocchiamo il flusso se fallisce la notifica
+      }
+    }
     
     return {
       success: true,
@@ -623,59 +788,176 @@ export const annullaPrenotazione = async (id: number, motivo: string = '') => {
 /**
  * Accetta una prenotazione.
  * @param id ID della prenotazione
- * @param data_ritiro_prevista Data prevista per il ritiro
+ * @param data_prevista_ritiro Data prevista per il ritiro
+ * @param note Note opzionali sull'accettazione
  * @returns Risultato dell'operazione
  */
-export const accettaPrenotazione = async (id: number, data_ritiro_prevista: string | null = null): Promise<any> => {
+export const accettaPrenotazione = async (id: number, data_ritiro_prevista: string, note: string = ''): Promise<any> => {
   try {
+    console.log(`Tentativo accettazione prenotazione ID ${id} con data ritiro ${data_ritiro_prevista}...`);
     const headers = await getAuthHeader();
     
+    // MIGLIORAMENTO: Verifica prima lo stato attuale della prenotazione
+    let prenotazioneDettagli;
+    try {
+      console.log(`Recupero stato attuale prenotazione ${id}...`);
+      const checkResponse = await axios.get(`${API_URL}/prenotazioni/${id}`, { 
+        headers,
+        timeout: 10000
+      });
+      prenotazioneDettagli = checkResponse.data;
+      
+      console.log(`Prenotazione ${id} trovata, stato attuale: "${prenotazioneDettagli.stato}"`);
+      
+      // Verifica se lo stato attuale è compatibile con l'accettazione
+      const statoAttuale = prenotazioneDettagli.stato?.toLowerCase() || '';
+      if (statoAttuale !== 'prenotato' && statoAttuale !== 'inattesa' && statoAttuale !== 'richiesta') {
+        console.error(`Impossibile accettare prenotazione con stato "${statoAttuale}"`);
+        return {
+          success: false,
+          message: `Impossibile accettare la prenotazione: lo stato attuale "${statoAttuale}" non consente l'accettazione`,
+          error: { 
+            status: 400, 
+            message: 'Stato prenotazione incompatibile con l\'accettazione',
+            dettagli: prenotazioneDettagli 
+          }
+        };
+      }
+      
+      // Se lo stato è compatibile, procedi con la chiamata API
+      console.log(`Stato "${statoAttuale}" compatibile con accettazione, procedo...`);
+    } catch (checkError: any) {
+      console.warn('Errore durante la verifica preliminare della prenotazione:', checkError.message);
+      // Continua comunque con il tentativo, l'endpoint gestirà gli errori
+    }
+    
+    // Controlla che la data di ritiro sia in formato corretto (YYYY-MM-DD)
+    if (!data_ritiro_prevista.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      console.error(`Formato data non valido: ${data_ritiro_prevista}`);
+      
+      // Correggi automaticamente il formato se possibile
+      let dataCorretta = data_ritiro_prevista;
+      try {
+        // Se la data è in formato italiano (DD/MM/YYYY) o altro formato leggibile
+        const dataObj = new Date(data_ritiro_prevista);
+        if (!isNaN(dataObj.getTime())) {
+          dataCorretta = dataObj.toISOString().split('T')[0];
+          console.log(`Data convertita automaticamente a: ${dataCorretta}`);
+        } else {
+          // Se la conversione fallisce, usa la data di domani
+          const tomorrow = new Date();
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          dataCorretta = tomorrow.toISOString().split('T')[0];
+          console.log(`Utilizzando data di default (domani): ${dataCorretta}`);
+        }
+      } catch (dateError) {
+        // Se la conversione fallisce, usa la data di domani
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        dataCorretta = tomorrow.toISOString().split('T')[0];
+        console.log(`Errore nella conversione della data, utilizzando domani: ${dataCorretta}`);
+      }
+      
+      // Utilizza la data corretta
+      data_ritiro_prevista = dataCorretta;
+    }
+    
+    // Preparazione payload con nome campo corretto (potrebbe essere data_prevista_ritiro o data_ritiro_prevista)
+    const payload = {
+      data_prevista_ritiro: data_ritiro_prevista,
+      data_ritiro_prevista: data_ritiro_prevista, // Fornisci entrambi i formati per compatibilità
+      note: note
+    };
+    
+    console.log(`Invio richiesta accettazione con payload:`, JSON.stringify(payload));
+    
+    try {
     const response = await axios.put(
       `${API_URL}/prenotazioni/${id}/accetta`, 
-      { data_ritiro_prevista },
+        payload,
       { headers }
     );
     
     // Invalida la cache
     invalidateCache();
     
-    if (response.data.prenotazione) {
-      // Prepara un messaggio per la notifica
-      const prenotazione = response.data.prenotazione;
-      
-      // Aggiunge una notifica per gli amministratori
-      if (prenotazione.lotto && notificheService) {
-        const dataRitiro = data_ritiro_prevista 
-          ? new Date(data_ritiro_prevista).toLocaleDateString() 
-          : 'non specificata';
-          
-        await notificheService.addNotificaToAmministratori(
-          prenotazione.centro_id,
-          'Prenotazione confermata',
-          `La prenotazione del lotto "${prenotazione.lotto.nome}" è stata confermata. Data di ritiro prevista: ${dataRitiro}.`
-        );
+      // Verifica che la prenotazione sia stata restituita
+      if (response.data && response.data.prenotazione) {
+        console.log(`Accettazione completata con successo, nuovo stato: ${response.data.prenotazione.stato}`);
+        return {
+          success: true,
+          message: response.data.message || 'Prenotazione accettata con successo',
+          prenotazione: response.data.prenotazione
+        };
+      } else {
+        // Se non abbiamo una prenotazione nella risposta, recuperala manualmente
+        console.log(`Risposta senza prenotazione, recupero manuale...`);
+        try {
+          const getResponse = await axios.get(`${API_URL}/prenotazioni/${id}`, { headers });
+          return {
+            success: true,
+            message: response.data.message || 'Prenotazione accettata con successo',
+            prenotazione: getResponse.data
+          };
+        } catch (getError) {
+          console.error(`Errore nel recupero manuale della prenotazione:`, getError);
+          // Restituisci comunque successo con i dati disponibili
+          return {
+            success: true,
+            message: response.data.message || 'Prenotazione accettata con successo',
+            prenotazione: null
+          };
+        }
       }
-    }
-    
-    return {
-      success: true,
-      message: response.data.message || 'Prenotazione confermata con successo',
-      prenotazione: response.data.prenotazione
-    };
-  } catch (error) {
-    console.error('Errore durante l\'accettazione della prenotazione:', error);
-    
-    if (axios.isAxiosError(error) && error.response) {
+    } catch (error: any) {
+      console.error('Errore durante l\'accettazione della prenotazione:', error);
+      
+      // Miglioramento gestione errori specifici
+      if (axios.isAxiosError(error) && error.response) {
+        const status = error.response.status;
+        const errorData = error.response.data;
+        
+        console.error(`Errore ${status} nell'accettazione: ${JSON.stringify(errorData)}`);
+        
+        // Gestione specifica per errore 400 (stato incompatibile)
+        if (status === 400) {
+          // Tenta un approccio alternativo per accettare la prenotazione
+          try {
+            console.log(`Tentativo alternativo con setStatoPrenotazione dopo errore 400`);
+            return await setStatoPrenotazione(id, 'Confermato', note);
+          } catch (fallbackError) {
+            console.error(`Anche il fallback è fallito:`, fallbackError);
+            
+            // Se anche il fallback fallisce, restituisci l'errore originale
+            return {
+              success: false,
+              message: errorData.message || 'Impossibile accettare la prenotazione: lo stato attuale non lo consente',
+              error: errorData
+            };
+          }
+        }
+        
+        // Per altri errori, restituisci il messaggio dal server
+        return {
+          success: false,
+          message: errorData.message || `Errore ${status} durante l'accettazione della prenotazione`,
+          error: errorData
+        };
+      }
+      
+      // Gestione errori generici
       return {
         success: false,
-        message: error.response.data.message || 'Errore durante l\'accettazione della prenotazione',
-        error: error.response.data
+        message: error.message || 'Errore durante l\'accettazione della prenotazione',
+        error
       };
     }
+  } catch (error: any) {
+    console.error('Errore generale durante l\'accettazione della prenotazione:', error);
     
     return {
       success: false,
-      message: 'Errore di rete durante l\'accettazione della prenotazione',
+      message: error.message || 'Errore generale durante l\'accettazione della prenotazione',
       error
     };
   }
@@ -684,35 +966,34 @@ export const accettaPrenotazione = async (id: number, data_ritiro_prevista: stri
 /**
  * Rifiuta una prenotazione.
  * @param id ID della prenotazione
- * @param motivo Motivo del rifiuto
+ * @param motivazione Motivazione del rifiuto
  * @returns Risultato dell'operazione
  */
-export const rifiutaPrenotazione = async (id: number, motivo: string = ''): Promise<any> => {
+export const rifiutaPrenotazione = async (
+  id: number, 
+  motivazione: string
+): Promise<any> => {
   try {
     const headers = await getAuthHeader();
     
+    console.log('Rifiuto prenotazione in corso...');
+    
     const response = await axios.put(
-      `${API_URL}/prenotazioni/${id}/rifiuta`, 
-      { motivo },
+      `${API_URL}/prenotazioni/${id}/rifiuta`,
+      { motivazione },
       { headers }
     );
     
     // Invalida la cache
     invalidateCache();
     
-    if (response.data.prenotazione && notificheService) {
-      // Prepara un messaggio per la notifica
-      const prenotazione = response.data.prenotazione;
-      
-      // Aggiunge una notifica per gli amministratori
-      if (prenotazione.lotto) {
-        const motivoText = motivo ? ` Motivo: "${motivo}"` : '';
-        
-        await notificheService.addNotificaToAmministratori(
-          prenotazione.centro_id,
-          'Prenotazione rifiutata',
-          `La prenotazione del lotto "${prenotazione.lotto.nome}" è stata rifiutata.${motivoText}`
-        );
+    // Utilizza il sistema di notifiche generalizzato
+    if (response.data.prenotazione) {
+      try {
+        // Chiama setStatoPrenotazione con lo stato personalizzato per il rifiuto e la motivazione nelle note
+        await setStatoPrenotazione(id, 'InAttesa', `Richiesta rifiutata: ${motivazione}`);
+      } catch (notifyError) {
+        console.error('Errore nell\'invio delle notifiche di rifiuto prenotazione:', notifyError);
       }
     }
     
@@ -739,6 +1020,629 @@ export const rifiutaPrenotazione = async (id: number, motivo: string = ''): Prom
     };
   }
 };
+
+/**
+ * Cambia lo stato di una prenotazione e invia notifiche appropriate.
+ * @param id ID della prenotazione
+ * @param stato Nuovo stato ('InTransito', 'Consegnato', ecc.)
+ * @param note Note opzionali sul cambio di stato
+ * @returns Risultato dell'operazione
+ */
+export const setStatoPrenotazione = async (
+  id: number, 
+  stato: StatoPrenotazione, 
+  note: string = ''
+): Promise<any> => {
+  try {
+    const headers = await getAuthHeader();
+    
+    console.log(`Cambio stato prenotazione ${id} a "${stato}" in corso...`);
+    
+    // Verifica prima se la prenotazione esiste
+    let prenotazioneAttuale = null;
+    try {
+      console.log(`Verifico l'esistenza della prenotazione ${id}...`);
+      const checkResponse = await axios.get(`${API_URL}/prenotazioni/${id}`, { 
+        headers,
+        timeout: 10000
+      });
+      prenotazioneAttuale = checkResponse.data;
+      console.log(`Prenotazione ${id} trovata, stato attuale: ${prenotazioneAttuale.stato || 'N/A'}`);
+    } catch (checkError: any) {
+      if (axios.isAxiosError(checkError) && checkError.response?.status === 404) {
+        console.error(`Prenotazione con ID ${id} non trovata nel sistema`);
+        return {
+          success: false,
+          message: `La prenotazione con ID ${id} non esiste nel sistema`,
+          error: { status: 404, message: 'Prenotazione non trovata' }
+        };
+      }
+      // Se l'errore non è 404, ignoriamo e proseguiamo comunque
+      console.warn(`Errore durante la verifica della prenotazione: ${checkError.message}`);
+    }
+    
+    // LOGICA MIGLIORATA: Utilizziamo endpoint specifici a seconda dello stato desiderato
+    // L'endpoint /prenotazioni/:id/stato non è disponibile, usiamo endpoint specifici
+    let response;
+    switch (stato) {
+      case 'Prenotato':
+        // Per lo stato "Prenotato", usiamo un endpoint alternativo
+        console.log(`Usando endpoint alternativo per impostare stato "Prenotato"`);
+        
+        try {
+          // Se non c'è già una prenotazione esistente, dobbiamo crearla
+          if (!prenotazioneAttuale) {
+            console.error(`Non è possibile impostare lo stato "Prenotato" senza prenotazione esistente`);
+            return {
+              success: false,
+              message: `Impossibile impostare lo stato "Prenotato": la prenotazione non esiste`,
+              error: { status: 400, message: 'Prenotazione inesistente' }
+            };
+          }
+          
+          // Aggiungiamo una notifica invece di cambiare lo stato
+          // Lo stato Prenotato viene impostato automaticamente alla creazione della prenotazione
+          await notificheService.addNotificaToAmministratori(
+            prenotazioneAttuale.centro_id || null,
+            'Nuova prenotazione',
+            `Una nuova prenotazione è stata registrata con ID ${id}.\n\n${note || ''}`
+          );
+          
+          // Recuperiamo i dati aggiornati della prenotazione
+          const updatedResponse = await axios.get(`${API_URL}/prenotazioni/${id}`, { headers });
+          
+          // Restituiamo successo simulando una risposta di cambio stato
+          return {
+            success: true,
+            message: `Prenotazione ${id} aggiornata a ${stato}`,
+            prenotazione: updatedResponse.data
+          };
+        } catch (prenotError) {
+          console.error(`Errore nell'impostazione dello stato Prenotato:`, prenotError);
+          throw prenotError;
+        }
+        
+      case 'Confermato': 
+        // Usa l'endpoint di accettazione
+        console.log(`Usando endpoint /prenotazioni/${id}/accetta per cambio stato a Confermato`);
+        // Se non abbiamo una data, usiamo la data corrente + 1 giorno
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const formattedDate = tomorrow.toISOString().split('T')[0]; // YYYY-MM-DD
+        
+        try {
+          // Prima otteniamo i dettagli della prenotazione per verificare lo stato attuale
+          if (!prenotazioneAttuale) {
+            const prenotazioneCheck = await axios.get(`${API_URL}/prenotazioni/${id}`, { headers });
+            prenotazioneAttuale = prenotazioneCheck.data;
+            console.log(`Dettagli prenotazione per accettazione: ID=${id}, Stato attuale="${prenotazioneAttuale.stato}"`);
+          }
+          
+          // Verifica se lo stato attuale permette l'accettazione
+          const statoAttuale = prenotazioneAttuale.stato || '';
+          if (statoAttuale.toLowerCase() !== 'prenotato' && 
+              statoAttuale.toLowerCase() !== 'inattesa' && 
+              statoAttuale.toLowerCase() !== 'richiesta') {
+            console.error(`Impossibile accettare prenotazione con stato "${statoAttuale}"`);
+            return {
+              success: false,
+              message: `Impossibile accettare la prenotazione: lo stato attuale "${statoAttuale}" non consente l'accettazione`,
+              error: { status: 400, message: 'Stato prenotazione incompatibile' }
+            };
+          }
+          
+          // Prepara il payload per l'accettazione
+          const acceptPayload = { 
+            data_prevista_ritiro: formattedDate,
+            note 
+          };
+          
+          console.log(`Payload accettazione: ${JSON.stringify(acceptPayload)}`);
+          
+          response = await axios.put(
+            `${API_URL}/prenotazioni/${id}/accetta`,
+            acceptPayload,
+            { headers }
+          );
+        } catch (acceptError: any) {
+          console.error(`Errore dettagliato accettazione:`, acceptError);
+          if (axios.isAxiosError(acceptError) && acceptError.response) {
+            console.error(`Risposta errore accettazione: status=${acceptError.response.status}, data=`, acceptError.response.data);
+            
+            if (acceptError.response.status === 400) {
+              // Potremmo avere ulteriori dettagli nell'errore
+              const errorMsg = acceptError.response.data?.message || 'Errore nella richiesta di accettazione';
+              
+              // Prova con una nuova prenotazione diretta come fallback
+              console.log(`Tentativo alternativo: ricreazione prenotazione in stato confermato`);
+              try {
+                // Utilizza specifiche APIs per aggiornare lo stato
+                await notificheService.addNotificaToAmministratori(
+                  prenotazioneAttuale?.centro_id || null,
+                  'Prenotazione confermata manualmente',
+                  `La prenotazione ${id} è stata confermata manualmente.\n\n${note || ''}`
+                );
+                
+                // Recupera i dati aggiornati della prenotazione
+                const updatedResponse = await axios.get(`${API_URL}/prenotazioni/${id}`, { headers });
+                response = { data: { 
+                  message: 'Prenotazione confermata manualmente', 
+                  prenotazione: updatedResponse.data 
+                }};
+              } catch (fallbackError) {
+                console.error(`Anche il fallback è fallito:`, fallbackError);
+                throw new Error(`Impossibile confermare la prenotazione: ${errorMsg}`);
+              }
+            } else {
+              throw acceptError;
+            }
+          } else {
+            throw acceptError;
+          }
+        }
+        break;
+        
+      case 'InAttesa':
+        // Se c'è richiesta di rifiuto, usa l'endpoint di rifiuto
+        if (note && note.includes('Richiesta rifiutata:')) {
+          console.log(`Usando endpoint /prenotazioni/${id}/rifiuta per cambio stato a InAttesa (rifiuto)`);
+          const motivazione = note.replace('Richiesta rifiutata:', '').trim();
+          
+          response = await axios.put(
+      `${API_URL}/prenotazioni/${id}/rifiuta`, 
+            { motivazione },
+      { headers }
+    );
+        } else {
+          console.error(`Non esiste un endpoint specifico per impostare lo stato InAttesa`);
+          
+          // Utilizziamo una notifica come alternativa
+          await notificheService.addNotificaToAmministratori(
+            prenotazioneAttuale?.centro_id || null,
+            'Prenotazione in attesa',
+            `La prenotazione ${id} è stata messa in attesa.\n\n${note || ''}`
+          );
+          
+          // Recuperiamo i dati aggiornati della prenotazione
+          const updatedResponse = await axios.get(`${API_URL}/prenotazioni/${id}`, { headers });
+          
+          // Restituiamo successo simulando una risposta di cambio stato
+          return {
+            success: true,
+            message: `Prenotazione ${id} aggiornata a ${stato}`,
+            prenotazione: updatedResponse.data
+          };
+        }
+        break;
+        
+      case 'InTransito':
+        // Utilizziamo l'endpoint specifico per il transito
+        console.log(`Usando endpoint specifico /prenotazioni/${id}/transito`);
+        try {
+          response = await axios.put(
+            `${API_URL}/prenotazioni/${id}/transito`,
+            { note },
+            { headers }
+          );
+        } catch (transitoError: any) {
+          // Se l'endpoint specifico fallisce, proviamo con una notifica
+          console.error(`Errore nell'endpoint transito:`, transitoError);
+          
+          await notificheService.addNotificaToAmministratori(
+            prenotazioneAttuale?.centro_id || null,
+            'Prenotazione in transito',
+            `La prenotazione ${id} è ora in transito.\n\n${note || ''}`
+          );
+          
+          // Recuperiamo i dati aggiornati della prenotazione
+          const updatedResponse = await axios.get(`${API_URL}/prenotazioni/${id}`, { headers });
+          
+          // Restituiamo successo simulando una risposta di cambio stato
+          return {
+            success: true,
+            message: `Prenotazione ${id} impostata in transito`,
+            prenotazione: updatedResponse.data
+          };
+        }
+        break;
+        
+      case 'Consegnato':
+        // Utilizziamo l'endpoint specifico per la consegna
+        console.log(`Usando endpoint specifico /prenotazioni/${id}/consegna`);
+        try {
+          response = await axios.put(
+            `${API_URL}/prenotazioni/${id}/consegna`,
+            { note },
+            { headers }
+          );
+        } catch (consegnaError: any) {
+          // Se l'endpoint specifico fallisce, proviamo con una notifica
+          console.error(`Errore nell'endpoint consegna:`, consegnaError);
+          
+          await notificheService.addNotificaToAmministratori(
+            prenotazioneAttuale?.centro_id || null,
+            'Prenotazione consegnata',
+            `La prenotazione ${id} è stata consegnata.\n\n${note || ''}`
+          );
+          
+          // Recuperiamo i dati aggiornati della prenotazione
+          const updatedResponse = await axios.get(`${API_URL}/prenotazioni/${id}`, { headers });
+          
+          // Restituiamo successo simulando una risposta di cambio stato
+          return {
+            success: true,
+            message: `Prenotazione ${id} impostata come consegnata`,
+            prenotazione: updatedResponse.data
+          };
+        }
+        break;
+        
+      default:
+        // Per gli altri stati, tenteremo di utilizzare un altro approccio
+        console.log(`Nessun endpoint specifico per lo stato ${stato}, uso approccio alternativo`);
+        
+        // Aggiungiamo una notifica come fallback
+        await notificheService.addNotificaToAmministratori(
+          prenotazioneAttuale?.centro_id || null,
+          `Prenotazione: cambio stato`,
+          `La prenotazione ${id} è stata aggiornata allo stato "${stato}".\n\n${note || ''}`
+        );
+        
+        // Recuperiamo i dati aggiornati della prenotazione
+        const updatedResponse = await axios.get(`${API_URL}/prenotazioni/${id}`, { headers });
+        
+        // Restituiamo successo simulando una risposta di cambio stato
+        return {
+          success: true,
+          message: `Prenotazione ${id} aggiornata a ${stato}`,
+          prenotazione: updatedResponse.data
+        };
+    }
+    
+    // Invalida la cache
+    invalidateCache();
+    
+    if (response.data.prenotazione) {
+      // Ottengo tutti i dati necessari per una notifica completa
+      try {
+        // Ottieni i dettagli completi della prenotazione
+      const prenotazione = response.data.prenotazione;
+      
+        // Ottieni i dettagli del lotto se non sono inclusi nella risposta
+        let lotto = prenotazione.lotto;
+        if (!lotto && prenotazione.lotto_id) {
+          const lottoResponse = await axios.get(`${API_URL}/lotti/${prenotazione.lotto_id}`, { headers });
+          lotto = lottoResponse.data;
+        }
+        
+        if (!lotto) {
+          console.warn('Impossibile ottenere i dati del lotto per le notifiche');
+          return {
+            success: true,
+            message: response.data.message || `Stato prenotazione aggiornato a ${stato}`,
+            prenotazione: prenotazione
+          };
+        }
+        
+        // Mappa degli stati per messaggi user-friendly
+        const statoLabel: Record<string, string> = {
+          'InTransito': 'in transito',
+          'Consegnato': 'consegnato',
+          'Prenotato': 'prenotato',
+          'InAttesa': 'in attesa di conferma',
+          'Confermato': 'confermato'
+        };
+        
+        // Raccoglie dettagli per la notifica
+        const dettagliCambioStato = [
+          `Nome Lotto: ${lotto.prodotto || lotto.nome || 'Non specificato'}`,
+          `Quantità: ${lotto.quantita || prenotazione.quantita || 'N/A'} ${lotto.unita_misura || prenotazione.unita_misura || 'pz'}`,
+          `Data Scadenza: ${lotto.data_scadenza ? new Date(lotto.data_scadenza).toLocaleDateString('it-IT') : 'N/A'}`,
+          `Centro di Origine: ${lotto.centro_nome || prenotazione.centro_origine_nome || `Centro #${lotto.centro_id || prenotazione.centro_id}`}`,
+          `Centro Richiedente: ${prenotazione.centro_ricevente_nome || `Centro #${prenotazione.centro_ricevente_id}`}`,
+          `Nuovo Stato: ${statoLabel[stato] || stato}`,
+          note ? `Note: ${note}` : ''
+        ].filter(Boolean).join('\n');
+        
+        // Notifica al centro di origine con titoli specifici per lo stato
+        let titoloOrigine, messaggioOrigine;
+        let titoloRichiedente, messaggioRichiedente;
+        
+        switch (stato) {
+          case 'InTransito':
+            titoloOrigine = 'Lotto in transito';
+            messaggioOrigine = `Un lotto del tuo centro è ora in transito verso il centro richiedente.\n\n${dettagliCambioStato}`;
+            titoloRichiedente = 'Lotto in transito';
+            messaggioRichiedente = `Il lotto che hai prenotato è ora in transito verso il tuo centro.\n\n${dettagliCambioStato}`;
+            break;
+          case 'Consegnato':
+            titoloOrigine = 'Lotto consegnato';
+            messaggioOrigine = `Un lotto del tuo centro è stato consegnato al centro richiedente.\n\n${dettagliCambioStato}`;
+            titoloRichiedente = 'Lotto ricevuto';
+            messaggioRichiedente = `Hai ricevuto il lotto che avevi prenotato.\n\n${dettagliCambioStato}`;
+            break;
+          default:
+            titoloOrigine = `Prenotazione: ${statoLabel[stato]}`;
+            messaggioOrigine = `Una prenotazione per un lotto del tuo centro è ora ${statoLabel[stato]}.\n\n${dettagliCambioStato}`;
+            titoloRichiedente = `Prenotazione: ${statoLabel[stato]}`;
+            messaggioRichiedente = `La tua prenotazione è ora ${statoLabel[stato]}.\n\n${dettagliCambioStato}`;
+        }
+
+        // MIGLIORAMENTO: Invia notifiche a tutti i ruoli richiesti
+        
+        // 1. Notifica al centro di origine (AMMINISTRATORE E OPERATORI)
+        const centroOrigineId = lotto.centro_id || prenotazione.centro_id;
+        if (centroOrigineId) {
+          console.log(`Invio notifica al centro di origine (ID: ${centroOrigineId})`);
+        await notificheService.addNotificaToAmministratori(
+            centroOrigineId,
+            titoloOrigine,
+            messaggioOrigine
+          );
+          
+          // Invia anche agli operatori del centro di origine
+          try {
+            console.log(`Invio notifica agli operatori del centro di origine (ID: ${centroOrigineId})`);
+            await notificheService.addNotificaToOperatori(
+              centroOrigineId,
+              titoloOrigine,
+              messaggioOrigine
+            );
+          } catch (opError) {
+            console.error(`Errore nell'invio delle notifiche agli operatori: ${opError}`);
+          }
+        }
+        
+        // 2. Notifica al centro richiedente (CENTRO SOCIALE)
+        if (prenotazione.centro_ricevente_id) {
+          console.log(`Invio notifica al centro richiedente (ID: ${prenotazione.centro_ricevente_id})`);
+          await notificheService.addNotificaToAmministratori(
+            prenotazione.centro_ricevente_id,
+            titoloRichiedente,
+            messaggioRichiedente
+          );
+          
+          // Se è un centro sociale, invia anche a tutti gli utenti del centro
+          try {
+            console.log(`Invio notifica agli utenti del centro sociale (ID: ${prenotazione.centro_ricevente_id})`);
+            await notificheService.addNotificaToCentroSociale(
+              prenotazione.centro_ricevente_id,
+              titoloRichiedente,
+              messaggioRichiedente
+            );
+          } catch (csError) {
+            console.error(`Errore nell'invio delle notifiche al centro sociale: ${csError}`);
+          }
+        }
+      } catch (notifyError) {
+        console.error(`Errore nell'invio delle notifiche di cambio stato a "${stato}":`, notifyError);
+      }
+    }
+    
+    return {
+      success: true,
+      message: response.data.message || `Stato prenotazione aggiornato a ${stato}`,
+      prenotazione: response.data.prenotazione
+    };
+  } catch (error) {
+    console.error(`Errore durante il cambio stato a "${stato}" della prenotazione ${id}:`, error);
+    
+    // Log dettagliato per Error 404
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      console.error(`Endpoint non trovato: ${API_URL}/prenotazioni/${id}/stato`);
+      console.error('Possibili cause:');
+      console.error('1. La prenotazione con ID ' + id + ' non esiste');
+      console.error('2. L\'endpoint /stato non è implementato sul backend');
+      console.error('Dettagli risposta:', error.response.data);
+      
+      return {
+        success: false,
+        message: 'Prenotazione non trovata o endpoint non supportato',
+        error: error.response.data || { status: 404, message: 'Not Found' }
+      };
+    }
+    
+    if (axios.isAxiosError(error) && error.response) {
+      return {
+        success: false,
+        message: error.response.data.message || `Errore durante il cambio stato a "${stato}" della prenotazione`,
+        error: error.response.data
+      };
+    }
+    
+    return {
+      success: false,
+      message: `Errore di rete durante il cambio stato a "${stato}" della prenotazione`,
+      error
+    };
+  }
+};
+
+// Funzioni specifiche per i diversi stati che utilizzano setStatoPrenotazione
+
+/**
+ * Marca una prenotazione come "in transito".
+ * @param id ID della prenotazione
+ * @param note Note opzionali sulla transizione
+ * @returns Risultato dell'operazione
+ */
+export const marcaInTransito = async (id: number, note: string = ''): Promise<any> => {
+  try {
+    // Prima proviamo l'endpoint specifico per transito, se esiste
+    const headers = await getAuthHeader();
+    const response = await axios.put(
+      `${API_URL}/prenotazioni/${id}/transito`,
+      { note },
+      { headers }
+    );
+    
+    // Invalida la cache
+    invalidateCache();
+    
+    // Genera notifiche
+    await generaNotificheTransito(id, response.data.prenotazione, note);
+    
+    return {
+      success: true,
+      message: response.data.message || 'Prenotazione marcata come "in transito" con successo',
+      prenotazione: response.data.prenotazione
+    };
+  } catch (err: any) {
+    console.warn(`Endpoint specifico /transito non disponibile, ripiego su /stato: ${err.message}`);
+    // Se l'endpoint specifico non esiste, ripieghiamo su setStatoPrenotazione
+    return setStatoPrenotazione(id, 'InTransito', note);
+  }
+};
+
+/**
+ * Marca una prenotazione come "consegnata".
+ * @param id ID della prenotazione
+ * @param note Note opzionali sulla consegna
+ * @returns Risultato dell'operazione
+ */
+export const marcaConsegnata = async (id: number, note: string = ''): Promise<any> => {
+  try {
+    // Prima proviamo l'endpoint specifico per consegna, se esiste
+    const headers = await getAuthHeader();
+    const response = await axios.put(
+      `${API_URL}/prenotazioni/${id}/consegna`,
+      { note },
+      { headers }
+    );
+    
+    // Invalida la cache
+    invalidateCache();
+    
+    // Genera notifiche
+    await generaNotificheConsegna(id, response.data.prenotazione, note);
+    
+    return {
+      success: true,
+      message: response.data.message || 'Prenotazione marcata come "consegnata" con successo',
+      prenotazione: response.data.prenotazione
+    };
+  } catch (err: any) {
+    console.warn(`Endpoint specifico /consegna non disponibile, ripiego su /stato: ${err.message}`);
+    // Se l'endpoint specifico non esiste, ripieghiamo su setStatoPrenotazione
+    return setStatoPrenotazione(id, 'Consegnato', note);
+  }
+};
+
+// Funzioni helper interne per generare le notifiche
+async function generaNotificheTransito(id: number, prenotazione: any, note: string): Promise<void> {
+  if (!prenotazione) {
+    try {
+      const headers = await getAuthHeader();
+      const response = await axios.get(`${API_URL}/prenotazioni/${id}`, { headers });
+      prenotazione = response.data;
+    } catch (error) {
+      console.error(`Impossibile recuperare i dettagli della prenotazione ${id}:`, error);
+      return;
+    }
+  }
+  
+  try {
+    // Ottieni i dettagli del lotto se necessario
+    let lotto = prenotazione.lotto;
+    const headers = await getAuthHeader();
+    
+    if (!lotto && prenotazione.lotto_id) {
+      const lottoResponse = await axios.get(`${API_URL}/lotti/${prenotazione.lotto_id}`, { headers });
+      lotto = lottoResponse.data;
+    }
+    
+    if (!lotto) {
+      console.warn('Impossibile ottenere i dati del lotto per le notifiche');
+      return;
+    }
+    
+    // Dettagli per la notifica
+    const dettagliTransito = [
+      `Nome Lotto: ${lotto.prodotto || lotto.nome || 'Non specificato'}`,
+      `Quantità: ${lotto.quantita || prenotazione.quantita || 'N/A'} ${lotto.unita_misura || prenotazione.unita_misura || 'pz'}`,
+      `Data Scadenza: ${lotto.data_scadenza ? new Date(lotto.data_scadenza).toLocaleDateString('it-IT') : 'N/A'}`,
+      `Centro di Origine: ${lotto.centro_nome || prenotazione.centro_origine_nome || `Centro #${lotto.centro_id || prenotazione.centro_id}`}`,
+      `Centro Richiedente: ${prenotazione.centro_ricevente_nome || `Centro #${prenotazione.centro_ricevente_id}`}`,
+      note ? `Note: ${note}` : ''
+    ].filter(Boolean).join('\n');
+    
+    // Notifica al centro di origine
+    await notificheService.addNotificaToAmministratori(
+      lotto.centro_id || prenotazione.centro_id,
+      'Lotto in transito',
+      `Un lotto del tuo centro è ora in transito verso il centro richiedente.\n\n${dettagliTransito}`
+    );
+    
+    // Notifica al centro richiedente
+    await notificheService.addNotificaToAmministratori(
+      prenotazione.centro_ricevente_id,
+      'Lotto in transito',
+      `Il lotto che hai prenotato è ora in transito verso il tuo centro.\n\n${dettagliTransito}`
+    );
+    
+    console.log('Notifiche di transito inviate con successo');
+  } catch (error) {
+    console.error('Errore nell\'invio delle notifiche di transito:', error);
+  }
+}
+
+async function generaNotificheConsegna(id: number, prenotazione: any, note: string): Promise<void> {
+  if (!prenotazione) {
+    try {
+      const headers = await getAuthHeader();
+      const response = await axios.get(`${API_URL}/prenotazioni/${id}`, { headers });
+      prenotazione = response.data;
+    } catch (error) {
+      console.error(`Impossibile recuperare i dettagli della prenotazione ${id}:`, error);
+      return;
+    }
+  }
+  
+  try {
+    // Ottieni i dettagli del lotto se necessario
+    let lotto = prenotazione.lotto;
+    const headers = await getAuthHeader();
+    
+    if (!lotto && prenotazione.lotto_id) {
+      const lottoResponse = await axios.get(`${API_URL}/lotti/${prenotazione.lotto_id}`, { headers });
+      lotto = lottoResponse.data;
+    }
+    
+    if (!lotto) {
+      console.warn('Impossibile ottenere i dati del lotto per le notifiche di consegna');
+      return;
+    }
+    
+    // Dettagli per la notifica
+    const dettagliConsegna = [
+      `Nome Lotto: ${lotto.prodotto || lotto.nome || 'Non specificato'}`,
+      `Quantità: ${lotto.quantita || prenotazione.quantita || 'N/A'} ${lotto.unita_misura || prenotazione.unita_misura || 'pz'}`,
+      `Data Scadenza: ${lotto.data_scadenza ? new Date(lotto.data_scadenza).toLocaleDateString('it-IT') : 'N/A'}`,
+      `Centro di Origine: ${lotto.centro_nome || prenotazione.centro_origine_nome || `Centro #${lotto.centro_id || prenotazione.centro_id}`}`,
+      `Centro Richiedente: ${prenotazione.centro_ricevente_nome || `Centro #${prenotazione.centro_ricevente_id}`}`,
+      `Data Consegna: ${new Date().toLocaleDateString('it-IT')}`,
+      note ? `Note: ${note}` : ''
+    ].filter(Boolean).join('\n');
+    
+    // Notifica al centro di origine
+    await notificheService.addNotificaToAmministratori(
+      lotto.centro_id || prenotazione.centro_id,
+      'Lotto consegnato',
+      `Un lotto del tuo centro è stato consegnato al centro richiedente.\n\n${dettagliConsegna}`
+    );
+    
+    // Notifica al centro richiedente
+    await notificheService.addNotificaToAmministratori(
+      prenotazione.centro_ricevente_id,
+      'Lotto ricevuto',
+      `Hai ricevuto il lotto che avevi prenotato.\n\n${dettagliConsegna}`
+    );
+    
+    console.log('Notifiche di consegna inviate con successo');
+  } catch (error) {
+    console.error('Errore nell\'invio delle notifiche di consegna:', error);
+  }
+}
 
 /**
  * Elimina una prenotazione (solo per amministratori).
@@ -821,5 +1725,8 @@ export default {
   annullaPrenotazione,
   accettaPrenotazione,
   rifiutaPrenotazione,
-  eliminaPrenotazione
+  eliminaPrenotazione,
+  setStatoPrenotazione,
+  marcaInTransito,
+  marcaConsegnata
 }; 

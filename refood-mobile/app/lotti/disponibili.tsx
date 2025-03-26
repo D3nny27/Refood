@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, FlatList, RefreshControl, Alert, TouchableOpacity } from 'react-native';
-import { Text, Button, Card, Title, Paragraph, ProgressBar, Badge, Chip, Searchbar, FAB, IconButton, ActivityIndicator, Modal, Portal, Dialog, TextInput } from 'react-native-paper';
+import { View, StyleSheet, FlatList, RefreshControl, Alert, TouchableOpacity, Platform } from 'react-native';
+import { Text, Button, Card, Title, Paragraph, ProgressBar, Badge, Chip, Searchbar, FAB, IconButton, ActivityIndicator, Modal, Portal, Dialog, TextInput, Surface, Divider } from 'react-native-paper';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { format, isAfter, isBefore, addDays, parseISO } from 'date-fns';
@@ -8,11 +8,12 @@ import { it } from 'date-fns/locale';
 import { getLottiDisponibili } from '../../src/services/lottiService';
 import { Lotto } from '../../src/services/lottiService';
 import { prenotaLotto } from '../../src/services/prenotazioniService';
-import { PRIMARY_COLOR, RUOLI } from '../../src/config/constants';
+import { PRIMARY_COLOR, RUOLI, API_URL, STORAGE_KEYS } from '../../src/config/constants';
 import { useAuth } from '../../src/context/AuthContext';
 import Toast from 'react-native-toast-message';
 import { MapPin, Clock, Calendar, Package, Check, X, AlertCircle, ShoppingCart } from 'react-native-feather';
 import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface Filtri {
   centro_id?: number;
@@ -23,12 +24,17 @@ interface Filtri {
   stato?: string;
 }
 
+interface LottoWithCategoria extends Lotto {
+  categoria?: string;
+  _relevanceScore?: number;
+}
+
 export default function LottiDisponibiliScreen() {
   const { user } = useAuth();
   const router = useRouter();
   
-  const [lotti, setLotti] = useState<Lotto[]>([]);
-  const [lottiNonFiltrati, setLottiNonFiltrati] = useState<Lotto[]>([]);
+  const [lotti, setLotti] = useState<LottoWithCategoria[]>([]);
+  const [lottiNonFiltrati, setLottiNonFiltrati] = useState<LottoWithCategoria[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +43,7 @@ export default function LottiDisponibiliScreen() {
   const [filtriVisibili, setFiltriVisibili] = useState(false);
   
   // Stati per la prenotazione
-  const [lottoSelezionato, setLottoSelezionato] = useState<Lotto | null>(null);
+  const [lottoSelezionato, setLottoSelezionato] = useState<LottoWithCategoria | null>(null);
   const [prenotazioneModalVisible, setPrenotazioneModalVisible] = useState(false);
   const [dataRitiroPrevista, setDataRitiroPrevista] = useState<Date>(addDays(new Date(), 1));
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -92,8 +98,20 @@ export default function LottiDisponibiliScreen() {
       const apiFiltri = { ...filtri };
       delete apiFiltri.cerca; // Rimuovi il filtro 'cerca' perché lo applicheremo localmente
       
+      // Verifica se l'utente è amministratore o operatore
+      const isAdmin = user?.ruolo === 'Amministratore';
+      const isOperatore = user?.ruolo === 'Operatore';
+      const mostraTutti = isAdmin || isOperatore;
+      
       try {
-        const result = await getLottiDisponibili(apiFiltri, forceRefresh);
+        // Questa chiamata include il parametro mostraTutti per amministratori e operatori
+        const result = await getLottiDisponibili(apiFiltri, forceRefresh, mostraTutti);
+        
+        if (mostraTutti) {
+          console.log(`Ricevuti ${result.lotti.length} lotti (inclusi quelli già prenotati)`);
+        } else {
+          console.log(`Ricevuti ${result.lotti.length} lotti disponibili (filtrati per prenotazioni attive)`);
+        }
         
         // Ordina i lotti per data di scadenza (i più vicini alla scadenza prima)
         const lottiOrdinati = result.lotti.sort((a: Lotto, b: Lotto) => {
@@ -215,50 +233,86 @@ export default function LottiDisponibiliScreen() {
   
   // IMPLEMENTAZIONE FILTRO LOCALE PER LA RICERCA CON DEBOUNCE
   const handleSearchChange = (text: string) => {
-    // Aggiorna subito il testo visualizzato
     setSearchQuery(text);
     
-    // Cancella eventuali timer precedenti
+    // Cancella il timeout precedente se esiste
     if (debounceTimeout) {
       clearTimeout(debounceTimeout);
     }
     
-    // Esegui la ricerca dopo un breve ritardo (200ms)
-    const timeoutId = setTimeout(() => {
-      console.log('Ricerca locale per:', text);
+    // Imposta un nuovo timeout per il debounce (300ms)
+    const timeout = setTimeout(() => {
+      console.log('Applicazione ricerca per:', text);
       
-      if (text.trim()) {
-        // Normalizza il testo di ricerca (rimuovi caratteri speciali)
-        const testoDaCercare = text.trim().toLowerCase()
-          .normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // rimuove accenti
+      // Se il testo di ricerca è vuoto, resetta al set di lotti filtrati dall'API
+      if (!text.trim()) {
+        setLotti(lottiNonFiltrati);
+        return;
+      }
+      
+      // Normalizza il testo di ricerca (rimuovi caratteri speciali e accenti)
+      const testoDaCercare = text.trim().toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      
+      // Filtra i lotti localmente con una ricerca più approfondita
+      const lottiFiltrati = lottiNonFiltrati.filter(lotto => {
+        // Normalizza i testi per la ricerca
+        const nome = (lotto.nome || "").toLowerCase()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const descrizione = (lotto.descrizione || "").toLowerCase()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const centroNome = (lotto.centro_nome || "").toLowerCase()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const categoria = (lotto.categoria || "").toLowerCase()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const stato = (lotto.stato || "").toLowerCase()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const unita = (lotto.unita_misura || "").toLowerCase()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         
-        // Filtra i lotti localmente
-        const lottiFiltrati = lottiNonFiltrati.filter(lotto => {
-          // Normalizza i testi per la ricerca
-          const nome = (lotto.nome || "").toLowerCase()
-            .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-          const descrizione = (lotto.descrizione || "").toLowerCase()
-            .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-          const centroNome = (lotto.centro_nome || "").toLowerCase()
-            .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-          
-          // Verifica se il testo di ricerca è contenuto in uno dei campi
-          return nome.includes(testoDaCercare) || 
+        // Verifica se il testo di ricerca è contenuto in uno dei campi principali
+        const matchPrincipale = nome.includes(testoDaCercare) || 
                  descrizione.includes(testoDaCercare) || 
                  centroNome.includes(testoDaCercare);
-        });
+                 
+        // Verifica se il testo di ricerca è contenuto in uno dei campi secondari
+        const matchSecondario = categoria.includes(testoDaCercare) || 
+                 stato.includes(testoDaCercare) || 
+                 unita.includes(testoDaCercare);
         
-        console.log(`Filtrati ${lottiFiltrati.length} lotti su ${lottiNonFiltrati.length}`);
-        setLotti(lottiFiltrati);
-      } else {
-        // Se non c'è testo di ricerca, mostra tutti i lotti
-        setLotti(lottiNonFiltrati);
-        console.log('Rimosso filtro di ricerca locale');
-      }
-    }, 200); // 200ms di debounce
+        // Diamo priorità ai match nei campi principali, ma includiamo anche i secondari
+        return matchPrincipale || matchSecondario;
+      });
+      
+      console.log(`Filtrati ${lottiFiltrati.length} lotti su ${lottiNonFiltrati.length}`);
+      
+      // Applica il filtro di evidenziazione sui risultati
+      const lottiEvidenziati = lottiFiltrati.map(lotto => {
+        // Se il termine di ricerca corrisponde esattamente a una categoria o stato,
+        // assegna un punteggio più alto per prioritizzare quei risultati
+        let score = 0;
+        
+        const categoria = (lotto.categoria || "").toLowerCase();
+        const stato = (lotto.stato || "").toLowerCase();
+        const nome = (lotto.nome || "").toLowerCase();
+        
+        if (categoria === testoDaCercare) score += 5;
+        if (stato === testoDaCercare) score += 3;
+        if (nome.includes(testoDaCercare)) score += 10;
+        
+        return { ...lotto, _relevanceScore: score };
+      }).sort((a, b) => {
+        // Ordina per punteggio di rilevanza e poi per data di scadenza
+        if (b._relevanceScore !== a._relevanceScore) {
+          return b._relevanceScore - a._relevanceScore;
+        }
+        return new Date(a.data_scadenza).getTime() - new Date(b.data_scadenza).getTime();
+      });
+      
+      setLotti(lottiEvidenziati);
+    }, 300); // Tempo di debounce: 300ms
     
-    // Salva il riferimento al timeout
-    setDebounceTimeout(timeoutId);
+    setDebounceTimeout(timeout);
   };
   
   // Funzione per cercare
@@ -385,7 +439,7 @@ export default function LottiDisponibiliScreen() {
   
   // Funzione per mostrare il modale di prenotazione
   const handlePrenotazione = (lotto: Lotto) => {
-    setLottoSelezionato(lotto);
+    setLottoSelezionato(lotto as LottoWithCategoria);
     setDataRitiroPrevista(addDays(new Date(), 1)); // Imposta la data di ritiro prevista a domani
     setNotePrenotazione('');
     setPrenotazioneModalVisible(true);
@@ -436,46 +490,65 @@ export default function LottiDisponibiliScreen() {
       if (result.success) {
         // Chiudi il modale e mostra conferma
         setPrenotazioneModalVisible(false);
+        
         Toast.show({
           type: 'success',
-          text1: 'Prenotazione completata',
-          text2: result.message || 'Lotto prenotato con successo',
-          visibilityTime: 4000,
+          text1: 'Prenotazione effettuata',
+          text2: 'La tua prenotazione è stata registrata con successo!',
+          visibilityTime: 3000,
         });
         
-        // Aggiorna la lista dei lotti
-        loadLottiDisponibili(true);
+        // Ricarica i lotti dopo la prenotazione
+        await loadLottiDisponibili(true);
         
-        // Reindirizza l'utente alla pagina delle prenotazioni dopo un breve delay
-        setTimeout(() => {
-          router.push('/prenotazioni');
-        }, 1000);
+        // Reindirizza alla pagina delle prenotazioni
+        router.push('/prenotazioni');
       } else {
-        // Controlla se il problema è la mancanza del centro_id
-        if (result.missingCentroId) {
+        // Gestione specifica degli errori di prenotazione
+        if (result.error?.message === 'Prenotazione duplicata') {
+          // Caso di prenotazione duplicata dello stesso utente
+          Toast.show({
+            type: 'info',
+            text1: 'Prenotazione già esistente',
+            text2: `Hai già una prenotazione attiva per questo lotto (Stato: ${result.error.prenotazioneEsistente?.stato}).`,
+            visibilityTime: 4000,
+          });
+        } else if (result.error?.message === 'Lotto già prenotato') {
+          // Caso di lotto già prenotato da altri
+          Toast.show({
+            type: 'error',
+            text1: 'Lotto non disponibile',
+            text2: 'Questo lotto è già stato prenotato da un altro centro',
+            visibilityTime: 3000,
+          });
+          
+          // Ricarica i lotti per rimuoverlo dalla lista
+          await loadLottiDisponibili(true);
+        } else if (result.missingCentroId) {
+          // Caso di centro_id mancante
           setShowCentroIdInput(true);
           Toast.show({
             type: 'info',
-            text1: 'Centro non trovato',
-            text2: 'Inserisci manualmente l\'ID del tuo centro per completare la prenotazione',
-            visibilityTime: 5000,
+            text1: 'ID Centro richiesto',
+            text2: 'Inserisci il codice del tuo centro per completare la prenotazione',
+            visibilityTime: 3000,
           });
         } else {
-          // Mostra errore
+          // Altri errori
           Toast.show({
             type: 'error',
-            text1: 'Errore',
-            text2: result.message || 'Impossibile completare la prenotazione',
-            visibilityTime: 4000,
+            text1: 'Errore nella prenotazione',
+            text2: result.message || 'Si è verificato un errore. Riprova più tardi.',
+            visibilityTime: 3000,
           });
         }
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Errore durante la prenotazione:', error);
       Toast.show({
         type: 'error',
         text1: 'Errore',
-        text2: error.message || 'Si è verificato un errore durante la prenotazione',
+        text2: 'Si è verificato un errore. Riprova più tardi.',
         visibilityTime: 3000,
       });
     } finally {
@@ -635,6 +708,39 @@ export default function LottiDisponibiliScreen() {
             </Button>
           </View>
           
+          <View style={styles.datePickerContainer}>
+            {Platform.OS === 'web' ? (
+              <input
+                type="date"
+                style={styles.webDatePicker}
+                min={new Date().toISOString().split('T')[0]}
+                value={dataRitiroPrevista.toISOString().split('T')[0]}
+                onChange={(e) => {
+                  try {
+                    console.log('Input web datestring:', e.target.value);
+                    if (e.target.value) {
+                      const date = new Date(e.target.value);
+                      if (!isNaN(date.getTime())) {
+                        setDataRitiroPrevista(date);
+                      }
+                    }
+                  } catch (error) {
+                    console.error('Errore nel date picker web:', error);
+                  }
+                }}
+              />
+            ) : (
+              <Button
+                mode="outlined"
+                icon="calendar"
+                onPress={() => setShowDatePicker(true)}
+                style={styles.datePickerButton}
+              >
+                Seleziona un'altra data
+              </Button>
+            )}
+          </View>
+          
           <Text style={styles.selectedDateText}>
             Data selezionata: {format(dataRitiroPrevista, 'dd/MM/yyyy', { locale: it })}
           </Text>
@@ -662,59 +768,229 @@ export default function LottiDisponibiliScreen() {
     </Portal>
   );
 
-  // Aggiungiamo il modale di filtri
+  // Miglioramento del modal dei filtri per una user experience più intuitiva
   const renderFiltriModal = () => (
     <Portal>
-      <Dialog
+      <Modal
         visible={filtriVisibili}
         onDismiss={() => setFiltriVisibili(false)}
-        style={styles.filtriDialog}
+        contentContainerStyle={styles.modalContent}
       >
-        <Dialog.Title>Filtri</Dialog.Title>
-        <Dialog.Content>
-          <Text style={styles.filterSectionTitle}>Stato Lotti</Text>
-          <View style={styles.colorFiltersContainer}>
+        <View style={styles.modalHeader}>
+          <IconButton
+            icon="close"
+            size={24}
+            onPress={() => setFiltriVisibili(false)}
+          />
+          <Text style={styles.modalTitle}>Filtri Avanzati</Text>
+          <Button
+            onPress={resetFiltri}
+            mode="text"
+            compact
+          >
+            Reset
+          </Button>
+        </View>
+        
+        <Divider />
+        
+        <View style={styles.filtriContent}>
+          <Text style={styles.filterSectionTitle}>Stato lotto</Text>
+          <View style={styles.chipContainer}>
             <Chip
-              selected={filtri.stato === 'verde'}
-              onPress={() => applyStatoFilter('verde')}
-              style={[styles.colorFilterChip, styles.greenChip]}
-              textStyle={{ color: filtri.stato === 'verde' ? '#fff' : '#000' }}
-              selectedColor="#4CAF50"
+              selected={filtri.stato === 'Verde'}
+              onPress={() => applyStatoFilter(filtri.stato === 'Verde' ? null : 'Verde')}
+              style={[styles.chip, filtri.stato === 'Verde' && styles.chipSelected, { backgroundColor: filtri.stato === 'Verde' ? 'rgba(76, 175, 80, 0.2)' : undefined }]}
+              textStyle={{ color: filtri.stato === 'Verde' ? '#388E3C' : undefined }}
             >
-              Verde
+              <View style={styles.chipContent}>
+                <View style={[styles.colorIndicator, { backgroundColor: '#4CAF50' }]} />
+                <Text>Verde</Text>
+              </View>
             </Chip>
+            
             <Chip
-              selected={filtri.stato === 'arancione'}
-              onPress={() => applyStatoFilter('arancione')}
-              style={[styles.colorFilterChip, styles.orangeChip]}
-              textStyle={{ color: filtri.stato === 'arancione' ? '#fff' : '#000' }}
-              selectedColor="#FFA000"
+              selected={filtri.stato === 'Arancione'}
+              onPress={() => applyStatoFilter(filtri.stato === 'Arancione' ? null : 'Arancione')}
+              style={[styles.chip, filtri.stato === 'Arancione' && styles.chipSelected, { backgroundColor: filtri.stato === 'Arancione' ? 'rgba(255, 152, 0, 0.2)' : undefined }]}
+              textStyle={{ color: filtri.stato === 'Arancione' ? '#F57C00' : undefined }}
             >
-              Arancione
+              <View style={styles.chipContent}>
+                <View style={[styles.colorIndicator, { backgroundColor: '#FF9800' }]} />
+                <Text>Arancione</Text>
+              </View>
             </Chip>
+            
             <Chip
-              selected={filtri.stato === 'rosso'}
-              onPress={() => applyStatoFilter('rosso')}
-              style={[styles.colorFilterChip, styles.redChip]}
-              textStyle={{ color: filtri.stato === 'rosso' ? '#fff' : '#000' }}
-              selectedColor="#F44336"
+              selected={filtri.stato === 'Rosso'}
+              onPress={() => applyStatoFilter(filtri.stato === 'Rosso' ? null : 'Rosso')}
+              style={[styles.chip, filtri.stato === 'Rosso' && styles.chipSelected, { backgroundColor: filtri.stato === 'Rosso' ? 'rgba(244, 67, 54, 0.2)' : undefined }]}
+              textStyle={{ color: filtri.stato === 'Rosso' ? '#D32F2F' : undefined }}
             >
-              Rosso
+              <View style={styles.chipContent}>
+                <View style={[styles.colorIndicator, { backgroundColor: '#F44336' }]} />
+                <Text>Rosso</Text>
+              </View>
             </Chip>
           </View>
-        </Dialog.Content>
-        <Dialog.Actions>
-          <Button onPress={resetFiltri}>Reimposta</Button>
-          <Button 
-            mode="contained" 
-            onPress={() => setFiltriVisibili(false)}
-          >
-            Applica
-          </Button>
-        </Dialog.Actions>
-      </Dialog>
+          
+          <Text style={styles.filterSectionTitle}>Intervallo scadenza</Text>
+          <View style={styles.dateRangeContainer}>
+            <TouchableOpacity 
+              style={styles.dateInput}
+              onPress={() => {
+                // Implementazione futura datepicker per scadenza minima
+                Toast.show({
+                  type: 'info',
+                  text1: 'Funzionalità in arrivo',
+                  text2: 'Il selettore data sarà disponibile nella prossima versione',
+                });
+              }}
+            >
+              <Text style={styles.dateInputLabel}>Da</Text>
+              <Text>{filtri.scadenza_min ? format(new Date(filtri.scadenza_min), 'dd/MM/yyyy') : 'Qualsiasi'}</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.dateInput}
+              onPress={() => {
+                // Implementazione futura datepicker per scadenza massima
+                Toast.show({
+                  type: 'info',
+                  text1: 'Funzionalità in arrivo',
+                  text2: 'Il selettore data sarà disponibile nella prossima versione',
+                });
+              }}
+            >
+              <Text style={styles.dateInputLabel}>A</Text>
+              <Text>{filtri.scadenza_max ? format(new Date(filtri.scadenza_max), 'dd/MM/yyyy') : 'Qualsiasi'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.buttonContainer}>
+            <Button
+              mode="contained"
+              onPress={() => {
+                applyFilters();
+                setFiltriVisibili(false);
+              }}
+              style={styles.applyButton}
+            >
+              Applica Filtri
+            </Button>
+          </View>
+        </View>
+      </Modal>
     </Portal>
   );
+
+  // Modal per il DatePicker
+  const renderDatePickerModal = () => (
+    <Portal>
+      <Modal
+        visible={showDatePicker}
+        onDismiss={() => setShowDatePicker(false)}
+        contentContainerStyle={styles.modalContainer}
+      >
+        <Surface style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Seleziona data di ritiro</Text>
+          </View>
+          <Divider />
+          <View style={styles.datePickerContainer}>
+            <View style={styles.dateButtonsRow}>
+              <Button 
+                mode="outlined" 
+                icon="arrow-left" 
+                onPress={() => {
+                  const newDate = addDays(dataRitiroPrevista, -1);
+                  setDataRitiroPrevista(newDate);
+                }}
+                style={styles.dateButton}
+              >
+                -1 giorno
+              </Button>
+              <Button 
+                mode="outlined" 
+                icon="calendar-today" 
+                onPress={() => {
+                  setDataRitiroPrevista(addDays(new Date(), 1));
+                }}
+                style={styles.dateButton}
+              >
+                Domani
+              </Button>
+              <Button 
+                mode="outlined" 
+                icon="arrow-right" 
+                onPress={() => {
+                  const newDate = addDays(dataRitiroPrevista, 1);
+                  setDataRitiroPrevista(newDate);
+                }}
+                style={styles.dateButton}
+              >
+                +1 giorno
+              </Button>
+            </View>
+            <View style={styles.dateButtonsRow}>
+              <Button 
+                mode="outlined" 
+                onPress={() => {
+                  const newDate = addDays(dataRitiroPrevista, 7);
+                  setDataRitiroPrevista(newDate);
+                }}
+                style={styles.dateButton}
+              >
+                +1 settimana
+              </Button>
+              <Button 
+                mode="outlined" 
+                onPress={() => {
+                  const newDate = addDays(dataRitiroPrevista, 30);
+                  setDataRitiroPrevista(newDate);
+                }}
+                style={styles.dateButton}
+              >
+                +1 mese
+              </Button>
+            </View>
+          </View>
+          <Divider />
+          <View style={styles.modalFooter}>
+            <Button 
+              mode="text" 
+              onPress={() => setShowDatePicker(false)}
+            >
+              Chiudi
+            </Button>
+            <Button 
+              mode="contained" 
+              onPress={() => setShowDatePicker(false)}
+            >
+              Conferma
+            </Button>
+          </View>
+        </Surface>
+      </Modal>
+    </Portal>
+  );
+
+  // All'interno di renderLottoItem o vicino
+  const renderInfoMessage = () => {
+    const isAdmin = user?.ruolo === 'Amministratore';
+    const isOperatore = user?.ruolo === 'Operatore';
+    
+    return (
+      <View style={styles.infoContainer}>
+        <Text style={styles.infoText}>
+          {isAdmin || isOperatore ? 
+            '⚠️ Stai visualizzando tutti i lotti, inclusi quelli già prenotati. Solo amministratori e operatori hanno questa visibilità completa.' :
+            'ℹ️ Stai visualizzando solo i lotti effettivamente disponibili. I lotti già prenotati da altri centri non sono mostrati.'
+          }
+        </Text>
+      </View>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -841,6 +1117,23 @@ export default function LottiDisponibiliScreen() {
               colors={[PRIMARY_COLOR]}
             />
           }
+          ListEmptyComponent={() => (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>
+                {error || (loading ? 'Caricamento in corso...' : 'Nessun lotto disponibile')}
+              </Text>
+              {!loading && !error && (
+                <Button 
+                  mode="outlined" 
+                  onPress={onRefresh}
+                  style={styles.retryButton}
+                >
+                  Riprova
+                </Button>
+              )}
+            </View>
+          )}
+          ListHeaderComponent={renderInfoMessage}
         />
       )}
       
@@ -849,6 +1142,11 @@ export default function LottiDisponibiliScreen() {
       
       {/* Modale dei filtri */}
       {renderFiltriModal()}
+      
+      {/* Modal per il DatePicker */}
+      {renderDatePickerModal()}
+      
+      <Toast />
     </View>
   );
 }
@@ -916,7 +1214,7 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     marginTop: 16,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#555',
   },
@@ -1016,6 +1314,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ddd',
     borderRadius: 4,
+    marginTop: 8,
   },
   noteInput: {
     backgroundColor: 'transparent',
@@ -1066,8 +1365,8 @@ const styles = StyleSheet.create({
   filterSectionTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    marginBottom: 12,
-    color: '#333',
+    marginTop: 12,
+    marginBottom: 8,
   },
   colorFiltersContainer: {
     flexDirection: 'row',
@@ -1094,5 +1393,112 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(244, 67, 54, 0.2)',
     borderColor: '#F44336',
     borderWidth: 1,
+  },
+  infoContainer: {
+    backgroundColor: '#e3f2fd',
+    marginHorizontal: 16,
+    marginVertical: 8,
+    padding: 12,
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#2196F3', // Colore blu info
+  },
+  infoText: {
+    fontSize: 14,
+    color: '#333',
+    lineHeight: 20,
+  },
+  emptyContainer: {
+    padding: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  webDatePicker: {
+    width: '100%',
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 4,
+    marginTop: 8,
+  },
+  modalContainer: {
+    padding: 16,
+    margin: 16,
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    margin: 20,
+    borderRadius: 16,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  filtriContent: {
+    padding: 16,
+  },
+  chipContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 20,
+  },
+  chip: {
+    margin: 4,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  chipSelected: {
+    borderWidth: 1,
+  },
+  chipContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  colorIndicator: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  dateRangeContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  dateInput: {
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 8,
+    padding: 12,
+    width: '48%',
+  },
+  dateInputLabel: {
+    fontSize: 12,
+    color: '#757575',
+    marginBottom: 4,
+  },
+  buttonContainer: {
+    marginTop: 16,
+  },
+  applyButton: {
+    paddingVertical: 6,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 8,
+    marginTop: 8,
+  },
+  dateButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginVertical: 4,
   },
 }); 

@@ -389,12 +389,8 @@ const DettaglioLottoScreen = () => {
 
   // Gestione del salvataggio
   const handleSubmit = async () => {
+    // Validazione del form
     if (!validateForm()) {
-      Toast.show({
-        type: 'error',
-        text1: 'Errore di validazione',
-        text2: 'Controlla i campi evidenziati',
-      });
       return;
     }
     
@@ -408,6 +404,7 @@ const DettaglioLottoScreen = () => {
       
       // Formatta la data nel formato YYYY-MM-DD per il backend
       const formattedDate = dataScadenza.toISOString().split('T')[0];
+      console.log(`Data scadenza formattata per update: ${formattedDate}`);
       
       // Prepara i dati per l'aggiornamento
       const lottoData = {
@@ -415,8 +412,8 @@ const DettaglioLottoScreen = () => {
         nome,
         descrizione,
         quantita: parseFloat(quantita),
-        unitaMisura,
-        dataScadenza: formattedDate, // Formato YYYY-MM-DD per il backend
+        unita_misura: unitaMisura,
+        data_scadenza: formattedDate, // Formato YYYY-MM-DD per il backend
         centroId: centroSelezionato?.id,
         notifyAdmin: true, // Notifica gli amministratori delle modifiche
       };
@@ -424,7 +421,11 @@ const DettaglioLottoScreen = () => {
       console.log('Dati inviati per aggiornamento:', lottoData);
       
       // Invia l'aggiornamento
-      const updatedLotto = await updateLotto(lotto.id, lottoData, true);
+      const updatedLottoResponse = await updateLotto(lotto.id, lottoData, true);
+      
+      if (!updatedLottoResponse.success) {
+        throw new Error(updatedLottoResponse.message || 'Errore nell\'aggiornamento del lotto');
+      }
       
       Toast.show({
         type: 'success',
@@ -432,8 +433,28 @@ const DettaglioLottoScreen = () => {
         text2: 'Le modifiche sono state salvate con successo',
       });
       
-      // Ricarica i dati e disabilita la modalità di modifica
-      setLotto(updatedLotto);
+      // Forza un refresh completo dei dati dal server
+      const refreshedLotto = await getLottoById(lotto.id);
+      console.log('Lotto refreshed after update:', refreshedLotto);
+      
+      // Aggiorna lo stato locale con i dati aggiornati
+      setLotto(refreshedLotto);
+      
+      // Aggiorna anche i campi di form per sicurezza
+      setNome(refreshedLotto.nome);
+      setDescrizione(refreshedLotto.descrizione || '');
+      setQuantita(refreshedLotto.quantita.toString());
+      setUnitaMisura(refreshedLotto.unita_misura);
+      
+      // Parsing sicuro della data di scadenza
+      if (refreshedLotto.data_scadenza) {
+        const newDate = safeParseDate(refreshedLotto.data_scadenza);
+        if (newDate) {
+          console.log(`Nuova data di scadenza impostata: ${newDate.toISOString()}`);
+          setDataScadenza(newDate);
+        }
+      }
+      
       setEditMode(false);
       refreshNotifiche(); // Aggiorna le notifiche
       
@@ -561,47 +582,69 @@ const DettaglioLottoScreen = () => {
       );
       
       if (result.success) {
+        // Aggiorna lo stato
+        setPrenotazioneModalVisible(false);
+        
+        // Messaggio di conferma
         Toast.show({
           type: 'success',
           text1: 'Prenotazione effettuata',
-          text2: result.message,
-          visibilityTime: 4000,
+          text2: 'La tua prenotazione è stata registrata con successo!',
+          visibilityTime: 3000,
         });
         
-        // Chiudi il modale
-        setPrenotazioneModalVisible(false);
+        // Aggiorna le notifiche
+        refreshNotifiche();
         
-        // Reindirizza l'utente alla pagina delle prenotazioni dopo un breve delay
-        setTimeout(() => {
-          router.push('/prenotazioni');
-        }, 1000);
+        // Reindirizza alla pagina delle prenotazioni
+        router.push('/prenotazioni');
       } else {
-        // Controlla se il problema è la mancanza del centro_id
-        if (result.missingCentroId) {
-          setShowCentroIdInput(true);
+        // Gestione specifica degli errori di prenotazione
+        if (result.error?.message === 'Prenotazione duplicata') {
+          // Caso di prenotazione duplicata dello stesso utente
           Toast.show({
             type: 'info',
-            text1: 'Centro non trovato',
-            text2: 'Inserisci manualmente l\'ID del tuo centro per completare la prenotazione',
-            visibilityTime: 5000,
+            text1: 'Prenotazione già esistente',
+            text2: `Hai già una prenotazione attiva per questo lotto (Stato: ${result.error.prenotazioneEsistente?.stato}).`,
+            visibilityTime: 4000,
           });
-        } else {
-          // Altro errore
+        } else if (result.error?.message === 'Lotto già prenotato') {
+          // Caso di lotto già prenotato da altri
           Toast.show({
             type: 'error',
-            text1: 'Errore',
-            text2: result.message,
-            visibilityTime: 4000,
+            text1: 'Lotto non disponibile',
+            text2: 'Questo lotto è già stato prenotato da un altro centro',
+            visibilityTime: 3000,
+          });
+          
+          // Torna alla lista dei lotti
+          router.push('/lotti');
+        } else if (result.missingCentroId) {
+          setShowCentroIdInput(true);
+          
+          Toast.show({
+            type: 'info',
+            text1: 'ID Centro richiesto',
+            text2: 'Inserisci il codice del tuo centro per completare la prenotazione',
+            visibilityTime: 3000,
+          });
+        } else {
+          Toast.show({
+            type: 'error',
+            text1: 'Errore nella prenotazione',
+            text2: result.message || 'Si è verificato un errore. Riprova più tardi.',
+            visibilityTime: 3000,
           });
         }
       }
-    } catch (err: any) {
-      console.error('Errore nella prenotazione:', err);
+    } catch (error) {
+      console.error('Errore nella prenotazione:', error);
+      
       Toast.show({
         type: 'error',
         text1: 'Errore',
-        text2: err.message || 'Impossibile effettuare la prenotazione',
-        visibilityTime: 4000,
+        text2: 'Si è verificato un errore durante la prenotazione. Riprova più tardi.',
+        visibilityTime: 3000,
       });
     } finally {
       setPrenotazioneInCorso(false);

@@ -176,7 +176,7 @@ const LoginScreen = () => {
             </Card>
             
             <View style={styles.footer}>
-              <Text style={styles.footerText}>© 2023 Refood App - Tutti i diritti riservati</Text>
+              <Text style={styles.footerText}>© 2025 Refood App - Tutti i diritti riservati</Text>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>

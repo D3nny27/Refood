@@ -10,6 +10,9 @@ const { authenticate } = require('../middlewares/auth');
  *   description: Endpoints per la gestione delle notifiche
  */
 
+// Tutte le rotte delle notifiche richiedono autenticazione
+router.use(authenticate);
+
 /**
  * @swagger
  * /notifiche:
@@ -51,7 +54,7 @@ const { authenticate } = require('../middlewares/auth');
  *       500:
  *         description: Errore del server
  */
-router.get('/', authenticate, notificheController.getNotifiche);
+router.get('/', notificheController.getNotifiche);
 
 /**
  * @swagger
@@ -99,7 +102,7 @@ router.get('/', authenticate, notificheController.getNotifiche);
  *       500:
  *         description: Errore del server
  */
-router.post('/', authenticate, notificheController.createNotifica);
+router.post('/', notificheController.createNotifica);
 
 /**
  * @swagger
@@ -116,7 +119,7 @@ router.post('/', authenticate, notificheController.createNotifica);
  *       500:
  *         description: Errore del server
  */
-router.get('/conteggio', authenticate, notificheController.countUnread);
+router.get('/conteggio', notificheController.countUnread);
 
 /**
  * @swagger
@@ -133,7 +136,7 @@ router.get('/conteggio', authenticate, notificheController.countUnread);
  *       500:
  *         description: Errore del server
  */
-router.put('/tutte-lette', authenticate, notificheController.markAllAsRead);
+router.put('/tutte-lette', notificheController.markAllAsRead);
 
 /**
  * @swagger
@@ -178,7 +181,7 @@ router.put('/tutte-lette', authenticate, notificheController.markAllAsRead);
  *       500:
  *         description: Errore del server
  */
-router.post('/sync', authenticate, notificheController.syncLocalNotifica);
+router.post('/sync', notificheController.syncLocalNotifica);
 
 /**
  * @swagger
@@ -196,7 +199,7 @@ router.post('/sync', authenticate, notificheController.syncLocalNotifica);
  *       500:
  *         description: Errore del server
  */
-router.get('/centro-test', authenticate, notificheController.getCentroTestNotifiche);
+router.get('/centro-test', notificheController.getCentroTestNotifiche);
 
 /**
  * @swagger
@@ -248,7 +251,7 @@ router.get('/centro-test', authenticate, notificheController.getCentroTestNotifi
  *       500:
  *         description: Errore del server
  */
-router.post('/admin-centro/:centro_id', authenticate, notificheController.notifyAdmins);
+router.post('/admin-centro/:centro_id', notificheController.notifyAdmins);
 
 /**
  * @swagger
@@ -274,7 +277,7 @@ router.post('/admin-centro/:centro_id', authenticate, notificheController.notify
  *       500:
  *         description: Errore del server
  */
-router.get('/:id', authenticate, notificheController.getNotificaById);
+router.get('/:id', notificheController.getNotificaById);
 
 /**
  * @swagger
@@ -300,7 +303,7 @@ router.get('/:id', authenticate, notificheController.getNotificaById);
  *       500:
  *         description: Errore del server
  */
-router.put('/:id/letta', authenticate, notificheController.markAsRead);
+router.put('/:id/letta', notificheController.markAsRead);
 
 /**
  * @swagger
@@ -326,6 +329,13 @@ router.put('/:id/letta', authenticate, notificheController.markAsRead);
  *       500:
  *         description: Errore del server
  */
-router.delete('/:id', authenticate, notificheController.deleteNotifica);
+router.delete('/:id', notificheController.deleteNotifica);
+
+/**
+ * Rotte alternative per la retrocompatibilità
+ */
+router.get('/non-lette', notificheController.countUnread);
+router.patch('/:id/letta', notificheController.markAsRead);
+router.patch('/lette-tutte', notificheController.markAllAsRead);
 
 module.exports = router; 

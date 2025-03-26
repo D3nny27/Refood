@@ -64,4 +64,121 @@ router.get('/counters', authenticate, statisticheController.getCounters);
  */
 router.get('/impatto', authenticate, statisticheController.getImpatto);
 
+/**
+ * @swagger
+ * /statistiche/complete:
+ *   get:
+ *     summary: Ottiene statistiche complete per l'app mobile
+ *     description: Restituisce un set completo di statistiche per visualizzazioni dashboard
+ *     tags: [Statistiche]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: periodo
+ *         schema:
+ *           type: string
+ *           default: ultimi_12_mesi
+ *         description: Periodo per cui generare le statistiche
+ *     responses:
+ *       200:
+ *         description: Statistiche complete ottenute con successo
+ *       401:
+ *         description: Non autorizzato
+ *       500:
+ *         description: Errore del server
+ */
+router.get('/complete', authenticate, statisticheController.getStatisticheComplete);
+
+/**
+ * @swagger
+ * /statistiche/centro:
+ *   get:
+ *     summary: Ottiene statistiche specifiche per un centro
+ *     description: Restituisce statistiche dettagliate per un centro specifico
+ *     tags: [Statistiche]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: centro_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID del centro
+ *       - in: query
+ *         name: periodo
+ *         schema:
+ *           type: string
+ *           default: ultimi_12_mesi
+ *         description: Periodo per cui generare le statistiche
+ *     responses:
+ *       200:
+ *         description: Statistiche del centro ottenute con successo
+ *       400:
+ *         description: ID del centro mancante
+ *       401:
+ *         description: Non autorizzato
+ *       404:
+ *         description: Centro non trovato
+ *       500:
+ *         description: Errore del server
+ */
+router.get('/centro', authenticate, statisticheController.getStatisticheCentro);
+
+/**
+ * @swagger
+ * /statistiche/efficienza:
+ *   get:
+ *     summary: Ottiene statistiche di efficienza del sistema
+ *     description: Restituisce dati sull'efficienza operativa come tempi medi e completamento
+ *     tags: [Statistiche]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Statistiche di efficienza ottenute con successo
+ *       401:
+ *         description: Non autorizzato
+ *       500:
+ *         description: Errore del server
+ */
+router.get('/efficienza', authenticate, statisticheController.getStatisticheEfficienza);
+
+/**
+ * @swagger
+ * /statistiche/esporta:
+ *   get:
+ *     summary: Esporta statistiche in formato CSV
+ *     description: Genera un file CSV con statistiche esportabili
+ *     tags: [Statistiche]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: periodo
+ *         schema:
+ *           type: string
+ *           default: ultimi_12_mesi
+ *         description: Periodo per cui esportare le statistiche
+ *       - in: query
+ *         name: formato
+ *         schema:
+ *           type: string
+ *           default: csv
+ *         description: Formato di esportazione
+ *     responses:
+ *       200:
+ *         description: CSV generato con successo
+ *         content:
+ *           text/csv:
+ *             schema:
+ *               type: string
+ *       401:
+ *         description: Non autorizzato
+ *       500:
+ *         description: Errore del server
+ */
+router.get('/esporta', authenticate, statisticheController.esportaStatistiche);
+
 module.exports = router; 

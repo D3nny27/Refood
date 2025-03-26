@@ -5,6 +5,7 @@ const morgan = require('morgan');
 const dotenv = require('dotenv');
 const compression = require('compression');
 const path = require('path');
+const http = require('http');
 
 // Caricamento delle variabili d'ambiente
 dotenv.config();
@@ -14,6 +15,7 @@ const swaggerSetup = require('./utils/swagger');
 const routes = require('./routes');
 const { errorHandler } = require('./middlewares/errorHandler');
 const scheduler = require('./utils/scheduler');
+const websocket = require('./utils/websocket');
 
 // Inizializzazione app Express
 const app = express();
@@ -64,15 +66,23 @@ app.use((req, res) => {
   });
 });
 
-// Avvio del server
+// Creazione server HTTP
 const PORT = process.env.PORT || 3000;
-const server = app.listen(PORT, () => {
+const server = http.createServer(app);
+
+// Avvio del server
+server.listen(PORT, () => {
   logger.info(`Server avviato sulla porta ${PORT} in modalità ${process.env.NODE_ENV || 'development'}`);
   logger.info(`API disponibili su http://localhost:${PORT}${API_PREFIX}`);
   logger.info(`Documentazione API su http://localhost:${PORT}/api-docs`);
   
   // Inizializza lo scheduler per le attività pianificate
   scheduler.init();
+  
+  // Inizializza il servizio WebSocket
+  websocket.init(server);
+  
+  logger.info(`WebSocket disponibile su ws://localhost:${PORT}/api/notifications/ws`);
 });
 
 // Gestione della chiusura graziosa
@@ -81,6 +91,9 @@ process.on('SIGTERM', () => {
   
   // Arresta lo scheduler
   scheduler.stop();
+  
+  // Arresta il servizio WebSocket
+  websocket.stop();
   
   server.close(() => {
     logger.info('Server chiuso correttamente');
@@ -93,6 +106,9 @@ process.on('SIGINT', () => {
   
   // Arresta lo scheduler
   scheduler.stop();
+  
+  // Arresta il servizio WebSocket
+  websocket.stop();
   
   server.close(() => {
     logger.info('Server chiuso correttamente');

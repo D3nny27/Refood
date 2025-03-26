@@ -1,6 +1,8 @@
 const db = require('../config/database');
 const { ApiError } = require('../middlewares/errorHandler');
 const logger = require('../utils/logger');
+const websocket = require('../utils/websocket');
+const notificheController = require('./notifiche.controller');
 
 /**
  * Ottiene l'elenco delle prenotazioni con filtri opzionali
@@ -266,7 +268,7 @@ const createPrenotazione = async (req, res, next) => {
     // Verifica che il lotto non sia già prenotato
     const prenotazioneEsistenteQuery = `
       SELECT 1 FROM Prenotazioni
-      WHERE lotto_id = ? AND stato IN ('Prenotato', 'InTransito')
+      WHERE lotto_id = ? AND stato IN ('Prenotato', 'InAttesa', 'Confermato', 'InTransito')
     `;
     
     const prenotazioneEsistente = await db.get(prenotazioneEsistenteQuery, [lotto_id]);
@@ -486,150 +488,112 @@ const createPrenotazione = async (req, res, next) => {
  */
 const updatePrenotazione = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const { stato, data_ritiro, data_consegna, note } = req.body;
+    const prenotazioneId = req.params.id;
+    const { stato } = req.body;
     
     // Verifica che la prenotazione esista
-    const prenotazioneQuery = `
-      SELECT 
-        p.*,
-        l.prodotto, l.centro_origine_id
-      FROM Prenotazioni p
-      JOIN Lotti l ON p.lotto_id = l.id
-      WHERE p.id = ?
-    `;
-    
-    const prenotazione = await db.get(prenotazioneQuery, [id]);
+    const prenotazione = await db.get(
+      `SELECT p.*, l.prodotto, l.centro_origine_id, c.nome as centro_nome
+       FROM Prenotazioni p
+       JOIN Lotti l ON p.lotto_id = l.id
+       JOIN Centri c ON p.centro_destinazione_id = c.id
+       WHERE p.id = ?`,
+      [prenotazioneId]
+    );
     
     if (!prenotazione) {
-      throw new ApiError(404, 'Prenotazione non trovata');
+      return next(new ApiError(404, 'Prenotazione non trovata'));
     }
     
-    // Verifica che l'utente appartenga al centro origine o ricevente
-    if (req.user.ruolo !== 'Amministratore') {
-      const userCentriQuery = `
-        SELECT 1 FROM UtentiCentri 
-        WHERE utente_id = ? AND centro_id IN (?, ?)
-      `;
-      
-      const userCanAccess = await db.get(
-        userCentriQuery, 
-        [req.user.id, prenotazione.centro_origine_id, prenotazione.centro_ricevente_id]
+    // Verifica che lo stato sia valido
+    const statiValidi = ['Attiva', 'Completata', 'Annullata'];
+    if (!statiValidi.includes(stato)) {
+      return next(new ApiError(400, 'Stato non valido. Stati consentiti: ' + statiValidi.join(', ')));
+    }
+    
+    // Aggiorna lo stato della prenotazione
+    await db.run(
+      `UPDATE Prenotazioni 
+       SET stato = ?, data_modifica = datetime('now') 
+       WHERE id = ?`,
+      [stato, prenotazioneId]
+    );
+    
+    // Recupera la prenotazione aggiornata
+    const prenotazioneAggiornata = await db.get(
+      `SELECT p.*, l.prodotto, l.centro_origine_id, c.nome as centro_nome
+       FROM Prenotazioni p
+       JOIN Lotti l ON p.lotto_id = l.id
+       JOIN Centri c ON p.centro_destinazione_id = c.id
+       WHERE p.id = ?`,
+      [prenotazioneId]
+    );
+    
+    // Invia notifica di aggiornamento tramite WebSocket
+    websocket.notificaAggiornamentoPrenotazione(prenotazioneAggiornata);
+    
+    // Prepara i destinatari per le notifiche
+    const destinatariNotifica = new Set();
+    
+    // Se la prenotazione è stata completata o annullata, informa il centro di origine
+    if (stato === 'Completata' || stato === 'Annullata') {
+      // Ottieni gli operatori del centro di origine
+      const operatoriOrigine = await db.all(
+        `SELECT u.id
+         FROM Utenti u
+         JOIN UtentiCentri uc ON u.id = uc.utente_id
+         WHERE uc.centro_id = ?`,
+        [prenotazione.centro_origine_id]
       );
       
-      if (!userCanAccess) {
-        throw new ApiError(403, 'Non hai i permessi per modificare questa prenotazione');
-      }
+      // Aggiungi gli operatori ai destinatari
+      operatoriOrigine.forEach(op => destinatariNotifica.add(op.id));
     }
     
-    // Verifica le transizioni di stato valide
-    if (stato) {
-      const statoAttuale = prenotazione.stato;
-      const transizioniValide = {
-        'Prenotato': ['InTransito', 'Annullato'],
-        'InTransito': ['Consegnato', 'Annullato'],
-        'Consegnato': [],
-        'Annullato': []
-      };
-      
-      if (!transizioniValide[statoAttuale].includes(stato) && statoAttuale !== stato) {
-        throw new ApiError(400, `Impossibile cambiare lo stato da ${statoAttuale} a ${stato}`);
-      }
-      
-      // Se lo stato cambia a Consegnato, assicurati che ci sia una data di consegna
-      if (stato === 'Consegnato' && !data_consegna && !prenotazione.data_consegna) {
-        throw new ApiError(400, 'La data di consegna è obbligatoria per lo stato Consegnato');
-      }
+    // Sempre notifica al centro di destinazione del cambio di stato
+    // Ottieni gli operatori del centro di destinazione
+    const operatoriDestinazione = await db.all(
+      `SELECT u.id
+       FROM Utenti u
+       JOIN UtentiCentri uc ON u.id = uc.utente_id
+       WHERE uc.centro_id = ?`,
+      [prenotazione.centro_destinazione_id]
+    );
+    
+    // Aggiungi gli operatori ai destinatari
+    operatoriDestinazione.forEach(op => destinatariNotifica.add(op.id));
+    
+    // Escludi l'utente che ha effettuato l'aggiornamento
+    destinatariNotifica.delete(req.user.id);
+    
+    // Invia notifiche a tutti i destinatari
+    const tipoNotifica = stato === 'Completata' ? 'success' : (stato === 'Annullata' ? 'error' : 'info');
+    const titoloNotifica = `Prenotazione ${stato.toLowerCase()}`;
+    const messaggioNotifica = `La prenotazione per "${prenotazione.prodotto}" è stata ${stato.toLowerCase()}`;
+    
+    for (const userId of destinatariNotifica) {
+      await notificheController.creaNotifica(
+        userId,
+        tipoNotifica,
+        titoloNotifica,
+        messaggioNotifica,
+        `/prenotazioni/${prenotazioneId}`,
+        {
+          prenotazioneId,
+          stato,
+          statoPrec: prenotazione.stato
+        }
+      );
     }
     
-    // Costruisci la query di aggiornamento in base ai campi forniti
-    let updateQuery = `UPDATE Prenotazioni SET `;
-    const updateFields = [];
-    const updateParams = [];
-    
-    if (stato) {
-      updateFields.push('stato = ?');
-      updateParams.push(stato);
-    }
-    
-    if (data_ritiro !== undefined) {
-      updateFields.push('data_ritiro = ?');
-      updateParams.push(data_ritiro);
-    }
-    
-    if (data_consegna !== undefined) {
-      updateFields.push('data_consegna = ?');
-      updateParams.push(data_consegna);
-    }
-    
-    if (note !== undefined) {
-      updateFields.push('note = ?');
-      updateParams.push(note);
-    }
-    
-    // Se non ci sono campi da aggiornare, restituisci un errore
-    if (updateFields.length === 0) {
-      throw new ApiError(400, 'Nessun dato valido fornito per l\'aggiornamento');
-    }
-    
-    updateQuery += updateFields.join(', ');
-    updateQuery += ' WHERE id = ?';
-    updateParams.push(id);
-    
-    // Esegui l'aggiornamento
-    await db.run(updateQuery, updateParams);
-    
-    // Se lo stato è cambiato, crea una notifica
-    if (stato && stato !== prenotazione.stato) {
-      let destinatariCentroId;
-      let messaggio;
-      
-      if (stato === 'InTransito') {
-        destinatariCentroId = prenotazione.centro_ricevente_id;
-        messaggio = `Il lotto "${prenotazione.prodotto}" è in transito verso il tuo centro`;
-      } else if (stato === 'Consegnato') {
-        destinatariCentroId = prenotazione.centro_origine_id;
-        messaggio = `Il lotto "${prenotazione.prodotto}" è stato consegnato al centro ricevente`;
-      } else if (stato === 'Annullato') {
-        // Notifica entrambi i centri
-        const notificaQuery = `
-          INSERT INTO Notifiche (tipo, messaggio, destinatario_id, creato_il)
-          SELECT 'Prenotazione', ?, u.id, CURRENT_TIMESTAMP
-          FROM Utenti u
-          JOIN UtentiCentri uc ON u.id = uc.utente_id
-          WHERE uc.centro_id IN (?, ?)
-        `;
-        
-        await db.run(
-          notificaQuery, 
-          [
-            `La prenotazione per il lotto "${prenotazione.prodotto}" è stata annullata`, 
-            prenotazione.centro_origine_id, 
-            prenotazione.centro_ricevente_id
-          ]
-        );
-      }
-      
-      // Invia notifica per stati diversi da Annullato (già gestito sopra)
-      if (stato !== 'Annullato' && destinatariCentroId && messaggio) {
-        const notificaQuery = `
-          INSERT INTO Notifiche (tipo, messaggio, destinatario_id, creato_il)
-          SELECT 'Prenotazione', ?, u.id, CURRENT_TIMESTAMP
-          FROM Utenti u
-          JOIN UtentiCentri uc ON u.id = uc.utente_id
-          WHERE uc.centro_id = ?
-        `;
-        
-        await db.run(notificaQuery, [messaggio, destinatariCentroId]);
-      }
-    }
-    
-    // Ottieni i dati aggiornati della prenotazione
-    const updatedPrenotazione = await db.get(prenotazioneQuery, [id]);
-    
-    res.json(updatedPrenotazione);
+    res.json({
+      status: 'success',
+      message: `Prenotazione aggiornata con successo: ${stato}`,
+      prenotazione: prenotazioneAggiornata
+    });
   } catch (error) {
-    next(error);
+    logger.error(`Errore nell'aggiornamento della prenotazione: ${error.message}`);
+    next(new ApiError(500, 'Errore nell\'aggiornamento della prenotazione'));
   }
 };
 
@@ -1191,6 +1155,99 @@ const rifiutaPrenotazione = async (req, res, next) => {
   }
 };
 
+// NUOVO CONTROLLER PER GESTIRE LE PRENOTAZIONI DUPLICATE
+/**
+ * Ripulisce le prenotazioni duplicate, mantenendo solo la più recente per ciascun lotto
+ * Questa API dovrebbe essere chiamata solo dagli amministratori di sistema per correggere
+ * il problema delle prenotazioni duplicate
+ */
+const cleanupDuplicatePrenotazioni = async (req, res, next) => {
+  try {
+    // Verifica che l'utente sia un amministratore
+    if (req.user.ruolo !== 'Amministratore') {
+      throw new ApiError(403, 'Questa operazione è riservata agli amministratori');
+    }
+
+    // Avvia una transazione per garantire l'integrità dei dati
+    await db.exec('BEGIN TRANSACTION');
+
+    try {
+      // 1. Trova tutti i lotti con più di una prenotazione attiva
+      const duplicatesQuery = `
+        SELECT lotto_id, COUNT(*) as count
+        FROM Prenotazioni
+        WHERE stato IN ('Prenotato', 'InAttesa', 'Confermato', 'InTransito')
+        GROUP BY lotto_id
+        HAVING COUNT(*) > 1
+      `;
+
+      const duplicates = await db.all(duplicatesQuery);
+      
+      if (duplicates.length === 0) {
+        await db.exec('ROLLBACK');
+        return res.json({
+          success: true,
+          message: 'Nessuna prenotazione duplicata trovata',
+          lottiProcessati: 0,
+          prenotazioniAggiornate: 0
+        });
+      }
+
+      logger.info(`Trovati ${duplicates.length} lotti con prenotazioni multiple attive`);
+      
+      let totalUpdated = 0;
+      
+      // 2. Per ogni lotto con prenotazioni duplicate, mantieni solo la più recente
+      for (const dup of duplicates) {
+        // Ottieni tutte le prenotazioni attive per questo lotto
+        const prenotazioniQuery = `
+          SELECT id, lotto_id, centro_ricevente_id, stato, data_prenotazione
+          FROM Prenotazioni
+          WHERE lotto_id = ? AND stato IN ('Prenotato', 'InAttesa', 'Confermato', 'InTransito')
+          ORDER BY data_prenotazione DESC
+        `;
+        
+        const prenotazioni = await db.all(prenotazioniQuery, [dup.lotto_id]);
+        
+        // Mantieni la prima (la più recente) e annulla le altre
+        if (prenotazioni.length > 1) {
+          const idsToUpdate = prenotazioni.slice(1).map(p => p.id);
+          
+          if (idsToUpdate.length > 0) {
+            // Aggiorna lo stato delle prenotazioni più vecchie a "Annullato"
+            const updateQuery = `
+              UPDATE Prenotazioni
+              SET stato = 'Annullato', note = COALESCE(note, '') || '\nAnnullata automaticamente durante la pulizia delle prenotazioni duplicate.'
+              WHERE id IN (${idsToUpdate.map(() => '?').join(',')})
+            `;
+            
+            const updateResult = await db.run(updateQuery, idsToUpdate);
+            totalUpdated += updateResult.changes;
+            
+            logger.info(`Lotto ${dup.lotto_id}: ${idsToUpdate.length} prenotazioni duplicate annullate, mantenuta la prenotazione ID ${prenotazioni[0].id}`);
+          }
+        }
+      }
+      
+      // Commit della transazione
+      await db.exec('COMMIT');
+      
+      return res.json({
+        success: true,
+        message: `Pulizia completata con successo. ${totalUpdated} prenotazioni duplicate sono state annullate.`,
+        lottiProcessati: duplicates.length,
+        prenotazioniAggiornate: totalUpdated
+      });
+    } catch (error) {
+      // In caso di errore, annulla la transazione
+      await db.exec('ROLLBACK');
+      throw error;
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getPrenotazioni,
   getPrenotazioneById,
@@ -1200,5 +1257,6 @@ module.exports = {
   cancelPrenotazione,
   getPrenotazioniByCentro,
   accettaPrenotazione,
-  rifiutaPrenotazione
+  rifiutaPrenotazione,
+  cleanupDuplicatePrenotazioni
 }; 

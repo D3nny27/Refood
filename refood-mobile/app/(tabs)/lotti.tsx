@@ -12,7 +12,7 @@ import StyledFilterModal from '../../src/components/StyledFilterModal';
 import { RUOLI, PRIMARY_COLOR, STATUS_COLORS } from '../../src/config/constants';
 import { router } from 'expo-router';
 import { it } from 'date-fns/locale';
-import { addDays, format } from 'date-fns';
+import { addDays, format, startOfMonth, getDate, endOfMonth, eachDayOfInterval, getDay, isSameMonth, isSameDay, isBefore } from 'date-fns';
 import { prenotaLotto } from '../../src/services/prenotazioniService';
 
 // Costanti locali per gli stati dei lotti disponibili
@@ -44,6 +44,7 @@ export default function LottiScreen() {
   const [isPrenotazioneLoading, setIsPrenotazioneLoading] = useState(false);
   const [manualCentroId, setManualCentroId] = useState<string>('');
   const [showCentroIdInput, setShowCentroIdInput] = useState(false);
+  const [showCustomDatePicker, setShowCustomDatePicker] = useState(false);
   
   // Ottieni l'utente autenticato
   const { user } = useAuth();
@@ -85,8 +86,13 @@ export default function LottiScreen() {
       // Costruisci i filtri (senza includere il testo di ricerca)
       const filtri = buildFiltri();
       
-      // Chiamata al servizio
-      const response = await getLotti(filtri, forceRefresh);
+      // Verifica se l'utente è amministratore o operatore
+      const isAdmin = user?.ruolo === 'Amministratore';
+      const isOperatore = user?.ruolo === 'Operatore';
+      const mostraTutti = isAdmin || isOperatore;
+      
+      // Chiamata al servizio con il parametro mostraTutti per amministratori e operatori
+      const response = await getLotti(filtri, forceRefresh, mostraTutti);
       
       // Salva tutti i lotti non filtrati
       setLottiNonFiltrati(response.lotti || []);
@@ -308,49 +314,62 @@ export default function LottiScreen() {
       );
       
       if (result.success) {
-        // Chiudi il modale e mostra conferma
-        setShowModalPrenotazione(false);
         Toast.show({
           type: 'success',
-          text1: 'Prenotazione completata',
-          text2: result.message || 'Lotto prenotato con successo',
-          visibilityTime: 4000,
+          text1: 'Prenotazione effettuata',
+          text2: 'La tua prenotazione è stata registrata con successo!',
+          visibilityTime: 3000,
         });
+        setShowModalPrenotazione(false);
         
-        // Aggiorna la lista dei lotti
-        invalidateCache();
-        loadLotti(true);
-        
-        // Reindirizza l'utente alla pagina delle prenotazioni dopo un breve delay
-        setTimeout(() => {
-          router.push('/prenotazioni');
-        }, 1000);
+        // Ricarica i lotti dopo la prenotazione per rimuovere il lotto prenotato
+        await loadLotti(true);
       } else {
-        // Controlla se il problema è la mancanza del centro_id
-        if (result.missingCentroId) {
+        // Gestione specifica degli errori di prenotazione
+        if (result.error?.message === 'Prenotazione duplicata') {
+          // Caso di prenotazione duplicata dello stesso utente
+          Toast.show({
+            type: 'info',
+            text1: 'Prenotazione già esistente',
+            text2: `Hai già una prenotazione attiva per questo lotto (Stato: ${result.error.prenotazioneEsistente?.stato}).`,
+            visibilityTime: 4000,
+          });
+        } else if (result.error?.message === 'Lotto già prenotato') {
+          // Caso di lotto già prenotato da altri
+          Toast.show({
+            type: 'error',
+            text1: 'Lotto non disponibile',
+            text2: 'Questo lotto è già stato prenotato da un altro centro',
+            visibilityTime: 3000,
+          });
+          
+          // Ricarica i lotti per rimuoverlo dalla lista
+          await loadLotti(true);
+        } else if (result.missingCentroId) {
+          // Caso di centro_id mancante
           setShowCentroIdInput(true);
           Toast.show({
             type: 'info',
-            text1: 'Centro non trovato',
-            text2: 'Inserisci manualmente l\'ID del tuo centro per completare la prenotazione',
-            visibilityTime: 5000,
+            text1: 'ID Centro richiesto',
+            text2: 'Inserisci il codice del tuo centro per completare la prenotazione',
+            visibilityTime: 3000,
           });
         } else {
-          // Mostra errore
+          // Altri errori
           Toast.show({
             type: 'error',
-            text1: 'Errore',
-            text2: result.message || 'Impossibile completare la prenotazione',
-            visibilityTime: 4000,
+            text1: 'Errore nella prenotazione',
+            text2: result.message || 'Si è verificato un errore. Riprova più tardi.',
+            visibilityTime: 3000,
           });
         }
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Errore durante la prenotazione:', error);
       Toast.show({
         type: 'error',
         text1: 'Errore',
-        text2: error.message || 'Si è verificato un errore durante la prenotazione',
+        text2: 'Si è verificato un errore. Riprova più tardi.',
         visibilityTime: 3000,
       });
     } finally {
@@ -558,6 +577,16 @@ export default function LottiScreen() {
             )}
           </View>
         )}
+        ListHeaderComponent={() => (
+          <View style={styles.infoContainer}>
+            <Text style={styles.infoText}>
+              {user?.ruolo === 'Amministratore' || user?.ruolo === 'Operatore' ? 
+                '⚠️ Stai visualizzando tutti i lotti, inclusi quelli già prenotati. Solo amministratori e operatori hanno questa visibilità completa.' :
+                'ℹ️ Stai visualizzando solo i lotti effettivamente disponibili. I lotti già prenotati da altri centri non sono mostrati.'
+              }
+            </Text>
+          </View>
+        )}
       />
       
       {/* Modal per la prenotazione */}
@@ -635,7 +664,78 @@ export default function LottiScreen() {
                 <Text style={styles.sectionTitle}>Data di ritiro prevista</Text>
                 <View style={styles.datePickerContainer}>
                   {/* DatePickerInput is removed as per the instructions */}
+                  {Platform.OS === 'web' ? (
+                    <input
+                      type="date"
+                      style={styles.webDatePicker}
+                      min={new Date().toISOString().split('T')[0]}
+                      value={dataRitiroPrevista?.toISOString().split('T')[0]}
+                      onChange={(e) => {
+                        try {
+                          console.log('Input web datestring:', e.target.value);
+                          if (e.target.value) {
+                            const date = new Date(e.target.value);
+                            if (!isNaN(date.getTime())) {
+                              setDataRitiroPrevista(date);
+                            }
+                          }
+                        } catch (error) {
+                          console.error('Errore nel date picker web:', error);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <View>
+                      <View style={styles.dateButtonsRow}>
+                        <Button
+                          mode="outlined"
+                          onPress={() => setDataRitiroPrevista(addDays(new Date(), 1))}
+                          style={[
+                            styles.dateButton,
+                            dataRitiroPrevista && format(dataRitiroPrevista, 'yyyy-MM-dd') === format(addDays(new Date(), 1), 'yyyy-MM-dd') ? styles.dateButtonSelected : null
+                          ]}
+                        >
+                          Domani
+                        </Button>
+                        <Button
+                          mode="outlined"
+                          onPress={() => setDataRitiroPrevista(addDays(new Date(), 2))}
+                          style={[
+                            styles.dateButton,
+                            dataRitiroPrevista && format(dataRitiroPrevista, 'yyyy-MM-dd') === format(addDays(new Date(), 2), 'yyyy-MM-dd') ? styles.dateButtonSelected : null
+                          ]}
+                        >
+                          Dopodomani
+                        </Button>
+                      </View>
+                      
+                      <View style={styles.dateButtonsRow}>
+                        <Button
+                          mode="outlined"
+                          onPress={() => setDataRitiroPrevista(addDays(new Date(), 3))}
+                          style={[
+                            styles.dateButton,
+                            dataRitiroPrevista && format(dataRitiroPrevista, 'yyyy-MM-dd') === format(addDays(new Date(), 3), 'yyyy-MM-dd') ? styles.dateButtonSelected : null
+                          ]}
+                        >
+                          Tra 3 giorni
+                        </Button>
+                        <Button
+                          mode="outlined"
+                          onPress={() => setShowCustomDatePicker(true)}
+                          style={styles.dateButton}
+                          icon="calendar"
+                        >
+                          Personalizzata
+                        </Button>
+                      </View>
+                    </View>
+                  )}
                 </View>
+                
+                <Text style={styles.selectedDateText}>
+                  Data selezionata: {dataRitiroPrevista ? format(dataRitiroPrevista, 'dd/MM/yyyy', { locale: it }) : 'Non selezionata'}
+                </Text>
                 
                 <Text style={styles.notesSectionTitle}>Note (opzionale)</Text>
                 <PaperTextInput
@@ -699,6 +799,160 @@ export default function LottiScreen() {
               <Text style={styles.footerText}>
                 La prenotazione ti impegna a ritirare il lotto nella data selezionata
               </Text>
+            </View>
+          </View>
+        </Modal>
+      </Portal>
+      
+      {/* Modal per la selezione personalizzata della data */}
+      <Portal>
+        <Modal 
+          visible={showCustomDatePicker} 
+          onDismiss={() => setShowCustomDatePicker(false)}
+          contentContainerStyle={styles.modalContainer}
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeaderContainer}>
+              <Text style={{fontSize: 18, fontWeight: 'bold', color: '#fff'}}>Seleziona data di ritiro</Text>
+            </View>
+            
+            <View style={{padding: 16}}>
+              {/* Mostriamo un calendario semplice */}
+              <View style={styles.calendarContainer}>
+                {/* Intestazione con nome mese e controlli */}
+                <View style={styles.calendarHeader}>
+                  <IconButton 
+                    icon="chevron-left" 
+                    onPress={() => {
+                      const newDate = new Date(dataRitiroPrevista || new Date());
+                      newDate.setMonth(newDate.getMonth() - 1);
+                      setDataRitiroPrevista(newDate);
+                    }}
+                  />
+                  <Text style={styles.calendarMonthTitle}>
+                    {dataRitiroPrevista ? format(dataRitiroPrevista, 'MMMM yyyy', { locale: it }) : format(new Date(), 'MMMM yyyy', { locale: it })}
+                  </Text>
+                  <IconButton 
+                    icon="chevron-right" 
+                    onPress={() => {
+                      const newDate = new Date(dataRitiroPrevista || new Date());
+                      newDate.setMonth(newDate.getMonth() + 1);
+                      setDataRitiroPrevista(newDate);
+                    }}
+                  />
+                </View>
+
+                {/* Giorni della settimana */}
+                <View style={styles.weekDaysContainer}>
+                  {['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'].map((day, index) => (
+                    <Text key={index} style={styles.weekDayText}>{day}</Text>
+                  ))}
+                </View>
+
+                {/* Calendario */}
+                <View style={styles.daysContainer}>
+                  {(() => {
+                    const currentDate = dataRitiroPrevista || new Date();
+                    const monthStart = startOfMonth(currentDate);
+                    const monthEnd = endOfMonth(currentDate);
+                    const startDate = monthStart;
+                    const endDate = monthEnd;
+                    
+                    const dateFormat = 'd';
+                    const days = eachDayOfInterval({ start: startDate, end: endDate });
+                    
+                    const startDay = getDay(monthStart);
+                    
+                    // Aggiungiamo celle vuote per i giorni prima dell'inizio del mese
+                    const daysArray = [];
+                    for (let i = 0; i < startDay; i++) {
+                      daysArray.push(
+                        <View key={`empty-${i}`} style={styles.dayCell} />
+                      );
+                    }
+                    
+                    // Aggiungiamo i giorni del mese
+                    days.forEach(day => {
+                      const dateNum = getDate(day);
+                      const isToday = isSameDay(day, new Date());
+                      const isSelected = dataRitiroPrevista && isSameDay(day, dataRitiroPrevista);
+                      const isPast = isBefore(day, new Date()) && !isToday;
+                      
+                      daysArray.push(
+                        <Pressable
+                          key={day.toString()}
+                          style={[
+                            styles.dayCell,
+                            isSelected && styles.selectedDayCell,
+                            isToday && styles.todayCell,
+                            isPast && styles.pastDayCell
+                          ]}
+                          onPress={() => {
+                            if (!isPast) setDataRitiroPrevista(day);
+                          }}
+                          disabled={isPast}
+                        >
+                          <Text style={[
+                            styles.dayText,
+                            isSelected && styles.selectedDayText,
+                            isToday && styles.todayText,
+                            isPast && styles.pastDayText
+                          ]}>
+                            {dateNum}
+                          </Text>
+                        </Pressable>
+                      );
+                    });
+                    
+                    return daysArray;
+                  })()}
+                </View>
+              </View>
+              
+              <Text style={{marginVertical: 16, fontSize: 16, textAlign: 'center', color: '#333', fontWeight: 'bold'}}>
+                Data selezionata: {dataRitiroPrevista ? format(dataRitiroPrevista, 'dd/MM/yyyy', { locale: it }) : 'Non selezionata'}
+              </Text>
+              
+              {/* Bottoni di navigazione rapida */}
+              <View style={styles.dateButtonsRow}>
+                <Button 
+                  mode="outlined" 
+                  icon="calendar-today" 
+                  onPress={() => {
+                    setDataRitiroPrevista(addDays(new Date(), 1));
+                  }}
+                  style={styles.dateButton}
+                >
+                  Domani
+                </Button>
+                <Button 
+                  mode="outlined" 
+                  icon="plus" 
+                  onPress={() => {
+                    const newDate = addDays(dataRitiroPrevista || new Date(), 7);
+                    setDataRitiroPrevista(newDate);
+                  }}
+                  style={styles.dateButton}
+                >
+                  +1 settimana
+                </Button>
+              </View>
+              
+              <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 16}}>
+                <Button 
+                  mode="text" 
+                  onPress={() => setShowCustomDatePicker(false)}
+                >
+                  Annulla
+                </Button>
+                <Button 
+                  mode="contained"
+                  style={{backgroundColor: PRIMARY_COLOR}}
+                  onPress={() => setShowCustomDatePicker(false)}
+                >
+                  Conferma
+                </Button>
+              </View>
             </View>
           </View>
         </Modal>
@@ -1080,5 +1334,123 @@ const styles = StyleSheet.create({
   centroIdInput: {
     marginBottom: 16,
     backgroundColor: '#fff',
+  },
+  infoContainer: {
+    backgroundColor: '#e3f2fd',
+    marginHorizontal: 8,
+    marginVertical: 4,
+    padding: 12,
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: STATUS_COLORS.INFO,
+  },
+  infoText: {
+    fontSize: 14,
+    color: '#333',
+    lineHeight: 20,
+  },
+  webDatePicker: {
+    width: '100%',
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    marginBottom: 16,
+    fontSize: 16
+  },
+  dateButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  dateButton: {
+    flex: 1,
+    marginHorizontal: 4,
+  },
+  dateButtonSelected: {
+    borderColor: PRIMARY_COLOR,
+    borderWidth: 2,
+    backgroundColor: 'rgba(0, 152, 74, 0.1)',
+  },
+  selectedDateText: {
+    fontSize: 16,
+    color: '#333',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  calendarContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 16,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  calendarHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  calendarMonthTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    textTransform: 'capitalize',
+  },
+  weekDaysContainer: {
+    flexDirection: 'row',
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 8,
+  },
+  weekDayText: {
+    flex: 1,
+    textAlign: 'center',
+    color: '#666',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  daysContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  dayCell: {
+    width: '14.28%', // 7 giorni per riga
+    aspectRatio: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 4,
+  },
+  dayText: {
+    textAlign: 'center',
+    fontSize: 14,
+  },
+  selectedDayCell: {
+    backgroundColor: PRIMARY_COLOR,
+    borderRadius: 20,
+  },
+  selectedDayText: {
+    color: 'white',
+    fontWeight: 'bold',
+  },
+  todayCell: {
+    borderWidth: 1,
+    borderColor: PRIMARY_COLOR,
+    borderRadius: 20,
+  },
+  todayText: {
+    color: PRIMARY_COLOR,
+    fontWeight: 'bold',
+  },
+  pastDayCell: {
+    opacity: 0.4,
+  },
+  pastDayText: {
+    color: '#999',
   },
 }); 

@@ -1,6 +1,8 @@
 const db = require('../config/database');
 const ApiError = require('../middlewares/errorHandler').ApiError;
 const logger = require('../utils/logger');
+const websocket = require('../utils/websocket');
+const notificheController = require('./notifiche.controller');
 
 /**
  * Ottiene l'elenco dei lotti con filtri opzionali
@@ -8,8 +10,7 @@ const logger = require('../utils/logger');
 exports.getLotti = async (req, res, next) => {
   try {
     logger.info(`Richiesta GET /lotti ricevuta con query: ${JSON.stringify(req.query)}`);
-    const { stato, centro, scadenza_entro, page = 1, limit = 20 } = req.query;
-    const offset = (page - 1) * limit;
+    const { stato, centro, scadenza_entro } = req.query;
     
     // Verifica se la tabella Categorie esiste
     let hasCategorieTable = false;
@@ -77,10 +78,7 @@ exports.getLotti = async (req, res, next) => {
     
     logger.debug(`Totale lotti: ${total}`);
     
-    // Aggiunta di paginazione alla query principale
-    query += ' LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), offset);
-    
+    // Nessuna paginazione - rimuoviamo LIMIT e OFFSET
     logger.debug(`Query principale: ${query}`);
     logger.debug(`Parametri: ${JSON.stringify(params)}`);
     
@@ -95,20 +93,12 @@ exports.getLotti = async (req, res, next) => {
       categorie: lotto.categorie ? lotto.categorie.split(',') : []
     }));
     
-    // Calcolo informazioni di paginazione
-    const totalPages = Math.ceil(total / limit);
-    
     const response = {
       lotti: formattedLotti,
-      pagination: {
-        total,
-        pages: totalPages,
-        page: parseInt(page),
-        limit: parseInt(limit)
-      }
+      total: total
     };
     
-    logger.info(`Risposta inviata con ${formattedLotti.length} lotti`);
+    logger.info(`Risposta inviata con ${formattedLotti.length} lotti (tutti i lotti)`);
     res.json(response);
   } catch (err) {
     logger.error(`Errore nel recupero dei lotti: ${err.message}`);
@@ -348,6 +338,30 @@ exports.createLotto = async (req, res, next) => {
         
         const nomeOperatore = utente ? `${utente.nome} ${utente.cognome}` : 'Operatore';
         
+        // Creiamo il titolo e il messaggio della notifica
+        const titolo = 'Nuovo lotto creato';
+        const messaggio = `L'operatore ${nomeOperatore} ha creato il lotto "${prodotto}" con ${quantita} ${unita_misura} e scadenza il ${data_scadenza}`;
+        
+        // Usa il metodo corretto per notificare gli amministratori
+        // Questo metodo si occupa di gestire tutti gli aspetti dell'invio della notifica
+        await notificheController.notificaAdminCentro(
+          centro_origine_id,
+          'LottoCreato', // Utilizzo un valore conforme al vincolo CHECK
+          titolo,
+          messaggio,
+          `/lotti/${lottoId}`, // Link diretto al lotto
+          {
+            lottoId,
+            azione: 'creazione',
+            prodotto,
+            quantita,
+            unitaMisura: unita_misura,
+            dataScadenza: data_scadenza
+          }
+        );
+        
+        // Come backup, usiamo anche il metodo tradizionale di inserimento diretto nel DB
+        // Questo risolve potenziali problemi con la struttura delle tabelle
         const notificaQuery = `
           INSERT INTO Notifiche (
             titolo,
@@ -358,17 +372,21 @@ exports.createLotto = async (req, res, next) => {
             origine_id,
             letto,
             centro_id,
+            riferimento_id,
+            riferimento_tipo,
             creato_il
           )
           SELECT 
-            'Nuovo lotto creato',
-            'L''operatore ${nomeOperatore} ha creato il lotto "' || ? || '" con ' || ? || ' ' || ? || ' e scadenza il ' || ?',
+            ?,
+            ?,
             'Alert',
             'Media',
             u.id,
             ?,
             0,
             ?,
+            ?,
+            'Lotto',
             datetime('now')
           FROM Utenti u
           JOIN UtentiCentri uc ON u.id = uc.utente_id
@@ -380,12 +398,11 @@ exports.createLotto = async (req, res, next) => {
         const notificaResult = await db.run(
           notificaQuery, 
           [
-            prodotto, 
-            quantita, 
-            unita_misura, 
-            data_scadenza, 
+            titolo,
+            messaggio,
             req.user.id, // origine della notifica
             centro_origine_id,
+            lottoId, // riferimento_id
             centro_origine_id,
             req.user.id // non inviare a se stessi
           ]
@@ -439,22 +456,58 @@ exports.createLotto = async (req, res, next) => {
 };
 
 /**
+ * Verifica se un utente ha accesso a un lotto
+ * @param {object} user - Oggetto utente
+ * @param {number} lottoId - ID del lotto
+ * @returns {Promise<boolean>} true se l'utente ha accesso, false altrimenti
+ */
+async function checkLottoAccess(user, lottoId) {
+  try {
+    // Recupera informazioni sul lotto
+    const lotto = await db.get('SELECT centro_origine_id FROM Lotti WHERE id = ?', [lottoId]);
+    
+    if (!lotto) {
+      logger.warn(`Lotto con ID ${lottoId} non trovato durante il controllo di accesso`);
+      return false;
+    }
+    
+    // Se l'utente è un admin, ha accesso a tutto
+    if (user.ruolo === 'Admin' || user.ruolo === 'SuperAdmin') {
+      return true;
+    }
+    
+    // Verifica se l'utente appartiene al centro del lotto
+    const utenteCentro = await db.get(
+      'SELECT 1 FROM UtentiCentri WHERE utente_id = ? AND centro_id = ?',
+      [user.id, lotto.centro_origine_id]
+    );
+    
+    return !!utenteCentro;
+  } catch (error) {
+    logger.error(`Errore nel controllo di accesso al lotto: ${error.message}`);
+    return false;
+  }
+}
+
+/**
  * Aggiorna un lotto esistente
  */
 exports.updateLotto = async (req, res, next) => {
   try {
-    logger.info(`Richiesta di aggiornamento lotto ID ${req.params.id} ricevuta`);
+    const lottoId = req.params.id;
     
-    // Inizia una transazione esplicita con SQLite
-    try {
-      await db.exec('BEGIN TRANSACTION');
-      logger.info('Transazione iniziata con successo per aggiornamento lotto');
-    } catch (transactionError) {
-      logger.error(`Errore nell'iniziazione della transazione: ${transactionError.message}`);
-      return next(new ApiError(500, `Errore di database nell'avvio della transazione: ${transactionError.message}`));
+    // Recupera il lotto esistente
+    const lotto = await db.get('SELECT * FROM Lotti WHERE id = ?', [lottoId]);
+    
+    if (!lotto) {
+      return next(new ApiError(404, 'Lotto non trovato'));
     }
     
-    const lottoId = req.params.id;
+    // Aggiungiamo log dettagliati per debug
+    logger.info(`Aggiornamento lotto ${lottoId}, payload completo: ${JSON.stringify(req.body)}`);
+    logger.info(`Lotto prima dell'aggiornamento: ${JSON.stringify(lotto)}`);
+    
+    // Validazione dei dati
     const {
       prodotto,
       quantita,
@@ -465,120 +518,150 @@ exports.updateLotto = async (req, res, next) => {
       categorie_ids
     } = req.body;
     
-    // Verifica se il lotto esiste
-    const lottoEsistente = await db.get(
-      'SELECT * FROM Lotti WHERE id = ?',
-      [lottoId]
-    );
+    // Costruisci oggetto con i campi da aggiornare
+    const updateFields = {};
+    if (prodotto !== undefined) updateFields.prodotto = prodotto;
+    if (quantita !== undefined) updateFields.quantita = quantita;
+    if (unita_misura !== undefined) updateFields.unita_misura = unita_misura;
+    if (data_scadenza !== undefined) updateFields.data_scadenza = data_scadenza;
+    if (giorni_permanenza !== undefined) updateFields.giorni_permanenza = giorni_permanenza;
+    if (stato !== undefined) updateFields.stato = stato;
     
-    if (!lottoEsistente) {
-      await db.exec('ROLLBACK');
-      return next(new ApiError(404, 'Lotto non trovato'));
+    // Log dei campi da aggiornare
+    logger.info(`Campi da aggiornare: ${JSON.stringify(updateFields)}`);
+    
+    // Se non ci sono campi da aggiornare
+    if (Object.keys(updateFields).length === 0 && !categorie_ids) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Nessun campo da aggiornare'
+      });
     }
     
-    // Verifica se l'utente appartiene al centro che ha creato il lotto
-    // o è un amministratore (l'appartenenza al centro è gestita nel middleware)
-    
-    // Costruzione SET della query di aggiornamento
-    const updates = [];
-    const params = [];
-    
-    if (prodotto !== undefined) {
-      updates.push('prodotto = ?');
-      params.push(prodotto);
-    }
-    
-    if (quantita !== undefined) {
-      updates.push('quantita = ?');
-      params.push(quantita);
-    }
-    
-    if (unita_misura !== undefined) {
-      updates.push('unita_misura = ?');
-      params.push(unita_misura);
-    }
-    
-    if (data_scadenza !== undefined) {
-      updates.push('data_scadenza = ?');
-      params.push(data_scadenza);
-    }
-    
-    if (giorni_permanenza !== undefined) {
-      updates.push('giorni_permanenza = ?');
-      params.push(giorni_permanenza);
-    }
-    
-    // Gestione del cambio di stato
-    if (stato !== undefined && stato !== lottoEsistente.stato) {
-      updates.push('stato = ?');
-      params.push(stato);
+    // Ricalcola lo stato se è stata modificata la data di scadenza e non è stato fornito uno stato esplicito
+    if (data_scadenza !== undefined && stato === undefined) {
+      logger.info(`Ricalcolo dello stato per nuova data di scadenza: ${data_scadenza}`);
+      logger.info(`Data di scadenza precedente: ${lotto.data_scadenza}`);
       
-      // Registra il cambio di stato in LogCambioStato (non StatusChangeLog)
+      const oggi = new Date();
+      logger.info(`Data di scadenza ricevuta: ${data_scadenza}, tipo: ${typeof data_scadenza}`);
+      
+      // Assicurati che la data di scadenza sia nel formato corretto (YYYY-MM-DD)
+      let dataScadenza;
       try {
-        const logQuery = `
-          INSERT INTO LogCambioStato (
-            lotto_id, 
-            stato_precedente, 
-            stato_nuovo, 
-            cambiato_il,
-            cambiato_da
-          ) VALUES (?, ?, ?, datetime('now'), ?)
-        `;
-        
-        await db.run(logQuery, [
-          lottoId,
-          lottoEsistente.stato,
-          stato,
-          req.user.id
-        ]);
-        logger.info(`Cambio di stato registrato con successo: ${lottoEsistente.stato} -> ${stato}`);
-      } catch (logError) {
-        logger.error(`Errore nella registrazione del cambio di stato: ${logError.message}`);
-        await db.exec('ROLLBACK');
-        return next(new ApiError(500, `Errore nella registrazione del cambio di stato: ${logError.message}`));
+        dataScadenza = new Date(data_scadenza);
+        logger.info(`Data di scadenza convertita: ${dataScadenza.toISOString()}, è valida: ${!isNaN(dataScadenza.getTime())}`);
+      } catch (err) {
+        logger.error(`Errore nella conversione della data di scadenza: ${err.message}`);
+        dataScadenza = new Date(data_scadenza);
       }
+      
+      if (isNaN(dataScadenza.getTime())) {
+        logger.error(`Data di scadenza non valida: ${data_scadenza}`);
+        return next(new ApiError(400, 'Data di scadenza non valida'));
+      }
+      
+      // Assicurati che la data di scadenza sia formattata in YYYY-MM-DD per il database
+      // Questo è importante perché SQLite salva le date come testo, non come oggetti Date
+      const dataScadenzaFormatted = dataScadenza.toISOString().split('T')[0];
+      logger.info(`Data di scadenza formattata per DB: ${dataScadenzaFormatted}`);
+      
+      // Aggiorna il campo data_scadenza con il valore formattato
+      updateFields.data_scadenza = dataScadenzaFormatted;
+      
+      const giorni = updateFields.giorni_permanenza !== undefined ? 
+                     parseInt(updateFields.giorni_permanenza) : 
+                     parseInt(lotto.giorni_permanenza);
+      
+      // Calcola la data limite in base ai giorni di permanenza
+      const dataLimite = new Date(dataScadenza);
+      dataLimite.setDate(dataLimite.getDate() - giorni);
+      
+      logger.info(`Data odierna: ${oggi.toISOString()}`);
+      logger.info(`Data di scadenza: ${dataScadenza.toISOString()}`);
+      logger.info(`Data limite: ${dataLimite.toISOString()}`);
+      logger.info(`Giorni di permanenza: ${giorni}`);
+      
+      // Determina il nuovo stato
+      let nuovoStato;
+      if (dataScadenza <= oggi) {
+        nuovoStato = 'Rosso';
+      } else if (dataLimite <= oggi) {
+        nuovoStato = 'Arancione';
+      } else {
+        nuovoStato = 'Verde';
+      }
+      
+      updateFields.stato = nuovoStato;
+      logger.info(`Stato del lotto ricalcolato dopo modifica della data di scadenza: ${updateFields.stato}`);
     }
     
-    // Aggiornamento del lotto
-    if (updates.length > 0) {
-      const updateQuery = `
-        UPDATE Lotti
-        SET ${updates.join(', ')}, aggiornato_il = datetime('now')
-        WHERE id = ?
-      `;
-      
-      params.push(lottoId);
-      try {
-        await db.run(updateQuery, params);
-        logger.info(`Lotto ID ${lottoId} aggiornato con successo`);
+    // Avvia transazione
+    await db.exec('BEGIN TRANSACTION');
+    
+    try {
+      // Aggiorna i campi del lotto
+      if (Object.keys(updateFields).length > 0) {
+        const setClauses = Object.keys(updateFields).map(field => `${field} = ?`).join(', ');
+        const values = Object.values(updateFields);
         
-        // Crea notifiche per gli amministratori del centro quando un lotto viene modificato
+        logger.info(`Aggiornamento lotto ${lottoId} con i seguenti campi: ${JSON.stringify(updateFields)}`);
+        logger.info(`Query di aggiornamento: UPDATE Lotti SET ${setClauses} WHERE id = ?`);
+        logger.info(`Parametri: ${[...values, lottoId].join(', ')}`);
+        
         try {
-          // Prepara la descrizione delle modifiche
-          let descrizioneModifiche = 'Modifiche: ';
-          if (prodotto !== undefined) descrizioneModifiche += 'nome, ';
-          if (quantita !== undefined) descrizioneModifiche += 'quantità, ';
-          if (unita_misura !== undefined) descrizioneModifiche += 'unità di misura, ';
-          if (data_scadenza !== undefined) descrizioneModifiche += 'data scadenza, ';
-          if (stato !== undefined) descrizioneModifiche += 'stato, ';
-          // Rimuovi l'ultima virgola e spazio
-          descrizioneModifiche = descrizioneModifiche.replace(/, $/, '');
+          const result = await db.run(
+            `UPDATE Lotti SET ${setClauses} WHERE id = ?`,
+            [...values, lottoId]
+          );
           
-          // Ottieni i dettagli aggiornati del lotto
-          const lottoAggiornato = await db.get(
-            'SELECT prodotto, centro_origine_id FROM Lotti WHERE id = ?',
+          logger.info(`Aggiornamento completato, righe modificate: ${result.changes}`);
+          
+          // Verifica esplicita se la data è stata aggiornata nel database
+          if (updateFields.data_scadenza) {
+            const lottoAggiornato = await db.get('SELECT data_scadenza FROM Lotti WHERE id = ?', [lottoId]);
+            logger.info(`Verifica dell'aggiornamento della data: data precedente=${lotto.data_scadenza}, nuova data=${lottoAggiornato.data_scadenza}`);
+          }
+        } catch (dbError) {
+          logger.error(`Errore nell'aggiornamento del lotto nel DB: ${dbError.message}`);
+          throw dbError;
+        }
+        
+        // Notifica gli amministratori della modifica del lotto
+        try {
+          // Ottieni dettagli del lotto aggiornato
+          const dettaglioLotto = await db.get(
+            `SELECT l.*, c.nome AS centro_nome, u.nome AS operatore_nome, u.cognome AS operatore_cognome 
+             FROM Lotti l
+             LEFT JOIN Centri c ON l.centro_origine_id = c.id
+             LEFT JOIN Utenti u ON l.inserito_da = u.id
+             WHERE l.id = ?`,
             [lottoId]
           );
           
-          // Ottieni l'informazione sull'utente che ha modificato il lotto
-          const utente = await db.get(
-            'SELECT nome, cognome FROM Utenti WHERE id = ?', 
-            [req.user.id]
-          );
-          
-          const nomeOperatore = utente ? `${utente.nome} ${utente.cognome}` : 'Operatore';
-          
-          if (lottoAggiornato) {
+          if (dettaglioLotto) {
+            const nomeOperatore = `${req.user.nome || ''} ${req.user.cognome || ''}`.trim() || 'Operatore';
+            const tipoModifica = Object.keys(updateFields).join(', ');
+            
+            // Prepara messaggio di notifica
+            const titolo = 'Lotto aggiornato';
+            const messaggio = `L'operatore ${nomeOperatore} ha modificato il lotto "${dettaglioLotto.prodotto}" (${tipoModifica})`;
+            
+            // Notifica tutti gli amministratori del centro
+            await notificheController.notificaAdminCentro(
+              dettaglioLotto.centro_origine_id,
+              'LottoModificato',
+              titolo,
+              messaggio,
+              `/lotti/${lottoId}`,
+              {
+                lottoId,
+                azione: 'modifica',
+                campi_modificati: Object.keys(updateFields)
+              }
+            );
+            
+            // Inserisci anche nella tabella Notifiche direttamente
             const notificaQuery = `
               INSERT INTO Notifiche (
                 titolo,
@@ -589,17 +672,21 @@ exports.updateLotto = async (req, res, next) => {
                 origine_id,
                 letto,
                 centro_id,
+                riferimento_id,
+                riferimento_tipo,
                 creato_il
               )
               SELECT 
-                'Lotto modificato',
-                'L''operatore ${nomeOperatore} ha modificato il lotto "' || ? || '". ' || ?,
+                ?,
+                ?,
                 'Alert',
                 'Media',
                 u.id,
                 ?,
                 0,
                 ?,
+                ?,
+                'Lotto',
                 datetime('now')
               FROM Utenti u
               JOIN UtentiCentri uc ON u.id = uc.utente_id
@@ -608,93 +695,227 @@ exports.updateLotto = async (req, res, next) => {
                 AND u.id != ? -- Non inviare a se stessi
             `;
             
-            const notificaResult = await db.run(
+            await db.run(
               notificaQuery, 
               [
-                lottoAggiornato.prodotto,
-                descrizioneModifiche,
+                titolo,
+                messaggio,
                 req.user.id, // origine della notifica
-                lottoAggiornato.centro_origine_id,
-                lottoAggiornato.centro_origine_id,
+                dettaglioLotto.centro_origine_id,
+                lottoId, // riferimento_id
+                dettaglioLotto.centro_origine_id,
                 req.user.id // non inviare a se stessi
               ]
             );
             
-            logger.info(`Notifiche create per gli amministratori del centro ${lottoAggiornato.centro_origine_id} per il lotto modificato ${lottoId}`);
+            logger.info(`Notifiche create per gli amministratori del centro ${dettaglioLotto.centro_origine_id} per la modifica del lotto ${lottoId}`);
           }
         } catch (notificaError) {
-          logger.error(`Errore nella creazione delle notifiche per il lotto modificato: ${notificaError.message}`);
-          // Continuiamo comunque con il commit, non è un errore fatale
+          logger.error(`Errore nella creazione delle notifiche per la modifica del lotto: ${notificaError.message}`);
+          // Continuiamo comunque, non è un errore fatale
         }
-      } catch (updateError) {
-        logger.error(`Errore nell'aggiornamento del lotto: ${updateError.message}`);
-        await db.exec('ROLLBACK');
-        return next(new ApiError(500, `Errore nell'aggiornamento del lotto: ${updateError.message}`));
-      }
-    }
-    
-    // Aggiornamento categorie se specificate
-    if (categorie_ids !== undefined) {
-      try {
-        // Rimuovi tutte le categorie esistenti
-        await db.run(
-          'DELETE FROM LottiCategorie WHERE lotto_id = ?',
-          [lottoId]
-        );
         
-        // Aggiungi le nuove categorie
-        if (categorie_ids.length > 0) {
-          for (const catId of categorie_ids) {
-            await db.run(
-              'INSERT INTO LottiCategorie (lotto_id, categoria_id) VALUES (?, ?)',
-              [lottoId, catId]
-            );
-          }
+        // Aggiungi log di cambio stato se lo stato è cambiato
+        if (updateFields.stato && updateFields.stato !== lotto.stato) {
+          const dataOra = new Date().toISOString();
+          await db.run(
+            `INSERT INTO LogCambioStato (lotto_id, stato_precedente, stato_nuovo, cambiato_il, cambiato_da) 
+             VALUES (?, ?, ?, datetime('now'), ?)`,
+            [lottoId, lotto.stato, updateFields.stato, req.user.id]
+          );
+          
+          // Notifica gli utenti interessati del cambio di stato
+          await notificaUtentiCambioStato(lottoId, lotto.stato, updateFields.stato, lotto.centro_origine_id);
         }
-        logger.info(`Categorie aggiornate con successo per il lotto ID ${lottoId}`);
-      } catch (categorieError) {
-        logger.error(`Errore nell'aggiornamento delle categorie: ${categorieError.message}`);
-        await db.exec('ROLLBACK');
-        return next(new ApiError(500, `Errore nell'aggiornamento delle categorie: ${categorieError.message}`));
       }
-    }
-    
-    try {
-      // Commit della transazione
+      
+      // Aggiorna le categorie se fornite
+      if (categorie_ids && Array.isArray(categorie_ids)) {
+        try {
+          // Verifica prima se la tabella Categorie esiste
+          const tableExists = await db.get(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='Categorie'"
+          );
+          
+          if (!tableExists) {
+            logger.warn("La tabella 'Categorie' non esiste nel database, creazione saltata");
+          } else {
+            // Rimuovi le vecchie associazioni
+            await db.run('DELETE FROM LottiCategorie WHERE lotto_id = ?', [lottoId]);
+            
+            // Aggiungi le nuove associazioni
+            for (const categoriaId of categorie_ids) {
+              await db.run(
+                'INSERT INTO LottiCategorie (lotto_id, categoria_id) VALUES (?, ?)',
+                [lottoId, categoriaId]
+              );
+            }
+          }
+        } catch (categorieError) {
+          logger.error(`Errore nell'aggiornamento delle categorie: ${categorieError.message}`);
+          // Continuiamo comunque, non è un errore fatale
+        }
+      }
+      
       await db.exec('COMMIT');
-      logger.info(`Transazione completata con successo per l'aggiornamento del lotto ID ${lottoId}`);
-    } catch (commitError) {
-      logger.error(`Errore durante il commit della transazione: ${commitError.message}`);
-      await db.exec('ROLLBACK');
-      return next(new ApiError(500, `Errore nel completamento della transazione: ${commitError.message}`));
-    }
-    
-    // Recupera il lotto aggiornato
-    try {
+      
+      // Recupera il lotto aggiornato
       const lottoAggiornato = await db.get(
-        'SELECT * FROM Lotti WHERE id = ?',
+        `SELECT l.*, c.nome as centro_nome 
+         FROM Lotti l
+         LEFT JOIN Centri c ON l.centro_origine_id = c.id
+         WHERE l.id = ?`,
         [lottoId]
       );
       
-      res.json(lottoAggiornato);
-    } catch (getError) {
-      logger.error(`Errore nel recupero del lotto aggiornato: ${getError.message}`);
-      return next(new ApiError(500, `Errore nel recupero del lotto aggiornato: ${getError.message}`));
-    }
-  } catch (err) {
-    // Rollback in caso di errore
-    try {
+      logger.info(`Lotto dopo aggiornamento: ${JSON.stringify(lottoAggiornato)}`);
+      
+      if (!lottoAggiornato) {
+        logger.error(`Impossibile recuperare il lotto ${lottoId} dopo l'aggiornamento`);
+        return next(new ApiError(500, 'Errore nel recupero del lotto aggiornato'));
+      }
+      
+      // Recupera le categorie del lotto (con gestione errore)
+      let categorie = [];
+      try {
+        // Verifica prima se la tabella Categorie esiste
+        const tableExists = await db.get(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='Categorie'"
+        );
+        
+        if (tableExists) {
+          categorie = await db.all(
+            `SELECT c.id, c.nome
+             FROM Categorie c
+             JOIN LottiCategorie lc ON c.id = lc.categoria_id
+             WHERE lc.lotto_id = ?`,
+            [lottoId]
+          );
+        } else {
+          logger.warn("La tabella 'Categorie' non esiste nel database, recupero saltato");
+        }
+      } catch (categorieError) {
+        logger.error(`Errore nel recupero delle categorie: ${categorieError.message}`);
+        categorie = []; // Assicuriamoci che sia un array vuoto in caso di errore
+      }
+      
+      lottoAggiornato.categorie = categorie.map(c => c.nome || '');
+      
+      // Invia notifica di aggiornamento tramite WebSocket
+      websocket.notificaAggiornamentoLotto(lottoAggiornato);
+      
+      res.json({
+        status: 'success',
+        message: 'Lotto aggiornato con successo',
+        lotto: lottoAggiornato
+      });
+      
+    } catch (error) {
       await db.exec('ROLLBACK');
-      logger.error(`Transazione annullata a causa di un errore non gestito`);
-    } catch (rollbackError) {
-      logger.error(`Errore anche durante il rollback: ${rollbackError.message}`);
+      throw error;
     }
-    
-    logger.error(`Errore generale nell'aggiornamento del lotto: ${err.message}`);
-    logger.error(`Stack trace: ${err.stack}`);
-    next(new ApiError(500, `Errore nell'aggiornamento del lotto: ${err.message}`));
+  } catch (error) {
+    logger.error(`Errore nell'aggiornamento del lotto: ${error.message}`);
+    next(new ApiError(500, 'Errore nell\'aggiornamento del lotto'));
   }
 };
+
+/**
+ * Notifica gli utenti interessati del cambio di stato di un lotto
+ * @param {number} lottoId - ID del lotto
+ * @param {string} statoPrecedente - Stato precedente
+ * @param {string} statoNuovo - Nuovo stato
+ * @param {number} centroId - ID del centro
+ */
+async function notificaUtentiCambioStato(lottoId, statoPrecedente, statoNuovo, centroId) {
+  try {
+    // Ottieni dettagli del lotto
+    const lotto = await db.get(
+      `SELECT prodotto, quantita, unita_misura FROM Lotti WHERE id = ?`,
+      [lottoId]
+    );
+    
+    if (!lotto) return;
+    
+    // Ottieni utenti interessati (operatori del centro e amministratori)
+    const utenti = await db.all(`
+      SELECT DISTINCT u.id
+      FROM Utenti u
+      JOIN UtentiCentri uc ON u.id = uc.utente_id
+      WHERE uc.centro_id = ? AND u.ruolo IN ('Operatore', 'Amministratore')
+    `, [centroId]);
+    
+    if (!utenti || utenti.length === 0) return;
+    
+    // Prepara il messaggio di notifica
+    let tipo = 'CambioStato'; // Utilizza un valore consentito dal vincolo CHECK
+    let titolo = `Aggiornamento stato lotto`;
+    let messaggio = `Il lotto "${lotto.prodotto}" (${lotto.quantita} ${lotto.unita_misura}) è passato dallo stato ${statoPrecedente} allo stato ${statoNuovo}`;
+    
+    // Personalizza il titolo in base allo stato
+    if (statoNuovo === 'Arancione') {
+      titolo = `Lotto in scadenza`;
+    } else if (statoNuovo === 'Rosso') {
+      titolo = `Lotto scaduto`;
+    }
+    
+    // Dati extra per il frontend
+    const datiExtra = {
+      lottoId,
+      statoPrecedente,
+      statoNuovo
+    };
+    
+    // Invia notifiche a tutti gli utenti interessati
+    const userIds = utenti.map(u => u.id);
+    for (const userId of userIds) {
+      await notificheController.creaNotifica(
+        userId,
+        tipo,
+        titolo,
+        messaggio,
+        `/lotti/${lottoId}`,
+        datiExtra
+      );
+    }
+    
+    // Ottieni prenotazioni attive per il lotto
+    const prenotazioni = await db.all(`
+      SELECT p.id, p.centro_ricevente_id
+      FROM Prenotazioni p
+      WHERE p.lotto_id = ? AND p.stato = 'Attiva'
+    `, [lottoId]);
+    
+    // Notifica i centri che hanno prenotazioni attive
+    for (const prenotazione of prenotazioni) {
+      // Ottieni gli operatori del centro destinazione
+      const operatoriCentro = await db.all(`
+        SELECT u.id
+        FROM Utenti u
+        JOIN UtentiCentri uc ON u.id = uc.utente_id
+        WHERE uc.centro_id = ?
+      `, [prenotazione.centro_ricevente_id]);
+      
+      // Invia notifiche agli operatori
+      for (const operatore of operatoriCentro) {
+        await notificheController.creaNotifica(
+          operatore.id,
+          'Prenotazione', // Utilizza un valore consentito dal vincolo CHECK
+          `Aggiornamento prenotazione`,
+          `Un lotto prenotato "${lotto.prodotto}" è passato allo stato ${statoNuovo}`,
+          `/prenotazioni/${prenotazione.id}`,
+          {
+            ...datiExtra,
+            prenotazioneId: prenotazione.id
+          }
+        );
+      }
+    }
+    
+  } catch (error) {
+    logger.error(`Errore nell'invio delle notifiche di cambio stato: ${error.message}`);
+  }
+}
 
 /**
  * Elimina un lotto
@@ -769,8 +990,7 @@ exports.deleteLotto = async (req, res, next) => {
 exports.getLottiDisponibili = async (req, res, next) => {
   try {
     logger.info(`Richiesta GET /lotti/disponibili ricevuta con query: ${JSON.stringify(req.query)}`);
-    const { stato, raggio, lat, lng, centro_id, page = 1, limit = 20 } = req.query;
-    const offset = (page - 1) * limit;
+    const { stato, raggio, lat, lng, centro_id } = req.query;
     
     // Utente autenticato
     const userId = req.user.id;
@@ -953,10 +1173,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
     
     logger.debug(`Totale lotti disponibili: ${total}`);
     
-    // Aggiunta della paginazione
-    query += ' LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), offset);
-    
+    // Rimuoviamo la paginazione per visualizzare tutti i lotti
     logger.debug(`Query principale: ${query}`);
     
     // Esecuzione della query principale
@@ -968,20 +1185,12 @@ exports.getLottiDisponibili = async (req, res, next) => {
       categorie: lotto.categorie ? lotto.categorie.split(',') : []
     }));
     
-    logger.info(`Lotti disponibili recuperati: ${formattedLotti.length}`);
+    logger.info(`Lotti disponibili recuperati: ${formattedLotti.length} (visualizzazione completa)`);
     
-    // Calcolo informazioni di paginazione
-    const totalPages = Math.ceil(total / limit);
-    
-    // Preparazione della risposta
+    // Preparazione della risposta senza paginazione
     const response = {
       lotti: formattedLotti,
-      pagination: {
-        total,
-        pages: totalPages,
-        page: parseInt(page),
-        limit: parseInt(limit)
-      }
+      total: total
     };
     
     res.json(response);

@@ -1,13 +1,14 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, ActivityIndicator, TouchableOpacity, ScrollView } from 'react-native';
 import { Stack, router, useFocusEffect } from 'expo-router';
-import { Appbar, Button, Text, Chip, Divider, Menu, Portal, Dialog } from 'react-native-paper';
+import { Appbar, Button, Text, Chip, Divider, Menu, Portal, Dialog, Badge } from 'react-native-paper';
 import { useNotifiche } from '../../src/context/NotificheContext';
 import NotificaItem from '../../src/components/NotificaItem';
 import { NotificaFiltri, Notifica } from '../../src/types/notification';
 import pushNotificationService from '../../src/services/pushNotificationService';
 import Toast from 'react-native-toast-message';
 import logger from '../../src/utils/logger';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 // Dati mock di esempio per fallback quando il backend non risponde
 const MOCK_NOTIFICHE: Notifica[] = [
@@ -41,7 +42,8 @@ export default function NotificheScreen() {
     caricaNotifiche, 
     refreshNotifiche, 
     segnaTutteLette,
-    syncLocalNotificheToServer
+    syncLocalNotificheToServer,
+    wsConnected
   } = useNotifiche();
   
   const [refreshing, setRefreshing] = useState(false);
@@ -556,38 +558,39 @@ export default function NotificheScreen() {
   // Determina quali notifiche mostrare (mock o reali)
   const notificheToDisplay = isUsingMockData ? localNotifiche : notifiche;
   
-  return (
-    <>
-      <Stack.Screen 
-        options={{ 
-          title: 'Notifiche',
-          headerShown: false
-        }} 
-      />
+  // Renderizza l'header con indicatore WebSocket
+  const renderHeader = () => (
+    <Appbar.Header>
+      <Appbar.Content title="Notifiche" />
       
-      <Appbar.Header>
-        <Appbar.BackAction onPress={() => router.back()} />
-        <Appbar.Content title={isUsingMockData ? "Notifiche (Demo)" : "Notifiche"} />
-        
-        {syncingNotifications ? (
-          <ActivityIndicator animating={true} color="white" size={24} style={{marginRight: 12}} />
-        ) : (
-          <Appbar.Action 
-            icon="cloud-sync" 
-            onPress={handleSyncNotifications} 
-            disabled={loading || refreshing}
-            color="white"
-          />
-        )}
-        
-        <Appbar.Action 
-          icon="filter-variant" 
-          onPress={() => setFilterDialogVisible(true)} 
-          color={hasActiveFilters() ? '#ffeb3b' : 'white'}
+      {/* Indicatore connessione WebSocket per notifiche real-time */}
+      <View style={styles.wsIndicatorContainer}>
+        <MaterialCommunityIcons 
+          name={wsConnected ? "access-point" : "access-point-off"} 
+          size={18} 
+          color={wsConnected ? "#4CAF50" : "#9E9E9E"} 
         />
-        
-        <Appbar.Action icon="dots-vertical" onPress={() => setMenuVisible(true)} />
-      </Appbar.Header>
+        <Text style={[styles.wsIndicatorText, {color: wsConnected ? "#4CAF50" : "#9E9E9E"}]}>
+          {wsConnected ? "Live" : "Offline"}
+        </Text>
+      </View>
+      
+      {notifiche.length > 0 && (
+        <Appbar.Action 
+          icon="check-all" 
+          onPress={() => setMenuVisible(true)} 
+        />
+      )}
+    </Appbar.Header>
+  );
+  
+  return (
+    <View style={styles.container}>
+      <Stack.Screen 
+        options={{
+          header: () => renderHeader()
+        }}
+      />
       
       {isUsingMockData && (
         <View style={styles.mockBanner}>
@@ -807,11 +810,14 @@ export default function NotificheScreen() {
           </Dialog.Actions>
         </Dialog>
       </Portal>
-    </>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -888,5 +894,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#E65100',
     fontStyle: 'italic',
+  },
+  wsIndicatorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginRight: 12,
+  },
+  wsIndicatorText: {
+    fontSize: 12,
+    marginLeft: 4,
+    fontWeight: '500',
   },
 }); 

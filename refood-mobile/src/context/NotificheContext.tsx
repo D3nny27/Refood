@@ -4,6 +4,9 @@ import notificheService from '../services/notificheService';
 import { useAuth } from './AuthContext';
 import { listenEvent, APP_EVENTS } from '../utils/events';
 import logger from '../utils/logger';
+import websocketService, { WebSocketEvent, WebSocketMessage } from '../services/websocketService';
+import { Subscription } from 'rxjs';
+import Toast from 'react-native-toast-message';
 
 interface NotificheContextType {
   notifiche: Notifica[];
@@ -18,6 +21,7 @@ interface NotificheContextType {
   aggiornaConteggio: () => Promise<void>;
   segnalaComeLetta: (id: number) => Promise<void>;
   syncLocalNotificheToServer: () => Promise<number>;
+  wsConnected: boolean;
 }
 
 // Creazione del contesto con valori di default
@@ -34,6 +38,7 @@ const NotificheContext = createContext<NotificheContextType>({
   aggiornaConteggio: async () => {},
   segnalaComeLetta: async () => {},
   syncLocalNotificheToServer: async () => 0,
+  wsConnected: false,
 });
 
 // Hook personalizzato per utilizzare il contesto
@@ -50,7 +55,14 @@ export const NotificheProvider: React.FC<NotificheProviderProps> = ({ children }
   const [nonLette, setNonLette] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [wsConnected, setWsConnected] = useState<boolean>(false);
+  const [usingPolling, setUsingPolling] = useState<boolean>(false);
   
+  // Riferimento alla sottoscrizione WebSocket
+  const wsSubscriptionRef = React.useRef<Subscription | null>(null);
+  // Riferimento al timer di polling
+  const pollingIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+
   // Carica le notifiche dal server
   const caricaNotifiche = useCallback(async (page = 1, limit = 20, filtri?: NotificaFiltri) => {
     if (!isAuthenticated) return;
@@ -161,23 +173,179 @@ export const NotificheProvider: React.FC<NotificheProviderProps> = ({ children }
     await aggiornaConteggio();
   }, [caricaNotifiche, aggiornaConteggio]);
 
-  // Effetto per impostare il polling delle notifiche
-  useEffect(() => {
-    if (!isAuthenticated) return;
+  // Avvia il polling delle notifiche
+  const startPolling = useCallback(() => {
+    // Interrompi eventuali polling precedenti
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    
+    logger.log('Avvio polling notifiche come fallback');
     
     // Funzione di callback per il polling
     const onNewNotificheCount = (count: number) => {
+      // Se il conteggio è cambiato, ricarica le notifiche
+      if (count > nonLette) {
+        logger.log(`Rilevate ${count - nonLette} nuove notifiche tramite polling`);
+        refreshNotifiche();
+      }
       setNonLette(count);
     };
     
-    // Avvia il polling
-    notificheService.avviaPollingNotifiche(onNewNotificheCount);
+    // Avvia il polling con intervallo più breve (15 secondi invece di 30)
+    notificheService.avviaPollingNotifiche(onNewNotificheCount, 15000);
     
-    // Cleanup quando il componente si smonta
+    // Salva il riferimento per pulizia
+    pollingIntervalRef.current = setInterval(() => {
+      aggiornaConteggio();
+    }, 15000);
+    
+    // Flag che indica che stiamo usando il polling
+    setUsingPolling(true);
+  }, [nonLette, refreshNotifiche, aggiornaConteggio]);
+  
+  // Interrompe il polling
+  const stopPolling = useCallback(() => {
+    notificheService.interrompiPollingNotifiche();
+    
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    
+    setUsingPolling(false);
+  }, []);
+
+  // Gestisce i messaggi WebSocket
+  const handleWebSocketMessage = useCallback((message: WebSocketMessage) => {
+    logger.log('WebSocket messaggio ricevuto:', message.type);
+    
+    switch (message.type) {
+      case WebSocketEvent.CONNECT:
+        setWsConnected(true);
+        setUsingPolling(false);
+        logger.log('WebSocket connesso');
+        break;
+        
+      case WebSocketEvent.DISCONNECT:
+        setWsConnected(false);
+        logger.log('WebSocket disconnesso');
+        // Non impostiamo subito usingPolling qui, perché potrebbe essere una disconnessione temporanea
+        break;
+        
+      case WebSocketEvent.ERROR:
+        // Controlla se è un errore permanente che indica di usare il fallback
+        if (message.payload?.permanent && message.payload?.usingFallback) {
+          logger.log('Attivazione polling come fallback per errore WebSocket permanente');
+          setWsConnected(false);
+          setUsingPolling(true);
+          
+          // Avvia il polling immediatamente
+          startPolling();
+        }
+        break;
+        
+      case WebSocketEvent.NOTIFICATION:
+        // Ricevuta una nuova notifica
+        const nuovaNotifica = message.payload.notifica as Notifica;
+        if (nuovaNotifica && nuovaNotifica.id) {
+          logger.log('Nuova notifica ricevuta via WebSocket:', nuovaNotifica.titolo);
+          
+          // Aggiungi la nuova notifica all'inizio dell'array
+          setNotifiche(prev => [nuovaNotifica, ...prev]);
+          
+          // Incrementa il contatore delle notifiche non lette
+          setNonLette(prev => prev + 1);
+          
+          // Mostra un toast per la nuova notifica
+          Toast.show({
+            type: nuovaNotifica.priorita === 'Alta' ? 'error' : 'info',
+            text1: nuovaNotifica.titolo,
+            text2: nuovaNotifica.messaggio,
+            visibilityTime: 4000,
+          });
+        }
+        break;
+        
+      case WebSocketEvent.LOTTO_UPDATE:
+        // Aggiornamento stato lotto
+        logger.log('Aggiornamento lotto ricevuto via WebSocket');
+        
+        // Potremmo aggiungere logica specifica qui se necessario
+        // Ad esempio, refreshare automaticamente la schermata dei lotti
+        
+        break;
+        
+      case WebSocketEvent.PRENOTAZIONE_UPDATE:
+        // Aggiornamento stato prenotazione
+        logger.log('Aggiornamento prenotazione ricevuto via WebSocket');
+        
+        // Potremmo aggiungere logica specifica qui se necessario
+        
+        break;
+        
+      default:
+        logger.log('Messaggio WebSocket non gestito:', message.type);
+    }
+  }, [startPolling]);
+
+  // Inizializza la connessione WebSocket
+  const initializeWebSocket = useCallback(() => {
+    if (!isAuthenticated) return;
+    
+    logger.log('Inizializzazione connessione WebSocket...');
+    
+    // Chiudi eventuali connessioni esistenti
+    if (wsSubscriptionRef.current) {
+      wsSubscriptionRef.current.unsubscribe();
+      wsSubscriptionRef.current = null;
+    }
+    
+    // Sottoscrizione ai messaggi WebSocket
+    wsSubscriptionRef.current = websocketService.getMessages().subscribe(
+      handleWebSocketMessage,
+      error => {
+        logger.error('Errore nella sottoscrizione WebSocket:', error);
+        // In caso di errore nella sottoscrizione, attiva il polling
+        startPolling();
+      }
+    );
+    
+    // Avvia la connessione
+    websocketService.connect().catch(err => {
+      logger.error('Errore nella connessione WebSocket:', err);
+      // In caso di errore di connessione, attiva il polling
+      startPolling();
+    });
+    
     return () => {
-      notificheService.interrompiPollingNotifiche();
+      // Pulizia alla chiusura
+      if (wsSubscriptionRef.current) {
+        wsSubscriptionRef.current.unsubscribe();
+        wsSubscriptionRef.current = null;
+      }
+      websocketService.disconnect();
+      stopPolling();
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, handleWebSocketMessage, startPolling, stopPolling]);
+
+  // Effetto per impostare il polling delle notifiche e la connessione WebSocket
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    
+    // Inizializza la connessione WebSocket
+    const cleanup = initializeWebSocket();
+    
+    // Avvia comunque il polling come supporto se il WebSocket dovesse fallire
+    startPolling();
+    
+    // Cleanup quando il componente si smonta o l'utente cambia
+    return () => {
+      if (cleanup) cleanup();
+      stopPolling();
+    };
+  }, [isAuthenticated, initializeWebSocket, startPolling, stopPolling]);
   
   // Ascolta l'evento di refresh notifiche (quando l'app torna in primo piano)
   useEffect(() => {
@@ -264,6 +432,7 @@ export const NotificheProvider: React.FC<NotificheProviderProps> = ({ children }
         setLoading(false);
       }
     },
+    wsConnected: wsConnected || usingPolling, // Considera la connessione "attiva" anche se stiamo usando il polling
   };
 
   return (

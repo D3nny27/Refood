@@ -18,9 +18,12 @@ Benvenuti nella documentazione del progetto ReFood. Questa guida fornisce una pa
 
 ### Frontend
 
-- [Architettura Frontend](frontend/architecture.md) - Struttura e pattern di design dell'app mobile
-- [Guida alle Schermate](frontend/screens.md) - Descrizione delle principali schermate e funzionalità
-- [Servizi API](frontend/api-services.md) - Implementazione dei servizi di comunicazione con il backend
+- [Architecture Overview](./frontend/architecture.md) - Panoramica dell'architettura frontend
+- [Screens](./frontend/screens.md) - Documentazione delle schermate
+- [API Services](./frontend/api-services.md) - Documentazione dei servizi API
+- [WebSocket Service](./frontend/websocket-service.md) - Documentazione del sistema di comunicazione in tempo reale
+- [Notifiche Context](./frontend/notifiche-context.md) - Documentazione del context per la gestione delle notifiche
+- [Gestione Prenotazioni Duplicate](./frontend/duplicate-prenotazioni.md) - Documentazione sulla prevenzione delle prenotazioni duplicate
 
 ### Diagrammi
 

@@ -1,6 +1,7 @@
 const db = require('../config/database');
 const { ApiError } = require('../middlewares/errorHandler');
 const logger = require('../utils/logger');
+const websocket = require('../utils/websocket');
 
 /**
  * Funzione di utilità per trovare automaticamente un centro valido e gli amministratori associati
@@ -216,98 +217,103 @@ exports.getNotificaById = async (req, res, next) => {
 };
 
 /**
- * Crea una nuova notifica
+ * Crea una nuova notifica per un utente
+ * @param {number} destinatario_id - ID dell'utente destinatario
+ * @param {string} tipo - Tipo di notifica (deve essere uno dei valori consentiti: 'CambioStato', 'Prenotazione', 'Alert')
+ * @param {string} titolo - Titolo della notifica
+ * @param {string} messaggio - Testo del messaggio
+ * @param {string} [link=null] - Link opzionale associato alla notifica
+ * @param {object} [datiExtra=null] - Dati aggiuntivi opzionali
+ * @returns {Promise<object|null>} Notifica creata o null in caso di errore
  */
-exports.createNotifica = async (req, res, next) => {
+exports.creaNotifica = async function(destinatario_id, tipo, titolo, messaggio, link = null, datiExtra = null) {
   try {
-    const { 
-      titolo, 
-      messaggio, 
-      tipo = 'Alert', 
-      priorita = 'Media', 
-      destinatario_id,
-      riferimento_id,
-      riferimento_tipo,
-      centro_id
-    } = req.body;
+    logger.info(`Creazione notifica per utente ${destinatario_id}: ${titolo}`);
     
-    // Validazione dei dati obbligatori
-    if (!titolo || !messaggio || !destinatario_id) {
-      return next(new ApiError(400, 'Titolo, messaggio e destinatario_id sono campi obbligatori'));
+    if (!destinatario_id || !tipo || !titolo || !messaggio) {
+      logger.error('Parametri mancanti nella creazione della notifica');
+      return null;
     }
     
-    // Verifica che il destinatario esista
-    const destinatario = await db.get('SELECT id FROM Utenti WHERE id = ?', [destinatario_id]);
-    if (!destinatario) {
-      return next(new ApiError(404, 'Destinatario non trovato'));
+    // Verifica che l'utente esista
+    const userResult = await db.get(`SELECT id FROM Utenti WHERE id = ?`, [destinatario_id]);
+    
+    if (!userResult) {
+      logger.error(`Impossibile creare notifica: destinatario con ID ${destinatario_id} non trovato`);
+      return null;
     }
     
-    // L'utente corrente è l'origine della notifica
-    const origine_id = req.user.id;
+    // Mappa il tipo a un valore consentito per il vincolo CHECK
+    let tipoEffettivo = tipo;
     
-    // Inserimento della notifica nel database
-    const insertQuery = `
-      INSERT INTO Notifiche (
-        titolo, 
-        messaggio, 
-        tipo, 
-        priorita, 
-        destinatario_id,
-        origine_id,
-        riferimento_id,
-        riferimento_tipo,
-        centro_id,
-        creato_il
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    `;
-    
-    const result = await db.run(
-      insertQuery, 
-      [
-        titolo, 
-        messaggio, 
-        tipo, 
-        priorita, 
-        destinatario_id, 
-        origine_id,
-        riferimento_id || null,
-        riferimento_tipo || null,
-        centro_id || null
-      ]
-    );
-    
-    if (!result || !result.lastID) {
-      return next(new ApiError(500, 'Errore nella creazione della notifica'));
+    // Verifica se il tipo è tra quelli consentiti
+    const tipiConsentiti = ['CambioStato', 'Prenotazione', 'Alert'];
+    if (!tipiConsentiti.includes(tipo)) {
+      logger.warn(`Tipo di notifica '${tipo}' non valido. Utilizzando 'Alert' come fallback.`);
+      // Mappa i nuovi tipi a 'Alert' per compatibilità
+      if (tipo === 'LottoCreato' || tipo === 'LottoModificato' || tipo === 'info' || tipo === 'warning' || tipo === 'success' || tipo === 'error') {
+        tipoEffettivo = 'Alert';
+      } else {
+        tipoEffettivo = 'Alert'; // Valore di default per tutti i tipi non riconosciuti
+      }
     }
     
-    logger.info(`Creata notifica con ID ${result.lastID} per l'utente ${destinatario_id}`);
+    // Crea notifica nel DB
+    const timestamp = new Date().toISOString();
     
-    // Recupero della notifica completa
-    const notifica = await db.get(
-      'SELECT * FROM Notifiche WHERE id = ?',
-      [result.lastID]
-    );
+    // Converti datiExtra in JSON stringa se presente
+    const datiExtraJson = datiExtra ? JSON.stringify(datiExtra) : null;
     
-    // Formattazione della risposta
-    const formattedNotifica = {
-      id: notifica.id,
-      titolo: notifica.titolo,
-      messaggio: notifica.messaggio,
-      tipo: notifica.tipo,
-      priorita: notifica.priorita,
-      letta: notifica.letto === 1,
-      dataCreazione: notifica.creato_il
-    };
-    
-    res.status(201).json({
-      success: true,
-      message: 'Notifica creata con successo',
-      data: formattedNotifica
-    });
-    
+    try {
+      const result = await db.run(
+        `INSERT INTO Notifiche (destinatario_id, tipo, titolo, messaggio, riferimento_id, creato_il, letto)
+         VALUES (?, ?, ?, ?, ?, ?, 0)`,
+        [destinatario_id, tipoEffettivo, titolo, messaggio, datiExtraJson, timestamp]
+      );
+      
+      if (!result || !result.lastID) {
+        logger.error(`Errore nell'inserimento della notifica nel database per l'utente ${destinatario_id}`);
+        return null;
+      }
+      
+      logger.info(`Notifica creata nel DB per utente ${destinatario_id}, ID: ${result.lastID}`);
+      
+      // Recupera la notifica appena creata
+      const notifica = await db.get(
+        `SELECT * FROM Notifiche WHERE id = ?`,
+        [result.lastID]
+      );
+      
+      if (!notifica) {
+        logger.error(`Notifica creata ma non recuperata dal DB, ID: ${result.lastID}`);
+        return null;
+      }
+      
+      // Invia la notifica tramite WebSocket se disponibile
+      try {
+        const webSocketService = require('../utils/websocket');
+        logger.info(`Tentativo di invio WebSocket per notifica ID: ${notifica.id}`);
+        
+        if (webSocketService && typeof webSocketService.inviaNotifica === 'function') {
+          await webSocketService.inviaNotifica(destinatario_id, notifica);
+          logger.info(`Notifica inviata via WebSocket all'utente ${destinatario_id}`);
+        } else {
+          logger.warn(`Servizio WebSocket non disponibile per l'invio della notifica ID: ${notifica.id}`);
+        }
+      } catch (wsError) {
+        logger.error(`Errore nell'invio della notifica via WebSocket: ${wsError.message}`);
+        // Continuiamo comunque dato che la notifica è stata salvata nel DB
+      }
+      
+      return notifica;
+    } catch (queryError) {
+      logger.error(`Errore SQL nella creazione della notifica: ${queryError.message}`);
+      return null;
+    }
   } catch (error) {
-    logger.error(`Errore nella creazione della notifica: ${error.message}`);
-    next(new ApiError(500, 'Errore nella creazione della notifica'));
+    logger.error(`Errore generale nella creazione della notifica: ${error.message}`);
+    logger.error(`Stack trace: ${error.stack}`);
+    return null;
   }
 };
 
@@ -435,129 +441,86 @@ exports.deleteNotifica = async (req, res, next) => {
 
 /**
  * Invia una notifica a tutti gli amministratori di un centro
+ * @param {number} centroId - ID del centro
+ * @param {string} tipo - Tipo di notifica (verrà mappato a uno dei valori consentiti: 'CambioStato', 'Prenotazione', 'Alert')
+ * @param {string} titolo - Titolo della notifica
+ * @param {string} messaggio - Testo della notifica
+ * @param {string} [link] - Link opzionale associato alla notifica
+ * @param {object} [datiExtra] - Dati aggiuntivi in formato JSON
+ * @param {number} [operatoreId] - ID dell'operatore che ha effettuato l'azione (per includerlo tra i destinatari)
+ * @returns {Promise<number[]>} Array di ID delle notifiche create
  */
-exports.notifyAdmins = async (req, res, next) => {
-  const connection = await db.getConnection();
+exports.notificaAdminCentro = async (centroId, tipo, titolo, messaggio, link = null, datiExtra = null, operatoreId = null) => {
   try {
-    await connection.beginTransaction();
-    
-    const { centro_id } = req.params;
-    const { 
-      titolo, 
-      messaggio, 
-      tipo = 'LottoModificato', 
-      priorita = 'Media',
-      riferimento_id,
-      riferimento_tipo
-    } = req.body;
-    
-    logger.info(`Richiesta di invio notifica agli amministratori del centro ${centro_id}`);
-    
-    // Validazione dei dati obbligatori
-    if (!titolo || !messaggio) {
-      await connection.rollback();
-      return next(new ApiError(400, 'Titolo e messaggio sono campi obbligatori'));
-    }
-    
-    // Verifica che il centro esista
-    const centro = await connection.get('SELECT id FROM Centri WHERE id = ?', [centro_id]);
-    if (!centro) {
-      await connection.rollback();
-      return next(new ApiError(404, 'Centro non trovato'));
-    }
-    
-    // Trova gli amministratori del centro
-    const query = `
-      SELECT u.id 
-      FROM Utenti u
-      JOIN UtentiCentri uc ON u.id = uc.utente_id
-      WHERE uc.centro_id = ? 
-      AND u.ruolo = 'Amministratore'
-    `;
-    
-    const amministratori = await connection.all(query, [centro_id]);
-    
-    if (!amministratori || amministratori.length === 0) {
-      logger.warn(`Nessun amministratore trovato per il centro ${centro_id}`);
-      await connection.rollback();
-      return res.status(200).json({
-        success: true,
-        message: 'Nessun amministratore trovato per questo centro',
-        notifiche_inviate: 0
-      });
-    }
-    
-    // L'utente corrente è l'origine della notifica
-    const origine_id = req.user.id;
-    
-    // Inserisci una notifica per ogni amministratore
-    const insertQuery = `
-      INSERT INTO Notifiche (
-        titolo, 
-        messaggio, 
-        tipo, 
-        priorita, 
-        destinatario_id,
-        origine_id,
-        riferimento_id,
-        riferimento_tipo,
-        centro_id,
-        creato_il
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    `;
-    
-    let notificheInviate = 0;
-    
-    for (const admin of amministratori) {
-      try {
-        // Salta l'invio se l'amministratore è l'utente stesso che sta creando la notifica
-        if (admin.id === origine_id) {
-          logger.info(`Saltato invio a se stessi (admin ${admin.id})`);
-          continue;
-        }
-        
-        const result = await connection.run(
-          insertQuery, 
-          [
-            titolo, 
-            messaggio, 
-            tipo, 
-            priorita, 
-            admin.id, // destinatario
-            origine_id, // origine
-            riferimento_id || null,
-            riferimento_tipo || null,
-            centro_id
-          ]
-        );
-        
-        if (result && result.lastID) {
-          notificheInviate++;
-          logger.info(`Notifica inviata all'amministratore ${admin.id}`);
-        }
-      } catch (insertError) {
-        logger.error(`Errore nell'invio della notifica all'amministratore ${admin.id}: ${insertError.message}`);
-        // Continua con gli altri amministratori
+    // Mappa il tipo di notifica a un valore consentito
+    let tipoEffettivo = tipo;
+    // Verifica se il tipo è tra quelli consentiti dal database
+    const tipiConsentiti = ['CambioStato', 'Prenotazione', 'Alert'];
+    if (!tipiConsentiti.includes(tipo)) {
+      logger.info(`Mappatura tipo notifica: '${tipo}' -> 'Alert' per conformità con vincolo database`);
+      // Per compatibilità con il codice esistente, mappiamo i tipi vecchi su 'Alert'
+      if (tipo === 'LottoCreato' || tipo === 'LottoModificato' || tipo === 'info' || tipo === 'warning' || tipo === 'success' || tipo === 'error') {
+        tipoEffettivo = 'Alert';
+      } else {
+        tipoEffettivo = 'Alert'; // Valore di default per tutti i tipi non riconosciuti
       }
     }
     
-    // Commit della transazione
-    await connection.commit();
+    // Trova gli amministratori del centro
+    const amministratori = await db.all(`
+      SELECT u.id
+      FROM Utenti u
+      JOIN UtentiCentri uc ON u.id = uc.utente_id
+      WHERE uc.centro_id = ? AND u.ruolo = 'Amministratore'
+    `, [centroId]);
     
-    logger.info(`Inviate ${notificheInviate} notifiche agli amministratori del centro ${centro_id}`);
+    if (!amministratori || amministratori.length === 0) {
+      logger.warn(`Nessun amministratore trovato per il centro ID ${centroId}`);
+      
+      // Se non ci sono amministratori ma c'è un operatore, invia comunque la notifica all'operatore
+      if (operatoreId) {
+        const notificaId = await exports.creaNotifica(operatoreId, tipo, titolo, messaggio, link, datiExtra);
+        logger.info(`Inviata notifica ID ${notificaId} all'operatore ${operatoreId} (nessun amministratore trovato)`);
+        return [notificaId];
+      }
+      return [];
+    }
     
-    res.status(200).json({
-      success: true,
-      message: `Inviate ${notificheInviate} notifiche agli amministratori`,
-      notifiche_inviate: notificheInviate
-    });
+    // Crea una notifica per ogni amministratore
+    const idNotifiche = [];
+    const destinatariUnici = new Set();
     
+    // Aggiungi gli amministratori come destinatari
+    for (const admin of amministratori) {
+      // Evita duplicati nel caso l'operatore sia anche amministratore
+      if (!destinatariUnici.has(admin.id)) {
+        destinatariUnici.add(admin.id);
+        const notificaId = await exports.creaNotifica(admin.id, tipoEffettivo, titolo, messaggio, link, datiExtra);
+        if (notificaId) {
+          idNotifiche.push(notificaId);
+        }
+      }
+    }
+    
+    // Se è stato specificato un operatore, invia anche a lui la notifica
+    if (operatoreId && !destinatariUnici.has(operatoreId)) {
+      destinatariUnici.add(operatoreId);
+      
+      // Personalizza il messaggio per l'operatore (opzionale)
+      const messaggioOperatore = messaggio.replace(/L'operatore .* ha /, 'Hai ');
+      
+      const notificaId = await exports.creaNotifica(operatoreId, tipoEffettivo, titolo, messaggioOperatore, link, datiExtra);
+      if (notificaId) {
+        idNotifiche.push(notificaId);
+        logger.info(`Inviata notifica ID ${notificaId} all'operatore ${operatoreId}`);
+      }
+    }
+    
+    logger.info(`Inviate ${idNotifiche.length} notifiche: ${idNotifiche.length - (operatoreId ? 1 : 0)} amministratori del centro ID ${centroId} e ${operatoreId ? 1 : 0} operatori`);
+    return idNotifiche;
   } catch (error) {
-    await connection.rollback();
-    logger.error(`Errore nell'invio delle notifiche agli amministratori: ${error.message}`);
-    next(new ApiError(500, 'Errore nell\'invio delle notifiche agli amministratori'));
-  } finally {
-    connection.release();
+    logger.error(`Errore nell'invio notifiche agli amministratori/operatori del centro ID ${centroId}: ${error.message}`);
+    throw error;
   }
 };
 
@@ -727,4 +690,230 @@ exports.getCentroTestNotifiche = async (req, res, next) => {
     logger.error(`Errore nel recupero del centro di test: ${error.message}`);
     next(new ApiError(500, 'Errore nel recupero del centro di test'));
   }
-}; 
+};
+
+/**
+ * Invia una notifica a tutti gli amministratori di un centro
+ */
+exports.notifyAdmins = async (req, res, next) => {
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    const { centro_id } = req.params;
+    const { 
+      titolo, 
+      messaggio, 
+      tipo = 'LottoModificato', 
+      priorita = 'Media',
+      riferimento_id,
+      riferimento_tipo
+    } = req.body;
+    
+    logger.info(`Richiesta di invio notifica agli amministratori del centro ${centro_id}`);
+    
+    // Validazione dei dati obbligatori
+    if (!titolo || !messaggio) {
+      await connection.rollback();
+      return next(new ApiError(400, 'Titolo e messaggio sono campi obbligatori'));
+    }
+    
+    // Verifica che il centro esista
+    const centro = await connection.get('SELECT id FROM Centri WHERE id = ?', [centro_id]);
+    if (!centro) {
+      await connection.rollback();
+      return next(new ApiError(404, 'Centro non trovato'));
+    }
+    
+    // Trova gli amministratori del centro
+    const query = `
+      SELECT u.id 
+      FROM Utenti u
+      JOIN UtentiCentri uc ON u.id = uc.utente_id
+      WHERE uc.centro_id = ? 
+      AND u.ruolo = 'Amministratore'
+    `;
+    
+    const amministratori = await connection.all(query, [centro_id]);
+    
+    if (!amministratori || amministratori.length === 0) {
+      logger.warn(`Nessun amministratore trovato per il centro ${centro_id}`);
+      await connection.rollback();
+      return res.status(200).json({
+        success: true,
+        message: 'Nessun amministratore trovato per questo centro',
+        notifiche_inviate: 0
+      });
+    }
+    
+    // L'utente corrente è l'origine della notifica
+    const origine_id = req.user.id;
+    
+    // Inserisci una notifica per ogni amministratore
+    const insertQuery = `
+      INSERT INTO Notifiche (
+        titolo, 
+        messaggio, 
+        tipo, 
+        priorita, 
+        destinatario_id,
+        origine_id,
+        riferimento_id,
+        riferimento_tipo,
+        centro_id,
+        creato_il
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `;
+    
+    let notificheInviate = 0;
+    
+    for (const admin of amministratori) {
+      try {
+        // Salta l'invio se l'amministratore è l'utente stesso che sta creando la notifica
+        if (admin.id === origine_id) {
+          logger.info(`Saltato invio a se stessi (admin ${admin.id})`);
+          continue;
+        }
+        
+        const result = await connection.run(
+          insertQuery, 
+          [
+            titolo, 
+            messaggio, 
+            tipo, 
+            priorita, 
+            admin.id, // destinatario
+            origine_id, // origine
+            riferimento_id || null,
+            riferimento_tipo || null,
+            centro_id
+          ]
+        );
+        
+        if (result && result.lastID) {
+          notificheInviate++;
+          logger.info(`Notifica inviata all'amministratore ${admin.id}`);
+        }
+      } catch (insertError) {
+        logger.error(`Errore nell'invio della notifica all'amministratore ${admin.id}: ${insertError.message}`);
+        // Continua con gli altri amministratori
+      }
+    }
+    
+    // Commit della transazione
+    await connection.commit();
+    
+    logger.info(`Inviate ${notificheInviate} notifiche agli amministratori del centro ${centro_id}`);
+    
+    res.status(200).json({
+      success: true,
+      message: `Inviate ${notificheInviate} notifiche agli amministratori`,
+      notifiche_inviate: notificheInviate
+    });
+    
+  } catch (error) {
+    await connection.rollback();
+    logger.error(`Errore nell'invio delle notifiche agli amministratori: ${error.message}`);
+    next(new ApiError(500, 'Errore nell\'invio delle notifiche agli amministratori'));
+  } finally {
+    connection.release();
+  }
+};
+
+/**
+ * Crea una nuova notifica
+ */
+exports.createNotifica = async (req, res, next) => {
+  try {
+    const { 
+      titolo, 
+      messaggio, 
+      tipo = 'Alert', 
+      priorita = 'Media', 
+      destinatario_id,
+      riferimento_id,
+      riferimento_tipo,
+      centro_id
+    } = req.body;
+    
+    // Validazione dei dati obbligatori
+    if (!titolo || !messaggio || !destinatario_id) {
+      return next(new ApiError(400, 'Titolo, messaggio e destinatario_id sono campi obbligatori'));
+    }
+    
+    // Verifica che il destinatario esista
+    const destinatario = await db.get('SELECT id FROM Utenti WHERE id = ?', [destinatario_id]);
+    if (!destinatario) {
+      return next(new ApiError(404, 'Destinatario non trovato'));
+    }
+    
+    // L'utente corrente è l'origine della notifica
+    const origine_id = req.user.id;
+    
+    // Inserimento della notifica nel database
+    const insertQuery = `
+      INSERT INTO Notifiche (
+        titolo, 
+        messaggio, 
+        tipo, 
+        priorita, 
+        destinatario_id,
+        origine_id,
+        riferimento_id,
+        riferimento_tipo,
+        centro_id,
+        creato_il
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `;
+    
+    const result = await db.run(
+      insertQuery, 
+      [
+        titolo, 
+        messaggio, 
+        tipo, 
+        priorita, 
+        destinatario_id, 
+        origine_id,
+        riferimento_id || null,
+        riferimento_tipo || null,
+        centro_id || null
+      ]
+    );
+    
+    if (!result || !result.lastID) {
+      return next(new ApiError(500, 'Errore nella creazione della notifica'));
+    }
+    
+    logger.info(`Creata notifica con ID ${result.lastID} per l'utente ${destinatario_id}`);
+    
+    // Recupero della notifica completa
+    const notifica = await db.get(
+      'SELECT * FROM Notifiche WHERE id = ?',
+      [result.lastID]
+    );
+    
+    // Formattazione della risposta
+    const formattedNotifica = {
+      id: notifica.id,
+      titolo: notifica.titolo,
+      messaggio: notifica.messaggio,
+      tipo: notifica.tipo,
+      priorita: notifica.priorita,
+      letta: notifica.letto === 1,
+      dataCreazione: notifica.creato_il
+    };
+    
+    res.status(201).json({
+      success: true,
+      message: 'Notifica creata con successo',
+      data: formattedNotifica
+    });
+    
+  } catch (error) {
+    logger.error(`Errore nella creazione della notifica: ${error.message}`);
+    next(new ApiError(500, 'Errore nella creazione della notifica'));
+  }
+};
+
+module.exports.trovaCentroConAmministratori = trovaCentroConAmministratori; 
