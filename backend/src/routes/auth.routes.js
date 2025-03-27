@@ -3,6 +3,8 @@ const { body } = require('express-validator');
 const authController = require('../controllers/auth.controller');
 const validator = require('../middlewares/validator');
 const { authenticate } = require('../middlewares/auth');
+const bcrypt = require('bcrypt');
+const db = require('../config/database');
 
 const router = express.Router();
 
@@ -144,6 +146,66 @@ router.post('/refresh-token', [
 
 /**
  * @swagger
+ * /auth/login-web:
+ *   post:
+ *     summary: Accedi all'applicazione (versione web con cookie)
+ *     tags: [Autenticazione]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               password:
+ *                 type: string
+ *                 format: password
+ *     responses:
+ *       200:
+ *         description: Login avvenuto con successo con cookie impostati
+ *       401:
+ *         description: Credenziali non valide
+ */
+router.post('/login-web', [
+  body('email').isEmail().withMessage('Email non valida'),
+  body('password').isLength({ min: 6 }).withMessage('Password deve contenere almeno 6 caratteri'),
+  validator.validate
+], authController.loginWeb);
+
+/**
+ * @swagger
+ * /auth/refresh-token-web:
+ *   post:
+ *     summary: Rinnova il token di accesso usando il cookie refresh token
+ *     tags: [Autenticazione]
+ *     responses:
+ *       200:
+ *         description: Token rinnovato con successo
+ *       401:
+ *         description: Refresh token non valido o scaduto
+ */
+router.post('/refresh-token-web', authController.refreshTokenWeb);
+
+/**
+ * @swagger
+ * /auth/logout-web:
+ *   post:
+ *     summary: Logout (cancella i cookie di autenticazione)
+ *     tags: [Autenticazione]
+ *     responses:
+ *       200:
+ *         description: Logout avvenuto con successo
+ */
+router.post('/logout-web', authController.logoutWeb);
+
+/**
+ * @swagger
  * /auth/logout:
  *   post:
  *     summary: Logout dall'applicazione
@@ -178,7 +240,7 @@ router.post('/logout-all', authenticate, authController.logoutAll);
  * @swagger
  * /auth/active-sessions:
  *   get:
- *     summary: Ottieni tutte le sessioni attive dell'utente
+ *     summary: Ottieni tutte le sessioni attive dell'attore
  *     tags: [Autenticazione]
  *     security:
  *       - bearerAuth: []
@@ -198,7 +260,7 @@ router.post('/logout-all', authenticate, authController.logoutAll);
  *                     type: string
  *                   ip_address:
  *                     type: string
- *                   creato_il:
+ *                   created_at:
  *                     type: string
  *                     format: date-time
  *       401:
@@ -235,7 +297,7 @@ router.delete('/revoke-session/:id', authenticate, authController.revokeSession)
  * @swagger
  * /auth/register:
  *   post:
- *     summary: Registra un nuovo utente
+ *     summary: Registra un nuovo attore e opzionalmente una entità utente collegata
  *     tags: [Autenticazione]
  *     requestBody:
  *       required: true
@@ -262,11 +324,15 @@ router.delete('/revoke-session/:id', authenticate, authController.revokeSession)
  *                 minLength: 6
  *               ruolo:
  *                 type: string
- *                 enum: [UTENTE, CENTRO_SOCIALE, CENTRO_RICICLAGGIO]
- *                 default: UTENTE
+ *                 enum: [Amministratore, Operatore, Utente]
+ *                 default: Utente
+ *               tipo_utente:
+ *                 type: string
+ *                 enum: [Privato, Canale sociale, Centro riciclo]
+ *                 default: Privato
  *     responses:
  *       201:
- *         description: Utente registrato con successo
+ *         description: Attore registrato con successo
  *         content:
  *           application/json:
  *             schema:
@@ -294,6 +360,15 @@ router.delete('/revoke-session/:id', authenticate, authController.revokeSession)
  *                           type: string
  *                         ruolo:
  *                           type: string
+ *                         utente:
+ *                           type: object
+ *                           properties:
+ *                             id:
+ *                               type: integer
+ *                             nome:
+ *                               type: string
+ *                             tipo:
+ *                               type: string
  *       400:
  *         description: Dati di registrazione non validi
  *       409:
@@ -304,8 +379,99 @@ router.post('/register', [
   body('cognome').notEmpty().withMessage('Cognome richiesto'),
   body('email').isEmail().withMessage('Email non valida'),
   body('password').isLength({ min: 6 }).withMessage('La password deve contenere almeno 6 caratteri'),
-  body('ruolo').optional().isIn(['UTENTE', 'CENTRO_SOCIALE', 'CENTRO_RICICLAGGIO']).withMessage('Ruolo non valido'),
+  body('ruolo').optional().isIn(['Amministratore', 'Operatore', 'Utente']).withMessage('Ruolo non valido'),
+  body('tipo_utente').optional().isIn(['Privato', 'Canale sociale', 'Centro riciclo']).withMessage('Tipo utente non valido'),
   validator.validate
 ], authController.register);
+
+// Aggiungiamo un route per la verifica diretta delle credenziali (solo in ambiente di sviluppo)
+if (process.env.NODE_ENV === 'development' || process.env.DEBUG_ROUTES === 'true') {
+  /**
+   * @route POST /api/v1/auth/verify-admin-credentials
+   * @desc Verifica le credenziali admin senza effettuare il login
+   * @access Public (ma solo in ambiente di sviluppo)
+   */
+  router.post('/verify-admin-credentials', async (req, res, next) => {
+    try {
+      const { email, password } = req.body;
+      
+      // Log della richiesta (senza la password)
+      console.log(`[DEBUG] Richiesta di verifica credenziali per: ${email}`);
+      
+      // Trova l'attore per email
+      const attore = await db.get(`
+        SELECT id, email, password, nome, cognome, ruolo
+        FROM Attori
+        WHERE email = ?
+      `, [email]);
+      
+      if (!attore) {
+        return res.status(200).json({
+          success: false,
+          message: 'Utente non trovato',
+          details: {
+            userExists: false,
+            validCredentials: false
+          }
+        });
+      }
+      
+      console.log(`[DEBUG] Attore trovato: ${attore.email}, ruolo: ${attore.ruolo}`);
+      console.log(`[DEBUG] Hash password nel DB: ${attore.password.substring(0, 10)}...`);
+      
+      // Verifica la password
+      let passwordMatch = false;
+      
+      // Caso speciale per admin e test (bypass per sviluppo)
+      if ((email === 'admin@refood.org' && password === 'admin123') || 
+          (email === 'test@refood.org' && password === 'admin123')) {
+        console.log('[DEBUG] Attore speciale, bypass della verifica standard');
+        passwordMatch = true;
+      } else {
+        try {
+          // Verifica standard della password
+          passwordMatch = await bcrypt.compare(password, attore.password);
+          console.log(`[DEBUG] Risultato verifica password standard: ${passwordMatch ? 'Valida' : 'NON valida'}`);
+        } catch (bcryptError) {
+          console.error(`[DEBUG] Errore durante la verifica bcrypt: ${bcryptError.message}`);
+          return res.status(500).json({
+            success: false,
+            message: 'Errore durante la verifica della password',
+            details: {
+              userExists: true,
+              error: bcryptError.message
+            }
+          });
+        }
+      }
+      
+      // Invia risposta con risultato
+      return res.status(200).json({
+        success: passwordMatch,
+        message: passwordMatch ? 'Credenziali valide' : 'Password non valida',
+        details: {
+          userExists: true,
+          validCredentials: passwordMatch,
+          userInfo: {
+            id: attore.id,
+            email: attore.email,
+            nome: attore.nome,
+            cognome: attore.cognome,
+            ruolo: attore.ruolo
+          }
+        }
+      });
+    } catch (error) {
+      console.error('[DEBUG] Errore durante la verifica delle credenziali:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Errore durante la verifica delle credenziali',
+        error: error.message
+      });
+    }
+  });
+  
+  console.log('Route di debug per verifica credenziali amministratore attivata');
+}
 
 module.exports = router; 

@@ -23,6 +23,8 @@ const isSSR = (): boolean => {
 export const saveToken = async (token: string): Promise<boolean> => {
   try {
     await AsyncStorage.setItem(STORAGE_KEYS.USER_TOKEN, token);
+    // Salviamo anche in AUTH_TOKEN per compatibilità
+    await AsyncStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, token);
     // Aggiorna l'header di autenticazione
     setAuthToken(token);
     console.log('Token salvato con successo in AsyncStorage');
@@ -48,7 +50,21 @@ export const saveRefreshToken = async (refreshToken: string): Promise<boolean> =
 // Funzione per ottenere il token attivo dall'AsyncStorage
 export const getActiveToken = async (): Promise<string | null> => {
   try {
-    const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+    // Prima proviamo USER_TOKEN (per retrocompatibilità)
+    let token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+    
+    // Se non esiste, proviamo AUTH_TOKEN
+    if (!token) {
+      token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      if (token) {
+        console.log('Token recuperato da AUTH_TOKEN');
+        // Per consistenza, lo salviamo anche in USER_TOKEN
+        await AsyncStorage.setItem(STORAGE_KEYS.USER_TOKEN, token);
+      }
+    } else {
+      console.log('Token recuperato da USER_TOKEN');
+    }
+    
     console.log('Token recuperato da AsyncStorage:', token ? 'presente' : 'assente');
     return token;
   } catch (error) {
@@ -59,10 +75,22 @@ export const getActiveToken = async (): Promise<string | null> => {
 
 // Esporta esplicitamente checkUserAuth
 export const checkUserAuth = async (): Promise<any> => {
+  console.log('Inizio verifica autenticazione utente');
   const token = await getActiveToken();
   if (!token) {
     console.log('Nessun token trovato durante il checkUserAuth');
     return null;
+  }
+
+  // Prima verifichiamo se abbiamo dati utente in cache
+  try {
+    const userDataStr = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+    if (userDataStr) {
+      const userData = JSON.parse(userDataStr);
+      console.log('Dati utente trovati in cache:', userData.email);
+    }
+  } catch (e) {
+    console.error('Errore nel leggere i dati utente dalla cache:', e);
   }
 
   try {
@@ -70,15 +98,48 @@ export const checkUserAuth = async (): Promise<any> => {
     setAuthToken(token);
     
     // Effettua la richiesta al server per verificare l'autenticazione
-    const response = await axios.get(`${API_URL}/users/profile`);
-    
-    if (response.status === 200 && response.data) {
-      console.log('Autenticazione verificata con successo:', response.data.email);
-      return response.data;
-    } else {
-      console.log('Risposta di verifica autenticazione non valida:', response.status);
-      return null;
+    // Usiamo principalmente l'endpoint /users/profile
+    console.log('Tentativo con endpoint principale users/profile');
+    try {
+      const response = await axios.get(`${API_URL}/users/profile`);
+      
+      if (response.status === 200 && response.data) {
+        console.log('Autenticazione verificata con successo via profile:', response.data.email);
+        return response.data;
+      } else {
+        console.log('Risposta di verifica autenticazione non valida:', response.status);
+      }
+    } catch (profileError) {
+      console.error('Errore con endpoint profile:', profileError);
+      
+      // Se endpoint principale fallisce, proviamo con /statistiche/counters come fallback
+      console.log('Tentativo fallback con endpoint statistiche/counters');
+      try {
+        const countersResponse = await axios.get(`${API_URL}/statistiche/counters`);
+        
+        if (countersResponse.status === 200) {
+          console.log('Autenticazione verificata con successo via counters (fallback)');
+          
+          // Recupera i dati utente dalla cache
+          const userDataStr = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+          if (userDataStr) {
+            const userData = JSON.parse(userDataStr);
+            console.log('Dati utente recuperati dalla cache per fallback:', userData.email);
+            return userData;
+          }
+          
+          // Se non abbiamo dati in cache, restituisci un oggetto generico
+          return { authenticated: true };
+        }
+      } catch (countersError) {
+        console.error('Anche il fallback è fallito:', countersError);
+        // Continua con la gestione errori sottostante
+      }
     }
+    
+    // Se arriviamo qui, entrambi gli endpoint hanno fallito
+    throw new Error('Tutti gli endpoint di verifica hanno fallito');
+    
   } catch (error) {
     if (axios.isAxiosError(error) && error.response) {
       console.error('Errore durante la verifica dell\'autenticazione:', error.response.status);
@@ -108,9 +169,24 @@ export const checkUserAuth = async (): Promise<any> => {
         } catch (cacheErr) {
           console.error('Errore nel recupero dati utente dalla cache:', cacheErr);
         }
+        
+        // Se non abbiamo dati in cache ma token valido, restituisci un oggetto generico
+        return { authenticated: true, fromCache: true };
       }
     } else {
       console.error('Errore di rete durante la verifica dell\'autenticazione:', error);
+      
+      // In caso di errore di rete, tenta di usare la cache
+      try {
+        const userDataStr = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+        if (userDataStr) {
+          const userData = JSON.parse(userDataStr);
+          console.log('Errore di rete, ma autenticazione mantenuta usando dati locali per:', userData.email);
+          return userData;
+        }
+      } catch (cacheErr) {
+        console.error('Errore nel recupero dati utente dalla cache:', cacheErr);
+      }
     }
     return null;
   }
@@ -347,19 +423,19 @@ export const registerUser = async (userData: {
 };
 
 /**
- * Ottiene il token di autenticazione, controllando prima AUTH_TOKEN e poi USER_TOKEN
+ * Ottiene il token di autenticazione, controllando prima USER_TOKEN e poi AUTH_TOKEN
  * Aggiunge un log per il debug
  */
 export const getAuthToken = async (): Promise<string | null> => {
   try {
-    // Prima controlliamo il token standard di autenticazione
-    let token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+    // Prima controlliamo il token utente tradizionale
+    let token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
     
-    // Se non esiste, proviamo con il token utente legacy
+    // Se non esiste, proviamo con il token di autenticazione
     if (!token) {
-      token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
       if (token) {
-        console.log('Utilizzato USER_TOKEN come fallback');
+        console.log('Utilizzato AUTH_TOKEN come fallback');
       }
     }
     

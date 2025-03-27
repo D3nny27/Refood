@@ -286,5 +286,8 @@ const closeDatabase = () => {
 module.exports = {
   ...db, // Esporta metodi originali
   ...dbAsync, // Esporta metodi promisified
-  closeDatabase
+  closeDatabase,
+  Connection, // Esporta la classe Connection
+  db, // Esporta l'istanza del database
+  getConnection: async () => new Connection(db) // Esporta il metodo getConnection
 }; 

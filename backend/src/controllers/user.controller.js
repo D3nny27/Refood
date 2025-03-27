@@ -461,3 +461,55 @@ exports.updateUser = async (req, res, next) => {
     next(new ApiError(500, 'Errore nell\'aggiornamento dell\'utente'));
   }
 };
+
+/**
+ * Ottiene il profilo dell'utente corrente (versione web con cookie)
+ */
+exports.getProfileWeb = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    
+    // Ottieni le informazioni dell'utente
+    const user = await db.get(
+      `SELECT id, email, nome, cognome, ruolo, ultimo_accesso, creato_il 
+       FROM Utenti 
+       WHERE id = ?`,
+      [userId]
+    );
+    
+    if (!user) {
+      return next(new ApiError(404, 'Utente non trovato'));
+    }
+    
+    // Ottieni i centri associati all'utente
+    const centri = await db.all(
+      `SELECT c.id, c.nome, c.tipo, uc.ruolo_specifico, uc.data_inizio
+       FROM Centri c
+       JOIN UtentiCentri uc ON c.id = uc.centro_id
+       WHERE uc.utente_id = ?`,
+      [userId]
+    );
+    
+    user.centri = centri;
+    
+    // Aggiorna i cookie con i dati utente aggiornati
+    // Cookie pubblico con info sull'utente
+    res.cookie('user_info', JSON.stringify({
+      id: user.id,
+      nome: user.nome,
+      cognome: user.cognome,
+      ruolo: user.ruolo,
+      isAuthenticated: true,
+      ultimo_accesso: user.ultimo_accesso
+    }), {
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      path: '/'
+    });
+    
+    res.json(user);
+  } catch (err) {
+    logger.error(`Errore nel recupero del profilo web: ${err.message}`);
+    next(new ApiError(500, 'Errore nel recupero del profilo'));
+  }
+};

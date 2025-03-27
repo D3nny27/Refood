@@ -9,7 +9,7 @@ import LottoCard from '../../src/components/LottoCard';
 import Toast from 'react-native-toast-message';
 import { useFocusEffect } from '@react-navigation/native';
 import StyledFilterModal from '../../src/components/StyledFilterModal';
-import { RUOLI, PRIMARY_COLOR, STATUS_COLORS } from '../../src/config/constants';
+import { USER_ROLES, PRIMARY_COLOR, STATUS_COLORS } from '../../src/config/constants';
 import { router } from 'expo-router';
 import { it } from 'date-fns/locale';
 import { addDays, format, startOfMonth, getDate, endOfMonth, eachDayOfInterval, getDay, isSameMonth, isSameDay, isBefore } from 'date-fns';
@@ -55,7 +55,18 @@ export default function LottiScreen() {
     
     // Aggiungi il filtro per stato se selezionato
     if (selectedStato) {
-      filtri.stato = selectedStato;
+      // Converti lo stato locale in uno stato valido per l'API
+      switch(selectedStato) {
+        case STATI_LOTTI.VERDE:
+          filtri.stato = "Disponibile";
+          break;
+        case STATI_LOTTI.ARANCIONE:
+          filtri.stato = "InAttesa";
+          break;
+        case STATI_LOTTI.ROSSO:
+          filtri.stato = "Scaduto";
+          break;
+      }
     }
     
     return filtri;
@@ -89,10 +100,14 @@ export default function LottiScreen() {
       // Verifica se l'utente è amministratore o operatore
       const isAdmin = user?.ruolo === 'Amministratore';
       const isOperatore = user?.ruolo === 'Operatore';
-      const mostraTutti = isAdmin || isOperatore;
       
-      // Chiamata al servizio con il parametro mostraTutti per amministratori e operatori
-      const response = await getLotti(filtri, forceRefresh, mostraTutti);
+      // Aggiorna i filtri per includere il parametro mostraTutti
+      if (isAdmin || isOperatore) {
+        filtri.mostraTutti = true;
+      }
+      
+      // Chiamata al servizio con i filtri aggiornati
+      const response = await getLotti(filtri, forceRefresh);
       
       // Salva tutti i lotti non filtrati
       setLottiNonFiltrati(response.lotti || []);
@@ -254,7 +269,7 @@ export default function LottiScreen() {
   // Gestisce la prenotazione di un lotto
   const handlePrenotazioneLotto = (lotto: Lotto) => {
     // Verifica se l'utente ha i permessi necessari
-    if (user?.ruolo !== RUOLI.CENTRO_SOCIALE && user?.ruolo !== RUOLI.CENTRO_RICICLAGGIO) {
+    if (user?.ruolo !== 'CentroSociale' && user?.ruolo !== 'CentroRiciclaggio') {
       Toast.show({
         type: 'error',
         text1: 'Permessi insufficienti',
@@ -403,13 +418,13 @@ export default function LottiScreen() {
   const getStatusColorLight = (stato: string) => {
     switch (stato) {
       case STATI_LOTTI.VERDE:
-        return 'rgba(76, 175, 80, 0.2)';
+        return 'rgba(76, 175, 80, 0.1)';
       case STATI_LOTTI.ARANCIONE:
-        return 'rgba(255, 152, 0, 0.2)';
+        return 'rgba(255, 193, 7, 0.1)';
       case STATI_LOTTI.ROSSO:
-        return 'rgba(244, 67, 54, 0.2)';
+        return 'rgba(244, 67, 54, 0.1)';
       default:
-        return 'rgba(33, 150, 243, 0.2)';
+        return 'rgba(158, 158, 158, 0.1)';
     }
   };
 
@@ -435,7 +450,7 @@ export default function LottiScreen() {
           >
             Filtri
           </Button>
-          {(user?.ruolo === RUOLI.OPERATORE || user?.ruolo === RUOLI.AMMINISTRATORE) && (
+          {(user?.ruolo === USER_ROLES.OPERATOR || user?.ruolo === USER_ROLES.ADMIN) && (
             <Button 
               icon="plus" 
               mode="contained" 
@@ -965,13 +980,13 @@ export default function LottiScreen() {
 const getStateColor = (stato: string) => {
   switch (stato) {
     case STATI_LOTTI.VERDE:
-      return STATUS_COLORS.SUCCESS;
+      return STATUS_COLORS.GREEN;
     case STATI_LOTTI.ARANCIONE:
-      return STATUS_COLORS.WARNING;
+      return STATUS_COLORS.YELLOW;
     case STATI_LOTTI.ROSSO:
-      return STATUS_COLORS.ERROR;
+      return STATUS_COLORS.RED;
     default:
-      return STATUS_COLORS.INFO;
+      return STATUS_COLORS.GREY;
   }
 };
 
@@ -1342,7 +1357,7 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
     borderLeftWidth: 4,
-    borderLeftColor: STATUS_COLORS.INFO,
+    borderLeftColor: STATUS_COLORS.BLUE,
   },
   infoText: {
     fontSize: 14,

@@ -2,11 +2,20 @@ import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { Button, Card, Avatar, List, Divider, useTheme, Dialog, Portal, Paragraph } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../src/context/AuthContext';
-import { RUOLI, PRIMARY_COLOR } from '../../src/config/constants';
+import { PRIMARY_COLOR } from '../../src/config/constants';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../../src/config/constants';
 import { useState } from 'react';
+
+// Definizione locale dei ruoli
+const RUOLI = {
+  AMMINISTRATORE: 'Amministratore',
+  OPERATORE: 'Operatore',
+  CENTRO_SOCIALE: 'CentroSociale',
+  CENTRO_RICICLAGGIO: 'CentroRiciclaggio',
+  UTENTE: 'Utente'
+};
 
 export default function ProfiloScreen() {
   const { user, logout, forceAuthUpdate } = useAuth();
@@ -27,7 +36,7 @@ export default function ProfiloScreen() {
       // Pulizia AsyncStorage
       console.log('ProfiloScreen - forceLogout: pulizia AsyncStorage');
       await AsyncStorage.multiRemove([
-        STORAGE_KEYS.USER_TOKEN,
+        STORAGE_KEYS.AUTH_TOKEN,
         STORAGE_KEYS.USER_DATA,
         STORAGE_KEYS.REFRESH_TOKEN
       ]).then(() => {

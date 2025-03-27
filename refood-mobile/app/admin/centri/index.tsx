@@ -2,93 +2,56 @@ import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, Alert } from 'react-native';
 import { Text, Card, Divider, FAB, Button, ActivityIndicator, Searchbar, Chip, IconButton, Title, Paragraph, Badge } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { PRIMARY_COLOR, STORAGE_KEYS, API_URL } from '../../../src/config/constants';
+import { PRIMARY_COLOR } from '../../../src/config/constants';
 import { useAuth } from '../../../src/context/AuthContext';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import Toast from 'react-native-toast-message';
-
-// Interfaccia per il tipo Centro
-interface Centro {
-  id: number;
-  nome: string;
-  indirizzo: string;
-  telefono: string;
-  email: string;
-  tipo: string;
-  operatori_assegnati?: number;
-  tipo_descrizione?: string;
-}
+import utentiService from '../../../src/services/utentiService';
+import { Utente } from '../../../src/types/user';
 
 export default function GestioneCentriScreen() {
   const { user } = useAuth();
-  const [centri, setCentri] = useState<Centro[]>([]);
+  const [utenti, setUtenti] = useState<Utente[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filteredCentri, setFilteredCentri] = useState<Centro[]>([]);
+  const [filteredUtenti, setFilteredUtenti] = useState<Utente[]>([]);
 
-  // Carica i centri all'avvio
+  // Carica gli utenti all'avvio
   useEffect(() => {
-    loadCentri();
+    loadUtenti();
   }, []);
 
-  // Filtra i centri quando cambia la query di ricerca
+  // Filtra gli utenti quando cambia la query di ricerca
   useEffect(() => {
     if (searchQuery.trim() === '') {
-      setFilteredCentri(centri);
+      setFilteredUtenti(utenti);
     } else {
       const query = searchQuery.toLowerCase();
-      const filtered = centri.filter(centro => 
-        centro.nome.toLowerCase().includes(query) || 
-        centro.indirizzo.toLowerCase().includes(query) ||
-        centro.tipo.toLowerCase().includes(query)
+      const filtered = utenti.filter(utente => 
+        utente.nome?.toLowerCase().includes(query) || 
+        utente.indirizzo?.toLowerCase().includes(query) ||
+        utente.tipo?.toLowerCase().includes(query)
       );
-      setFilteredCentri(filtered);
+      setFilteredUtenti(filtered);
     }
-  }, [searchQuery, centri]);
+  }, [searchQuery, utenti]);
 
-  // Funzione per caricare i centri dal server
-  const loadCentri = async () => {
+  // Funzione per caricare gli utenti dal server
+  const loadUtenti = async () => {
     setLoading(true);
     try {
-      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      console.log('Richiesta utenti in corso tramite utentiService...');
       
-      console.log('Richiesta centri in corso all\'API:', `${API_URL}/centri`);
+      // Usando il nuovo servizio utenti
+      const response = await utentiService.getUtenti({}, true);
       
-      const response = await fetch(`${API_URL}/centri`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (!response.ok) {
-        console.error('Risposta non valida:', response.status, response.statusText);
-        throw new Error(`Errore nel caricamento dei centri (${response.status})`);
-      }
-
-      const data = await response.json();
-      
-      console.log('Risposta ricevuta:', JSON.stringify(data).substring(0, 200) + '...');
-      
-      // Gestisci diversi formati possibili della risposta
-      let centriData = [];
-      if (data && Array.isArray(data.centri)) {
-        centriData = data.centri;
-      } else if (data && Array.isArray(data.data)) {
-        centriData = data.data;
-      } else if (Array.isArray(data)) {
-        centriData = data;
-      } else {
-        console.error('Formato risposta non riconosciuto:', data);
-      }
-      
-      console.log(`Trovati ${centriData.length} centri`);
-      setCentri(centriData);
-      setFilteredCentri(centriData);
+      console.log(`Trovati ${response.data.length} utenti`);
+      setUtenti(response.data);
+      setFilteredUtenti(response.data);
     } catch (error) {
-      console.error('Errore nel caricamento dei centri:', error);
-      Alert.alert('Errore', 'Impossibile caricare i centri. Verifica la connessione e riprova.');
+      console.error('Errore nel caricamento degli utenti:', error);
+      Alert.alert('Errore', 'Impossibile caricare gli utenti. Verifica la connessione e riprova.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -98,63 +61,60 @@ export default function GestioneCentriScreen() {
   // Gestisce il refresh tramite pull-to-refresh
   const onRefresh = () => {
     setRefreshing(true);
-    loadCentri();
+    loadUtenti();
   };
 
-  // Naviga alla schermata di modifica del centro
-  const editCentro = (centro: Centro) => {
+  // Naviga alla schermata di modifica dell'utente
+  const editUtente = (utente: Utente) => {
     router.push({
       pathname: '/admin/centri/modifica',
-      params: { id: centro.id.toString() }
+      params: { id: utente.id.toString() }
     });
   };
 
   // Naviga alla schermata di associazione operatori
-  const manageOperatori = (centro: Centro) => {
+  const manageOperatori = (utente: Utente) => {
     router.push({
       pathname: '/admin/centri/operatori',
-      params: { id: centro.id.toString() }
+      params: { id: utente.id.toString() }
     });
   };
 
-  // Funzione per associare l'amministratore corrente al centro
-  const associaAmministratore = async (centro: Centro) => {
+  // Funzione per associare l'amministratore corrente all'utente
+  const associaAmministratore = async (utente: Utente) => {
     try {
-      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
-      const response = await fetch(`${API_URL}/centri/${centro.id}/utenti/${user?.id}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        if (response.status === 409) {
-          // Già associato, mostra un messaggio informativo
-          Toast.show({
-            type: 'info',
-            text1: 'Informazione',
-            text2: 'Sei già associato a questo centro',
-            visibilityTime: 3000,
-          });
-          return;
-        }
-        throw new Error(errorData.message || `Errore durante l'associazione (${response.status})`);
+      if (!user?.id) {
+        throw new Error('ID utente non disponibile');
       }
+      
+      console.log(`Associazione dell'attore ${user.id} all'utente ${utente.id}...`);
+      
+      // Utilizzo del nuovo servizio
+      await utentiService.associaAttore(utente.id, user.id);
       
       Toast.show({
         type: 'success',
         text1: 'Associazione completata',
-        text2: `Sei stato associato al centro ${centro.nome}`,
+        text2: `Sei stato associato all'utente ${utente.nome}`,
         visibilityTime: 3000,
       });
       
       // Ricarica la lista
       onRefresh();
     } catch (error: any) {
-      console.error('Errore nell\'associazione dell\'amministratore:', error);
+      console.error('Errore nell\'associazione dell\'attore:', error);
+      
+      // Verifica se è un errore di conflitto (già associato)
+      if (error.response && error.response.status === 409) {
+        Toast.show({
+          type: 'info',
+          text1: 'Informazione',
+          text2: 'Sei già associato a questo utente',
+          visibilityTime: 3000,
+        });
+        return;
+      }
+      
       Toast.show({
         type: 'error',
         text1: 'Errore',
@@ -164,15 +124,15 @@ export default function GestioneCentriScreen() {
     }
   };
 
-  // Renderizza un item della lista dei centri
-  const renderCentroItem = ({ item }: { item: Centro }) => {
+  // Renderizza un item della lista degli utenti
+  const renderUtenteItem = ({ item }: { item: Utente }) => {
     return (
       <Card style={styles.card}>
         <Card.Content>
           <View style={styles.cardHeader}>
             <View style={styles.titleContainer}>
               <Title>{item.nome}</Title>
-              <Paragraph>{item.indirizzo}</Paragraph>
+              <Paragraph>{item.indirizzo || 'Indirizzo non specificato'}</Paragraph>
               <Chip style={styles.tipoChip}>{item.tipo_descrizione || item.tipo}</Chip>
             </View>
             {item.operatori_assegnati && (
@@ -193,7 +153,7 @@ export default function GestioneCentriScreen() {
           <Button 
             icon="pencil" 
             mode="text" 
-            onPress={() => editCentro(item)}
+            onPress={() => editUtente(item)}
           >
             <Text>Modifica</Text>
           </Button>
@@ -213,7 +173,7 @@ export default function GestioneCentriScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Searchbar
-          placeholder="Cerca centri..."
+          placeholder="Cerca utenti..."
           onChangeText={setSearchQuery}
           value={searchQuery}
           style={styles.searchBar}
@@ -231,12 +191,12 @@ export default function GestioneCentriScreen() {
       {loading && !refreshing ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={PRIMARY_COLOR} />
-          <Text style={styles.loadingText}>Caricamento centri...</Text>
+          <Text style={styles.loadingText}>Caricamento utenti...</Text>
         </View>
       ) : (
         <FlatList
-          data={filteredCentri}
-          renderItem={renderCentroItem}
+          data={filteredUtenti}
+          renderItem={renderUtenteItem}
           keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
           contentContainerStyle={styles.listContent}
           refreshControl={
@@ -250,7 +210,7 @@ export default function GestioneCentriScreen() {
             <View style={styles.emptyContainer}>
               <MaterialCommunityIcons name="domain-off" size={64} color="#ccc" />
               <Text style={styles.emptyText}>
-                {searchQuery ? 'Nessun centro corrisponde alla ricerca' : 'Nessun centro disponibile'}
+                {searchQuery ? 'Nessun utente corrisponde alla ricerca' : 'Nessun utente disponibile'}
               </Text>
               {searchQuery && (
                 <Button 
@@ -269,7 +229,7 @@ export default function GestioneCentriScreen() {
       <FAB
         style={styles.fab}
         icon="plus"
-        label="Nuovo Centro"
+        label="Nuovo Utente"
         onPress={() => router.push('/admin/centri/nuovo')}
       />
     </View>

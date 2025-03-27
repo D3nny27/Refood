@@ -28,7 +28,7 @@ exports.getLotti = async (req, res, next) => {
       SELECT l.*, c.nome as centro_nome
       ${hasCategorieTable ? ', GROUP_CONCAT(cat.nome) as categorie' : ', NULL as categorie'}
       FROM Lotti l
-      LEFT JOIN Centri c ON l.centro_origine_id = c.id
+      LEFT JOIN Utenti c ON l.centro_origine_id = c.id
       ${hasCategorieTable ? 'LEFT JOIN LottiCategorie lc ON l.id = lc.lotto_id' : ''}
       ${hasCategorieTable ? 'LEFT JOIN Categorie cat ON lc.categoria_id = cat.id' : ''}
     `;
@@ -66,7 +66,7 @@ exports.getLotti = async (req, res, next) => {
     const countQuery = `
       SELECT COUNT(DISTINCT l.id) as total
       FROM Lotti l
-      LEFT JOIN Centri c ON l.centro_origine_id = c.id
+      LEFT JOIN Utenti c ON l.centro_origine_id = c.id
       ${whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : ''}
     `;
     
@@ -130,7 +130,7 @@ exports.getLottoById = async (req, res, next) => {
       SELECT l.*, c.nome as centro_nome, c.indirizzo, c.latitudine, c.longitudine
       ${hasCategorieTable ? ', GROUP_CONCAT(DISTINCT cat.nome) as categorie' : ', NULL as categorie'}
       FROM Lotti l
-      LEFT JOIN Centri c ON l.centro_origine_id = c.id
+      LEFT JOIN Utenti c ON l.centro_origine_id = c.id
       ${hasCategorieTable ? 'LEFT JOIN LottiCategorie lc ON l.id = lc.lotto_id' : ''}
       ${hasCategorieTable ? 'LEFT JOIN Categorie cat ON lc.categoria_id = cat.id' : ''}
       WHERE l.id = ?
@@ -198,7 +198,7 @@ exports.createLotto = async (req, res, next) => {
     
     // Verifica che il centro esista prima di procedere
     try {
-      const centroExists = await db.get('SELECT id FROM Centri WHERE id = ?', [centro_origine_id]);
+      const centroExists = await db.get('SELECT id FROM Utenti WHERE id = ?', [centro_origine_id]);
       if (!centroExists) {
         logger.error(`Il centro con ID ${centro_origine_id} non esiste nel database`);
         return next(new ApiError(400, `Il centro con ID ${centro_origine_id} non esiste. Seleziona un centro valido.`));
@@ -633,7 +633,7 @@ exports.updateLotto = async (req, res, next) => {
           const dettaglioLotto = await db.get(
             `SELECT l.*, c.nome AS centro_nome, u.nome AS operatore_nome, u.cognome AS operatore_cognome 
              FROM Lotti l
-             LEFT JOIN Centri c ON l.centro_origine_id = c.id
+             LEFT JOIN Utenti c ON l.centro_origine_id = c.id
              LEFT JOIN Utenti u ON l.inserito_da = u.id
              WHERE l.id = ?`,
             [lottoId]
@@ -763,7 +763,7 @@ exports.updateLotto = async (req, res, next) => {
       const lottoAggiornato = await db.get(
         `SELECT l.*, c.nome as centro_nome 
          FROM Lotti l
-         LEFT JOIN Centri c ON l.centro_origine_id = c.id
+         LEFT JOIN Utenti c ON l.centro_origine_id = c.id
          WHERE l.id = ?`,
         [lottoId]
       );
@@ -1007,7 +1007,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
         // Trova i centri dell'utente e il loro tipo
         const userCentriQuery = `
           SELECT c.id, c.tipo, c.nome 
-          FROM Centri c
+          FROM Utenti c
           JOIN UtentiCentri uc ON c.id = uc.centro_id
           WHERE uc.utente_id = ?
         `;
@@ -1041,7 +1041,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
              c.latitudine, c.longitudine
       ${hasCategorieTable ? ', GROUP_CONCAT(cat.nome) as categorie' : ', NULL as categorie'}
       FROM Lotti l
-      LEFT JOIN Centri c ON l.centro_origine_id = c.id
+      LEFT JOIN Utenti c ON l.centro_origine_id = c.id
       ${hasCategorieTable ? 'LEFT JOIN LottiCategorie lc ON l.id = lc.lotto_id' : ''}
       ${hasCategorieTable ? 'LEFT JOIN Categorie cat ON lc.categoria_id = cat.id' : ''}
     `;
@@ -1160,7 +1160,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
     const countQuery = `
       SELECT COUNT(DISTINCT l.id) as total
       FROM Lotti l
-      LEFT JOIN Centri c ON l.centro_origine_id = c.id
+      LEFT JOIN Utenti c ON l.centro_origine_id = c.id
       ${whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : ''}
     `;
     
@@ -1222,7 +1222,8 @@ exports.getOriginiLotto = async (req, res, next) => {
     const [centro] = await db.query(`
       SELECT c.*, 
              cs.descrizione as tipo_descrizione
-      FROM Centri c
+      FROM Utenti c
+      JOIN UtentiCentri uc ON c.id = uc.centro_id
       JOIN CentriTipi cs ON c.tipo_id = cs.id
       WHERE c.id = ?
     `, [lotto.centro_origine_id]);
@@ -1274,7 +1275,7 @@ exports.getImpattoLotto = async (req, res, next) => {
     
     // Verifica se il lotto esiste
     const [lotto] = await db.query(
-      'SELECT l.*, c.nome as centro_nome FROM Lotti l JOIN Centri c ON l.centro_origine_id = c.id WHERE l.id = ?',
+      'SELECT l.*, c.nome as centro_nome FROM Lotti l JOIN Utenti c ON l.centro_origine_id = c.id WHERE l.id = ?',
       [lottoId]
     );
     
@@ -1340,7 +1341,7 @@ exports.getImpattoLotto = async (req, res, next) => {
         prodotto: lotto.prodotto,
         quantita: lotto.quantita,
         unita_misura: lotto.unita_misura,
-        centro_origine: lotto.centro_nome
+        centro_origine: lotto.nome
       },
       impatto: impatto
     };
@@ -1375,14 +1376,14 @@ exports.getCentriDisponibili = async (req, res, next) => {
     if (userRuolo === 'Amministratore') {
       query = `
         SELECT id, nome, indirizzo, tipo, tipo_id, latitudine, longitudine, telefono, email
-        FROM Centri
+        FROM Utenti
         ORDER BY nome
       `;
     } else {
       // Gli altri utenti vedono solo i centri a cui sono associati
       query = `
         SELECT c.id, c.nome, c.indirizzo, c.tipo, c.tipo_id, c.latitudine, c.longitudine, c.telefono, c.email
-        FROM Centri c
+        FROM Utenti c
         JOIN UtentiCentri uc ON c.id = uc.centro_id
         WHERE uc.utente_id = ?
         ORDER BY c.nome
@@ -1390,18 +1391,18 @@ exports.getCentriDisponibili = async (req, res, next) => {
       params = [userId];
     }
     
-    // Verifica se la tabella Centri esiste
+    // Verifica se la tabella Utenti esiste
     try {
       const tableCheck = await db.get(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='Centri'");
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='Utenti'");
       
       if (!tableCheck) {
-        logger.warn('La tabella Centri non esiste nel database');
-        return next(new ApiError(500, 'La tabella Centri non esiste nel database'));
+        logger.warn('La tabella Utenti non esiste nel database');
+        return next(new ApiError(500, 'La tabella Utenti non esiste nel database'));
       }
     } catch (tableErr) {
-      logger.error(`Errore nella verifica della tabella Centri: ${tableErr.message}`);
-      return next(new ApiError(500, `Errore nella verifica della tabella Centri: ${tableErr.message}`));
+      logger.error(`Errore nella verifica della tabella Utenti: ${tableErr.message}`);
+      return next(new ApiError(500, `Errore nella verifica della tabella Utenti: ${tableErr.message}`));
     }
     
     // Esegue la query
@@ -1446,7 +1447,7 @@ async function notificaCentriBeneficiari(lottoId, prodotto, centro_origine_id) {
   try {
     // Ottieni il nome del centro di origine
     const centro = await db.get(
-      'SELECT nome FROM Centri WHERE id = ?',
+      'SELECT nome FROM Utenti WHERE id = ?',
       [centro_origine_id]
     );
     
@@ -1481,7 +1482,7 @@ async function notificaCentriBeneficiari(lottoId, prodotto, centro_origine_id) {
         datetime('now')
       FROM Utenti u
       JOIN UtentiCentri uc ON u.id = uc.utente_id
-      JOIN Centri c ON uc.centro_id = c.id
+      JOIN Utenti c ON uc.centro_id = c.id
       WHERE c.tipo IN ('Riciclaggio', 'Sociale')
         AND c.id != ?
     `;

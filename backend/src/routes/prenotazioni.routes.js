@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, param, query } = require('express-validator');
 const validator = require('../middlewares/validator');
-const { authenticate, authorize, belongsToCenter, authMiddleware, isAuthorized } = require('../middlewares/auth');
+const { authenticate, authorize, belongsToUtente, authMiddleware, isAuthorized } = require('../middlewares/auth');
 const prenotazioniController = require('../controllers/prenotazioni.controller');
 
 const router = express.Router();
@@ -144,7 +144,7 @@ router.post('/', [
   body('note').optional().isString().withMessage('Note deve essere una stringa'),
   body('data_ritiro').optional().isISO8601().withMessage('Data ritiro deve essere una data valida'),
   validator.validate,
-  belongsToCenter(req => req.body.centro_ricevente_id)
+  belongsToUtente(req => req.body.centro_ricevente_id)
 ], prenotazioniController.createPrenotazione);
 
 /**
@@ -406,7 +406,7 @@ router.get('/centro/:centro_id', [
   param('centro_id').isInt().withMessage('ID centro deve essere un numero intero'),
   query('stato').optional().isIn(['Prenotato', 'InTransito', 'Consegnato', 'Annullato']).withMessage('Stato non valido'),
   validator.validate,
-  belongsToCenter(req => req.params.centro_id)
+  belongsToUtente(req => req.params.centro_id)
 ], prenotazioniController.getPrenotazioniByCentro);
 
 // Aggiungo la nuova rotta per la pulizia delle prenotazioni duplicate

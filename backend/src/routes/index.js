@@ -3,7 +3,7 @@ const authRoutes = require('./auth.routes');
 const userRoutes = require('./user.routes');
 const lottiRoutes = require('./lotti.routes');
 const prenotazioniRoutes = require('./prenotazioni.routes');
-const centriRoutes = require('./centri.routes');
+const utentiRoutes = require('./utenti.routes');
 const statisticheRoutes = require('./statistiche.routes');
 const notificheRoutes = require('./notifiche.routes');
 const db = require('../config/database');
@@ -114,8 +114,11 @@ router.use('/auth', authRoutes);
 router.use('/users', userRoutes);
 router.use('/lotti', lottiRoutes);
 router.use('/prenotazioni', prenotazioniRoutes);
-router.use('/centri', centriRoutes);
+router.use('/utenti', utentiRoutes);
 router.use('/statistiche', statisticheRoutes);
 router.use('/notifiche', notificheRoutes);
+
+// Manteniamo anche il percorso /centri per retrocompatibilità temporanea
+router.use('/centri', utentiRoutes);
 
 module.exports = router; 

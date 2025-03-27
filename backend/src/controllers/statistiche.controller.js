@@ -16,8 +16,8 @@ exports.getCounters = async (req, res, next) => {
     ] = await Promise.all([
       db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN stato = "Verde" THEN 1 END) as verdi, COUNT(CASE WHEN stato = "Arancione" THEN 1 END) as arancioni, COUNT(CASE WHEN stato = "Rosso" THEN 1 END) as rossi FROM Lotti'),
       db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN stato = "Prenotato" THEN 1 END) as prenotate, COUNT(CASE WHEN stato = "InTransito" THEN 1 END) as in_transito, COUNT(CASE WHEN stato = "Consegnato" THEN 1 END) as consegnate, COUNT(CASE WHEN stato = "Annullato" THEN 1 END) as annullate FROM Prenotazioni'),
-      db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN ruolo = "Operatore" THEN 1 END) as operatori, COUNT(CASE WHEN ruolo = "Amministratore" THEN 1 END) as amministratori, COUNT(CASE WHEN ruolo = "CentroSociale" THEN 1 END) as centri_sociali, COUNT(CASE WHEN ruolo = "CentroRiciclaggio" THEN 1 END) as centri_riciclaggio FROM Utenti'),
-      db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN tipo = "Distribuzione" THEN 1 END) as distribuzione, COUNT(CASE WHEN tipo = "Sociale" THEN 1 END) as sociali, COUNT(CASE WHEN tipo = "Riciclaggio" THEN 1 END) as riciclaggio FROM Centri')
+      db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN ruolo = "Operatore" THEN 1 END) as operatori, COUNT(CASE WHEN ruolo = "Amministratore" THEN 1 END) as amministratori, COUNT(CASE WHEN ruolo = "Utente" THEN 1 END) as utenti FROM Attori'),
+      db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN tipo = "Privato" THEN 1 END) as privati, COUNT(CASE WHEN tipo = "Canale sociale" THEN 1 END) as sociali, COUNT(CASE WHEN tipo = "Centro riciclo" THEN 1 END) as riciclaggio FROM Utenti')
     ]);
     
     res.json({
@@ -43,14 +43,13 @@ exports.getCounters = async (req, res, next) => {
         per_ruolo: {
           operatori: utenti.operatori,
           amministratori: utenti.amministratori,
-          centri_sociali: utenti.centri_sociali,
-          centri_riciclaggio: utenti.centri_riciclaggio
+          utenti: utenti.utenti
         }
       },
       centri: {
         totale: centri.totale,
         per_tipo: {
-          distribuzione: centri.distribuzione,
+          privati: centri.privati,
           sociali: centri.sociali,
           riciclaggio: centri.riciclaggio
         }

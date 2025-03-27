@@ -11,7 +11,7 @@ import {
 import { setAuthToken } from '../services/api';
 import { STORAGE_KEYS } from '../config/constants';
 import { Platform, AppState, AppStateStatus } from 'react-native';
-import { Utente } from '../types/user';
+import { Attore } from '../types/user';
 import logger from '../utils/logger';
 import Toast from 'react-native-toast-message';
 import { listenEvent, APP_EVENTS } from '../utils/events';
@@ -23,11 +23,11 @@ declare global {
 
 interface AuthContextType {
   isAuthenticated: boolean;
-  user: Utente | null;
+  user: Attore | null;
   isLoading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<boolean>;
-  register: (nome: string, cognome: string, email: string, password: string) => Promise<boolean>;
+  register: (nome: string, cognome: string, email: string, password: string, tipo_utente?: string) => Promise<boolean>;
   logout: () => Promise<void>;
   clearError: () => void;
   refreshUserStatus: () => Promise<void>;
@@ -38,7 +38,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [user, setUser] = useState<Utente | null>(null);
+  const [user, setUser] = useState<Attore | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [initialCheckDone, setInitialCheckDone] = useState<boolean>(false);
@@ -50,7 +50,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     
     // Verifica rapida che lo stato sia coerente
     const checkState = async () => {
-      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
       const userDataString = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
       
       // Se abbiamo token e dati utente in storage ma isAuthenticated è false, ripristiniamo
@@ -173,7 +173,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               
               // Pulisci lo storage solo se non ci sono dati locali validi
               if (!Platform.isTV && typeof window !== 'undefined') {
-                await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
+                await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
                 await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
                 await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
               }
@@ -209,7 +209,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Tentativo finale di ripristino da dati locali in caso di errore critico
       try {
         const userDataString = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-        const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+        const token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
         
         if (userDataString && token) {
           console.log('Ripristino di emergenza dai dati locali');
@@ -249,7 +249,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // In caso di timeout, tenta comunque di ripristinare i dati locali
         try {
           const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-          const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+          const token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
           if (userData && token) {
             console.log('Ripristino dati utente da storage dopo timeout');
             setUser(JSON.parse(userData));
@@ -280,7 +280,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Solo se l'utente non è già caricato e non siamo in SSR
         if (!user && !isLoading && !Platform.isTV && typeof window !== 'undefined') {
           // Prima ottieni il token
-          const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+          const token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
           if (token) {
             console.log('Token trovato in storage, tentativo di ripristino sessione...');
             setAuthToken(token);
@@ -343,13 +343,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const response = await loginUser(email, password);
       
-      if (response.token && response.utente) {
+      if (response.token && response.attore) {
         // Imposta i dati nella sessione e nello stato
-        setUser(response.utente);
+        setUser(response.attore);
         setIsAuthenticated(true);
         console.log('Login completato con successo per:', email);
         console.log('Stato autenticazione aggiornato - isAuthenticated:', true);
-        console.log('Stato autenticazione aggiornato - user:', JSON.stringify(response.utente));
+        console.log('Stato autenticazione aggiornato - user:', JSON.stringify(response.attore));
         return true;
       } else {
         throw new Error('Credenziali non valide');
@@ -389,9 +389,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Esegui la richiesta di login
       const response = await loginUser(email, password);
       
-      if (response && response.token && response.utente) {
+      if (response && response.token && response.attore) {
         // Aggiorna lo stato dell'autenticazione
-        setUser(response.utente);
+        setUser(response.attore);
         setIsAuthenticated(true);
         
         logger.log('Login diretto completato con successo');
@@ -400,7 +400,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         Toast.show({
           type: 'success',
           text1: 'Accesso effettuato',
-          text2: `Benvenuto, ${response.utente.nome}!`,
+          text2: `Benvenuto, ${response.attore.nome}!`,
           visibilityTime: 3000,
         });
         
@@ -435,7 +435,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           // Pulizia sincronizzata per assicurarsi che venga completata
           await Promise.all([
-            AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN),
+            AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN),
             AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA),
             AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN)
           ]);
@@ -473,7 +473,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Tenta nuovamente la pulizia dello storage
       try {
         if (!Platform.isTV && typeof window !== 'undefined') {
-          await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
+          await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
           await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
           await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
         }
@@ -488,7 +488,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Funzione per registrare un nuovo utente
-  const register = async (nome: string, cognome: string, email: string, password: string): Promise<boolean> => {
+  const register = async (
+    nome: string, 
+    cognome: string, 
+    email: string, 
+    password: string, 
+    tipo_utente: string = 'Privato'
+  ): Promise<boolean> => {
     try {
       setIsLoading(true);
       clearError();
@@ -499,7 +505,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         cognome,
         email,
         password,
-        ruolo: 'UTENTE' // Impostiamo un ruolo di default per i nuovi utenti
+        ruolo: 'Utente',
+        tipo_utente: tipo_utente
       };
       
       // Passa l'oggetto userData alla funzione registerUser

@@ -31,6 +31,20 @@ router.get('/profile', authenticate, userController.getProfile);
 
 /**
  * @swagger
+ * /users/profile-web:
+ *   get:
+ *     summary: Ottiene il profilo dell'utente corrente (versione web con cookie)
+ *     tags: [Utenti]
+ *     responses:
+ *       200:
+ *         description: Profilo utente
+ *       401:
+ *         description: Non autenticato
+ */
+router.get('/profile-web', authenticate, userController.getProfileWeb);
+
+/**
+ * @swagger
  * /users/profile:
  *   put:
  *     summary: Aggiorna il profilo dell'utente corrente

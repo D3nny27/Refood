@@ -34,15 +34,19 @@ class WebSocketService {
   private isConnecting = false;
   private backendUrlPromise: Promise<string> | null = null;
   private lastErrorMessage: string = '';
-  private endpointUnavailable: boolean = false;
+  // Impostiamo l'endpoint come non disponibile di default per evitare tentativi di connessione
+  private endpointUnavailable: boolean = true;
   private lastEndpointCheck: number = 0;
   private endpointCheckInterval: number = 3600000;
+  // Flag per disabilitare completamente il WebSocket
+  private websocketDisabled: boolean = true;
 
   /**
    * Costruttore
    */
   constructor() {
-    // L'URL del WebSocket sarà determinato dinamicamente
+    // Diamo la priorità al polling
+    logger.log('WebSocket service inizializzato. WebSocket disabilitato, utilizziamo solo polling.');
   }
 
   /**
@@ -102,35 +106,42 @@ class WebSocketService {
    * Inizializza la connessione WebSocket
    */
   async connect(): Promise<void> {
+    // Se il WebSocket è disabilitato, non tentiamo nemmeno di connetterci
+    if (this.websocketDisabled) {
+      logger.log('WebSocket disabilitato, utilizzo polling come fallback');
+      
+      // Notifica i client che il WebSocket non è disponibile
+      this.messageSubject.next({
+        type: WebSocketEvent.ERROR,
+        payload: { 
+          error: 'WebSocket temporaneamente disabilitato, utilizzo polling',
+          permanent: true,
+          usingFallback: true
+        },
+        timestamp: Date.now()
+      });
+      
+      return;
+    }
+
     const now = Date.now();
     
     // Se l'endpoint è stato segnato come non disponibile
     if (this.endpointUnavailable) {
-      // Controlliamo se è passato abbastanza tempo dall'ultimo controllo
-      if (now - this.lastEndpointCheck < this.endpointCheckInterval) {
-        // Non proviamo a riconnetterci troppo frequentemente se sappiamo che l'endpoint non è disponibile
-        logger.log('WebSocket endpoint precedentemente non disponibile, utilizzo polling come fallback');
-        
-        // Notifica i client che il WebSocket non è disponibile ma stabile
-        this.messageSubject.next({
-          type: WebSocketEvent.ERROR,
-          payload: { 
-            error: 'Endpoint WebSocket non disponibile, utilizzo polling',
-            permanent: true,
-            usingFallback: true
-          },
-          timestamp: Date.now()
-        });
-        
-        return;
-      } else {
-        // Proviamo a verificare nuovamente se l'endpoint è ora disponibile
-        logger.log('Tentativo di verifica disponibilità endpoint WebSocket dopo periodo di attesa');
-        this.lastEndpointCheck = now;
-        // Resettiamo per permettere un nuovo tentativo
-        this.endpointUnavailable = false;
-        this.reconnectAttempts = 0;
-      }
+      logger.log('WebSocket endpoint non disponibile, utilizzo polling come fallback');
+      
+      // Notifica i client che il WebSocket non è disponibile ma stabile
+      this.messageSubject.next({
+        type: WebSocketEvent.ERROR,
+        payload: { 
+          error: 'Endpoint WebSocket non disponibile, utilizzo polling',
+          permanent: true,
+          usingFallback: true
+        },
+        timestamp: Date.now()
+      });
+      
+      return;
     }
 
     if (this.webSocket?.readyState === WebSocket.OPEN || this.isConnecting) {
@@ -146,7 +157,7 @@ class WebSocketService {
       const wsUrl = await this.getBackendUrl();
       logger.log('WebSocket base URL:', wsUrl);
       
-      const authToken = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      const authToken = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
       
       if (!authToken) {
         logger.error('Token di autenticazione non disponibile');

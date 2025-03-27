@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, StyleSheet, ScrollView, RefreshControl, Alert, TouchableOpacity, Linking, Platform } from 'react-native';
 import { Card, Title, Paragraph, Button, ActivityIndicator, Text, Badge, IconButton, Chip, Avatar } from 'react-native-paper';
 import { useAuth } from '../../src/context/AuthContext';
-import { PRIMARY_COLOR, RUOLI, STORAGE_KEYS, API_URL } from '../../src/config/constants';
+import { PRIMARY_COLOR, STORAGE_KEYS, API_URL } from '../../src/config/constants';
 import { router } from 'expo-router';
 import { format, addDays } from 'date-fns';
 import { it } from 'date-fns/locale';
@@ -11,6 +11,15 @@ import { useNotifiche } from '../../src/context/NotificheContext';
 import Toast from 'react-native-toast-message';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Definizione locale dei ruoli
+const RUOLI = {
+  AMMINISTRATORE: 'Amministratore',
+  OPERATORE: 'Operatore',
+  CENTRO_SOCIALE: 'CentroSociale',
+  CENTRO_RICICLAGGIO: 'CentroRiciclaggio',
+  UTENTE: 'Utente'
+};
 
 export default function TabOneScreen() {
   const { user, logout } = useAuth();
@@ -26,7 +35,7 @@ export default function TabOneScreen() {
       setError(null);
       
       // Ottieni il token di autenticazione
-      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
       
       if (!token) {
         setError('Sessione scaduta. Effettua nuovamente il login.');

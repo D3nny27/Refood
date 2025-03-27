@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, param, query } = require('express-validator');
 const validator = require('../middlewares/validator');
-const { authenticate, authorize, belongsToCenter } = require('../middlewares/auth');
+const { authenticate, authorize, belongsToUtente } = require('../middlewares/auth');
 const lottiController = require('../controllers/lotti.controller');
 const db = require('../config/database');
 
@@ -416,7 +416,7 @@ router.post('/', [
   body('categorie_ids').optional().isArray().withMessage('Categorie deve essere un array di ID'),
   body('categorie_ids.*').optional().isInt().withMessage('ID categoria deve essere un numero intero'),
   validator.validate,
-  belongsToCenter(req => req.body.centro_origine_id)
+  belongsToUtente(req => req.body.centro_origine_id)
 ], lottiController.createLotto);
 
 /**

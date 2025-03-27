@@ -1,278 +1,352 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, FlatList, RefreshControl } from 'react-native';
-import { Text, FAB, Button, ActivityIndicator, Searchbar, Chip, Avatar, List, Divider, Badge, SegmentedButtons } from 'react-native-paper';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { PRIMARY_COLOR, STORAGE_KEYS, API_URL, RUOLI } from '../../../src/config/constants';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, StyleSheet, ActivityIndicator, RefreshControl, Alert, Platform, TouchableOpacity } from 'react-native';
+import { Text, FAB, useTheme, Button, Divider, Searchbar, Card, IconButton, Surface, Portal, Modal } from 'react-native-paper';
+import { ScrollView } from 'react-native-gesture-handler';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import utentiService from '../../../src/services/utentiService';
+import notificheService from '../../../src/services/notificheService';
 import { useAuth } from '../../../src/context/AuthContext';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { router } from 'expo-router';
 import Toast from 'react-native-toast-message';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_URL, STORAGE_KEYS } from '../../../src/config/constants';
 
-// Interfaccia per rappresentare un utente
-interface Utente {
-  id: number;
-  nome: string;
-  cognome: string;
-  email: string;
-  ruolo: string;
-  centri?: { id: number; nome: string }[];
-}
+// Componenti
+import StyledFilterModal from '../../../src/components/StyledFilterModal';
+import { Utente } from '../../../src/types/user';
 
-export default function GestioneUtentiScreen() {
+// Definizione del tipo di navigazione
+type RootStackParamList = {
+  ModificaUtente: { utenteId: number };
+  OperatoriUtente: { utenteId: number };
+  NuovoUtente: undefined;
+};
+
+// Funzione helper per gestire errori
+const getErrorMessage = (error: any, defaultMessage: string = 'Si è verificato un errore') => {
+  if (typeof error === 'string') return error;
+  if (error?.message) return error.message;
+  return defaultMessage;
+};
+
+const UtentiScreen = () => {
+  const { colors } = useTheme();
+  const navigation = useNavigation<any>(); // Uso any per semplificare, ma idealmente dovremmo usare NavigationProp<RootStackParamList>
   const { user } = useAuth();
   
   // Stati
   const [utenti, setUtenti] = useState<Utente[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredUtenti, setFilteredUtenti] = useState<Utente[]>([]);
-  const [ruoloFiltro, setRuoloFiltro] = useState<string | null>(null);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [filterAtivo, setFilterAtivo] = useState('');
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [selectedUtenteId, setSelectedUtenteId] = useState<number | null>(null);
+
+  // Funzione per renderizzare il dialog di conferma
+  const renderConfirmDialog = () => (
+    showDeleteDialog && (
+      <Portal>
+        <Modal visible={showDeleteDialog} onDismiss={() => setShowDeleteDialog(false)}>
+          <Surface style={{ margin: 20, borderRadius: 8, padding: 16 }}>
+            <Text style={{ fontWeight: 'bold', fontSize: 18, marginBottom: 16 }}>Conferma eliminazione</Text>
+            <Text style={{ marginBottom: 24 }}>Sei sicuro di voler eliminare questo utente?</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+              <Button onPress={() => setShowDeleteDialog(false)} style={{ marginRight: 8 }}>Annulla</Button>
+              <Button mode="contained" onPress={handleDeleteUtente}>Elimina</Button>
+            </View>
+          </Surface>
+        </Modal>
+      </Portal>
+    )
+  );
   
-  // Carica gli utenti quando il componente viene montato
-  useEffect(() => {
-    loadUtenti();
-  }, []);
-  
-  // Filtra gli utenti quando cambia la query di ricerca o il filtro per ruolo
-  useEffect(() => {
-    if (searchQuery.trim() === '' && !ruoloFiltro) {
-      setFilteredUtenti(utenti);
-    } else {
-      const query = searchQuery.toLowerCase();
-      const filtered = utenti.filter(utente => {
-        const matchesSearch = searchQuery.trim() === '' || 
-          utente.nome.toLowerCase().includes(query) || 
-          utente.cognome.toLowerCase().includes(query) || 
-          utente.email.toLowerCase().includes(query);
-        
-        const matchesRole = !ruoloFiltro || utente.ruolo === ruoloFiltro;
-        
-        return matchesSearch && matchesRole;
-      });
-      
-      setFilteredUtenti(filtered);
-    }
-  }, [searchQuery, ruoloFiltro, utenti]);
-  
-  // Funzione per caricare gli utenti
-  const loadUtenti = async () => {
-    setLoading(true);
+  // Caricamento dei dati
+  const loadUtenti = useCallback(async (showFullLoading = true) => {
     try {
-      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      if (showFullLoading) setIsLoading(true);
       
-      const response = await fetch(`${API_URL}/users`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+      // Chiamata al servizio utenti
+      const response = await utentiService.getUtenti();
       
-      if (!response.ok) {
-        throw new Error(`Errore nel caricamento degli utenti (${response.status})`);
+      if (response.data) {
+        console.log(`Ricevuti ${response.data.length} utenti dal server`);
+        setUtenti(response.data);
+        setFilteredUtenti(response.data);
+      } else {
+        console.error('Errore nel caricamento degli utenti');
+        Toast.show({
+          type: 'error',
+          text1: 'Errore',
+          text2: 'Impossibile caricare gli utenti'
+        });
       }
-      
-      const data = await response.json();
-      console.log('Risposta API utenti:', JSON.stringify(data));
-      
-      // Formatta i dati degli utenti
-      let listaUtenti: Utente[] = [];
-      if (data && Array.isArray(data.data)) {
-        listaUtenti = data.data;
-      } else if (data && Array.isArray(data)) {
-        listaUtenti = data;
-      }
-      
-      console.log(`Caricati ${listaUtenti.length} utenti`);
-      setUtenti(listaUtenti);
-      setFilteredUtenti(listaUtenti);
-      
     } catch (error) {
       console.error('Errore nel caricamento degli utenti:', error);
       Toast.show({
         type: 'error',
         text1: 'Errore',
-        text2: 'Impossibile caricare gli utenti',
+        text2: getErrorMessage(error, 'Impossibile caricare gli utenti')
       });
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      setIsLoading(false);
+      setIsRefreshing(false);
     }
-  };
+  }, []);
   
-  // Gestisce il refresh tramite pull-to-refresh
-  const onRefresh = () => {
-    setRefreshing(true);
-    loadUtenti();
-  };
+  // Gestione delle notifiche
+  useEffect(() => {
+    // Configurazione listener notifiche
+    const unsubscribe = () => {}; // Placeholder per ora, da implementare correttamente
+    
+    // Pulizia listener
+    return () => {
+      unsubscribe();
+    };
+  }, [loadUtenti]);
   
-  // Naviga alla schermata di creazione di un nuovo utente
-  const navigateToNewUser = () => {
-    router.push('/admin/utenti/nuovo');
-  };
-  
-  // Naviga alla schermata di dettaglio/modifica di un utente
-  const navigateToUserDetail = (utente: Utente) => {
-    // Per ora mostriamo solo un messaggio, poi implementeremo la schermata di dettaglio
-    Toast.show({
-      type: 'info',
-      text1: 'Info',
-      text2: `Dettagli di ${utente.nome} ${utente.cognome}`,
-    });
-  };
-  
-  // Funzione per ottenere l'icona in base al ruolo
-  const getRoleIcon = (ruolo: string) => {
-    switch (ruolo) {
-      case RUOLI.AMMINISTRATORE:
-        return 'account-tie';
-      case RUOLI.OPERATORE:
-        return 'account-hard-hat';
-      case RUOLI.CENTRO_SOCIALE:
-        return 'home-heart';
-      case RUOLI.CENTRO_RICICLAGGIO:
-        return 'recycle';
-      default:
-        return 'account';
-    }
-  };
-  
-  // Funzione per ottenere il colore dell'avatar in base al ruolo
-  const getRoleColor = (ruolo: string) => {
-    switch (ruolo) {
-      case RUOLI.AMMINISTRATORE:
-        return '#1976d2'; // Blu
-      case RUOLI.OPERATORE:
-        return '#4CAF50'; // Verde
-      case RUOLI.CENTRO_SOCIALE:
-        return '#FF9800'; // Arancione
-      case RUOLI.CENTRO_RICICLAGGIO:
-        return '#9C27B0'; // Viola
-      default:
-        return '#757575'; // Grigio
-    }
-  };
-  
-  // Renderizza un item della lista degli utenti
-  const renderUtenteItem = ({ item }: { item: Utente }) => (
-    <List.Item
-      title={`${item.nome} ${item.cognome}`}
-      description={
-        <View>
-          <Text style={styles.emailText}>{item.email}</Text>
-          {item.centri && item.centri.length > 0 && (
-            <View style={styles.centriContainer}>
-              <Text style={styles.centriText}>
-                Centri: {item.centri.map(c => c.nome).join(', ')}
-              </Text>
-            </View>
-          )}
-        </View>
-      }
-      left={props => (
-        <Avatar.Icon 
-          {...props} 
-          icon={getRoleIcon(item.ruolo)} 
-          size={40} 
-          style={[styles.avatar, { backgroundColor: getRoleColor(item.ruolo) }]} 
-          color="#fff"
-        />
-      )}
-      right={props => (
-        <View style={styles.itemActions}>
-          <Chip 
-            style={[styles.roleChip, { backgroundColor: `${getRoleColor(item.ruolo)}20` }]}
-            textStyle={[styles.roleChipText, { color: getRoleColor(item.ruolo) }]}
-          >
-            {item.ruolo}
-          </Chip>
-          <MaterialCommunityIcons name="chevron-right" size={24} color="#757575" />
-        </View>
-      )}
-      onPress={() => navigateToUserDetail(item)}
-      style={styles.listItem}
-    />
+  // Carica i dati quando la schermata diventa attiva
+  useFocusEffect(
+    useCallback(() => {
+      loadUtenti();
+    }, [loadUtenti])
   );
   
-  // Renderizza i chip per filtrare per ruolo
-  const renderRuoloChips = () => (
-    <View style={styles.chipsContainer}>
-      <SegmentedButtons
-        value={ruoloFiltro || ''}
-        onValueChange={(value) => setRuoloFiltro(value === '' ? null : value)}
-        buttons={[
-          { value: '', label: 'Tutti' },
-          { value: RUOLI.AMMINISTRATORE, label: 'Admin' },
-          { value: RUOLI.OPERATORE, label: 'Operatori' },
-          { value: RUOLI.CENTRO_SOCIALE, label: 'Centri Sociali' },
-        ]}
-      />
-    </View>
-  );
+  // Gestione ricerca
+  useEffect(() => {
+    if (!searchQuery.trim() && !filterAtivo) {
+      setFilteredUtenti(utenti);
+      return;
+    }
+    
+    let result = [...utenti];
+    
+    // Applica filtro per stato
+    if (filterAtivo) {
+      result = result.filter(utente => utente.tipo === filterAtivo);
+    }
+    
+    // Applica filtro di ricerca testuale
+    if (searchQuery.trim()) {
+      const searchLower = searchQuery.toLowerCase().trim();
+      result = result.filter(utente => 
+        utente.nome?.toLowerCase().includes(searchLower) ||
+        utente.indirizzo?.toLowerCase().includes(searchLower) ||
+        utente.email?.toLowerCase().includes(searchLower) ||
+        utente.telefono?.toLowerCase().includes(searchLower)
+      );
+    }
+    
+    setFilteredUtenti(result);
+  }, [searchQuery, utenti, filterAtivo]);
   
+  // Gestione refresh
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    loadUtenti(false);
+  };
+  
+  // Gestione filtri
+  const handleFilters = (filter: string) => {
+    setModalVisible(false);
+    setFilterAtivo(filter);
+  };
+  
+  // Gestione eliminazione utente
+  const handleDeleteUtente = async () => {
+    if (!selectedUtenteId) return;
+    
+    try {
+      setIsLoading(true);
+      
+      // Otteniamo il token di autenticazione
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      
+      // Effettuiamo una chiamata DELETE diretta all'API
+      const response = await axios.delete(`${API_URL}/utenti/${selectedUtenteId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      Toast.show({
+        type: 'success',
+        text1: 'Utente eliminato',
+        text2: 'L\'utente è stato eliminato con successo'
+      });
+        
+      // Ricarica la lista degli utenti
+      loadUtenti(false);
+    } catch (error) {
+      console.error('Errore nell\'eliminazione dell\'utente:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Errore',
+        text2: getErrorMessage(error, 'Impossibile eliminare l\'utente')
+      });
+    } finally {
+      setShowDeleteDialog(false);
+      setSelectedUtenteId(null);
+      setIsLoading(false);
+    }
+  };
+  
+  // Conferma eliminazione
+  const confirmDelete = (utenteId: number) => {
+    setSelectedUtenteId(utenteId);
+    setShowDeleteDialog(true);
+  };
+  
+  // Renderizzo UI
   return (
     <View style={styles.container}>
+      {/* Barra di ricerca */}
       <View style={styles.searchContainer}>
         <Searchbar
-          placeholder="Cerca utenti..."
+          placeholder="Cerca utente..."
           onChangeText={setSearchQuery}
           value={searchQuery}
-          style={styles.searchBar}
+          style={styles.searchbar}
+        />
+        <IconButton
+          icon="filter"
+          size={24}
+          iconColor={filterAtivo ? colors.primary : colors.onSurface}
+          style={styles.filterButton}
+          onPress={() => setModalVisible(true)}
         />
       </View>
       
-      {renderRuoloChips()}
-      
-      {loading && !refreshing ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={PRIMARY_COLOR} />
-          <Text style={styles.loadingText}>Caricamento utenti...</Text>
+      {/* Filtri attivi */}
+      {filterAtivo && (
+        <View style={styles.activeFilterContainer}>
+          <Text style={styles.activeFilterText}>
+            Filtro attivo: {filterAtivo}
+          </Text>
+          <IconButton
+            icon="close"
+            size={16}
+            onPress={() => setFilterAtivo('')}
+          />
         </View>
-      ) : (
-        <FlatList
-          data={filteredUtenti}
-          renderItem={renderUtenteItem}
-          keyExtractor={(item) => item.id.toString()}
-          ItemSeparatorComponent={() => <Divider />}
-          contentContainerStyle={styles.listContent}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              colors={[PRIMARY_COLOR]}
-            />
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <MaterialCommunityIcons name="account-off" size={64} color="#ccc" />
-              <Text style={styles.emptyText}>
-                {searchQuery || ruoloFiltro ? 'Nessun utente corrisponde ai filtri' : 'Nessun utente disponibile'}
-              </Text>
-              {(searchQuery || ruoloFiltro) && (
-                <Button 
-                  mode="text"
-                  onPress={() => {
-                    setSearchQuery('');
-                    setRuoloFiltro(null);
-                  }}
-                  style={styles.resetButton}
-                >
-                  <Text>Resetta filtri</Text>
-                </Button>
-              )}
-            </View>
-          }
-        />
       )}
       
+      {/* Lista utenti */}
+      {isLoading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      ) : (
+        <ScrollView
+          style={styles.scrollContainer}
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              colors={[colors.primary]}
+            />
+          }
+        >
+          {filteredUtenti.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>Nessun utente trovato</Text>
+            </View>
+          ) : (
+            filteredUtenti.map(utente => (
+              <Card
+                key={utente.id}
+                style={styles.card}
+                onPress={() => navigation.navigate('ModificaUtente', { utenteId: utente.id })}
+              >
+                <Card.Content>
+                  <View style={styles.cardHeader}>
+                    <Text style={styles.cardTitle}>{utente.nome}</Text>
+                    <Text style={styles.cardType}>{utente.tipo}</Text>
+                  </View>
+                  {utente.indirizzo && (
+                    <Text style={styles.cardDetail}>Indirizzo: {utente.indirizzo}</Text>
+                  )}
+                  {utente.email && (
+                    <Text style={styles.cardDetail}>Email: {utente.email}</Text>
+                  )}
+                  {utente.telefono && (
+                    <Text style={styles.cardDetail}>Telefono: {utente.telefono}</Text>
+                  )}
+                </Card.Content>
+                <Card.Actions style={styles.cardActions}>
+                  <Button
+                    icon="pencil"
+                    mode="text"
+                    onPress={() => navigation.navigate('ModificaUtente', { utenteId: utente.id })}
+                  >
+                    Modifica
+                  </Button>
+                  <Button
+                    icon="account-multiple"
+                    mode="text"
+                    onPress={() => navigation.navigate('OperatoriUtente', { utenteId: utente.id })}
+                  >
+                    Operatori
+                  </Button>
+                  <Button
+                    icon="delete"
+                    mode="text"
+                    textColor={colors.error}
+                    onPress={() => confirmDelete(utente.id)}
+                  >
+                    Elimina
+                  </Button>
+                </Card.Actions>
+              </Card>
+            ))
+          )}
+        </ScrollView>
+      )}
+      
+      {/* FAB per aggiungere nuovo utente */}
       <FAB
         icon="plus"
         style={styles.fab}
-        onPress={navigateToNewUser}
-        label="Nuovo Utente"
+        onPress={() => navigation.navigate('NuovoUtente')}
+        color="#fff"
       />
+      
+      {/* Modale per i filtri */}
+      <StyledFilterModal
+        visible={modalVisible}
+        onDismiss={() => setModalVisible(false)}
+        onApply={() => setModalVisible(false)}
+        onReset={() => {
+          setFilterAtivo('');
+          setModalVisible(false);
+        }}
+        title="Filtri Utenti"
+      >
+        <View style={styles.filterContainer}>
+          <Text style={styles.filterTitle}>Tipo di utente</Text>
+          <View style={styles.filterOptions}>
+            {['Canale sociale', 'Centro riciclo', 'Privato'].map(tipo => (
+              <Button
+                key={tipo}
+                mode={filterAtivo === tipo ? 'contained' : 'outlined'}
+                onPress={() => setFilterAtivo(filterAtivo === tipo ? '' : tipo)}
+                style={styles.filterButton}
+              >
+                {tipo}
+              </Button>
+            ))}
+          </View>
+        </View>
+      </StyledFilterModal>
+      
+      {/* Dialog di conferma eliminazione */}
+      {renderConfirmDialog()}
     </View>
   );
-}
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -280,98 +354,101 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f5f5',
   },
   searchContainer: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 8,
-  },
-  searchBar: {
-    elevation: 0,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 8,
-  },
-  chipsContainer: {
-    padding: 16,
-    paddingTop: 0,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    backgroundColor: '#f5f5f5',
-  },
-  chip: {
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  listContent: {
-    padding: 8,
-    paddingBottom: 80,
-  },
-  listItem: {
-    backgroundColor: '#fff',
-    marginVertical: 4,
-    borderRadius: 8,
-    elevation: 1,
-  },
-  avatar: {
-    margin: 8,
-  },
-  itemActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    minWidth: 120,
-    justifyContent: 'flex-end',
+    padding: 10,
+    backgroundColor: '#fff',
   },
-  roleChip: {
-    marginRight: 8,
-    height: 28,
-    paddingHorizontal: 8,
-    justifyContent: 'center',
-    minWidth: 90,
+  searchbar: {
+    flex: 1,
+    elevation: 0,
+    backgroundColor: '#f0f0f0',
   },
-  roleChipText: {
-    fontSize: 12,
-    fontWeight: 'bold',
+  filterButton: {
+    margin: 5,
   },
-  emailText: {
-    fontSize: 12,
-    color: '#666',
+  activeFilterContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e0e0e0',
+    padding: 5,
+    paddingLeft: 10,
   },
-  centriContainer: {
-    marginTop: 4,
-  },
-  centriText: {
-    fontSize: 12,
-    color: '#666',
-    fontStyle: 'italic',
+  activeFilterText: {
+    flex: 1,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#666',
+  scrollContainer: {
+    flex: 1,
+  },
+  scrollContent: {
+    padding: 10,
   },
   emptyContainer: {
     flex: 1,
-    padding: 32,
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
   },
   emptyText: {
-    marginTop: 16,
     fontSize: 16,
     color: '#666',
-    textAlign: 'center',
   },
-  resetButton: {
-    marginTop: 8,
+  card: {
+    marginBottom: 10,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 5,
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  cardType: {
+    fontSize: 14,
+    backgroundColor: '#e0e0e0',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  cardDetail: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 3,
+  },
+  cardActions: {
+    justifyContent: 'flex-end',
   },
   fab: {
     position: 'absolute',
     margin: 16,
     right: 0,
     bottom: 0,
-    backgroundColor: PRIMARY_COLOR,
+    backgroundColor: '#2196F3',
   },
-}); 
+  filterContainer: {
+    padding: 16,
+  },
+  filterTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  filterOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  filterOption: {
+    marginRight: 10,
+    marginBottom: 10,
+  },
+});
+
+export default UtentiScreen; 

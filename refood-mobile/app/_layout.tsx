@@ -72,8 +72,8 @@ function AuthProviderInitializer({ children }: { children: React.ReactNode }) {
 function RootLayoutNav() {
   const { user, isLoading, error, refreshUserStatus, isAuthenticated } = useAuth();
   const [refreshAttempts, setRefreshAttempts] = useState(0);
-  const notificationListener = useRef<Notifications.Subscription>();
-  const responseListener = useRef<Notifications.Subscription>();
+  const notificationListener = useRef<Notifications.Subscription | null>(null);
+  const responseListener = useRef<Notifications.Subscription | null>(null);
   const [isNavigating, setIsNavigating] = useState(false); // Previene navigazione multipla
 
   // Log per debug
@@ -84,8 +84,29 @@ function RootLayoutNav() {
   
   // Listener per eventi di token JWT scaduto usando il sistema di eventi personalizzato
   useEffect(() => {
+    // Contatore per prevenire loop infiniti
+    let expiredEventCount = 0;
+    const maxExpiredEvents = 3;
+    let lastExpiredEventTime = 0;
+    
     const handleJwtExpired = () => {
       logger.warn('Evento JWT scaduto rilevato in RootLayoutNav');
+      
+      const now = Date.now();
+      // Resetta il contatore se è passato più di un minuto dall'ultimo evento
+      if (now - lastExpiredEventTime > 60000) {
+        expiredEventCount = 0;
+      }
+      lastExpiredEventTime = now;
+      
+      // Incrementa il contatore degli eventi
+      expiredEventCount++;
+      
+      // Se riceviamo troppi eventi in rapida successione, blocca per evitare loop
+      if (expiredEventCount > maxExpiredEvents) {
+        logger.error(`Troppi eventi JWT_EXPIRED in rapida successione (${expiredEventCount}), ignoro per prevenire loop`);
+        return;
+      }
       
       // Naviga alla schermata di login dopo un breve ritardo
       setTimeout(() => {
@@ -93,7 +114,27 @@ function RootLayoutNav() {
         if (!isNavigating) {
           setIsNavigating(true);
           
-          router.replace('/');
+          // Gestione specifica per il web
+          if (Platform.OS === 'web') {
+            logger.log('Gestione JWT scaduto specifica per Web');
+            // Nel web, forziamo un reload completo per pulire tutti gli stati
+            try {
+              // Pulisci prima cache e storage
+              AsyncStorage.clear().catch(err => logger.error('Errore pulizia storage:', err));
+              
+              // Attendi un attimo e poi vai alla pagina di login
+              setTimeout(() => {
+                router.replace('/');
+              }, 200);
+            } catch (error) {
+              logger.error('Errore nella gestione JWT scaduto per web:', error);
+              // Fallback: redirect semplice
+              router.replace('/');
+            }
+          } else {
+            // Comportamento normale per mobile
+            router.replace('/');
+          }
           
           // Mostra un messaggio all'utente
           Toast.show({
@@ -141,9 +182,9 @@ function RootLayoutNav() {
     }
   };
 
-  // Effetto per configurare le notifiche push
+  // Effetto per configurare le notifiche push e monitorare il cambio di stato dell'app
   useEffect(() => {
-    // Configura le notifiche push solo se l'utente è autenticato
+    // Configura notifiche push solo se l'utente è autenticato
     if (isAuthenticated && user) {
       // Configura notifiche push
       const configurePushNotifications = async () => {
@@ -157,121 +198,122 @@ function RootLayoutNav() {
               const registrationSuccess = await pushNotificationService.registerPushTokenWithServer();
               if (registrationSuccess) {
                 logger.log('Token push registrato con successo sul server');
-              } else {
-                logger.warn('Impossibile registrare il token push con il server');
               }
-            } catch (regError) {
-              logger.error('Errore durante la registrazione del token push:', regError);
+            } catch (err) {
+              logger.error('Errore nella registrazione del token push:', err);
             }
-            
-            // Imposta i listener per le notifiche
-            notificationListener.current = Notifications.addNotificationReceivedListener(
-              notification => {
-                logger.log('Notifica ricevuta:', notification);
-                
-                // Mostra un toast quando la notifica arriva mentre l'app è in primo piano
-                Toast.show({
-                  type: 'info',
-                  text1: notification.request.content.title || 'Nuova notifica',
-                  text2: notification.request.content.body || '',
-                  visibilityTime: 4000,
-                  topOffset: 50,
-                  onPress: () => {
-                    // Gestisci il tocco del toast come se fosse stata toccata la notifica stessa
-                    const { data } = notification.request.content;
-                    if (data?.type === 'notifica' && data?.id) {
-                      // Verifica che l'ID sia un numero valido
-                      const notificaId = parseInt(String(data.id), 10);
-                      if (!isNaN(notificaId)) {
-                        logger.log(`Toast: navigazione alla notifica ID ${notificaId}`);
-                        safeNavigate('/notifiche/[id]', {id: String(notificaId)});
-                      } else {
-                        logger.warn(`Toast: ID notifica non valido ${data.id}, navigazione alla lista`);
-                        safeNavigate('/notifiche/index');
-                      }
-                    } else if (data?.type === 'notifica') {
-                      safeNavigate('/notifiche/index');
-                    }
-                  }
-                });
-              }
-            );
-            
-            responseListener.current = Notifications.addNotificationResponseReceivedListener(
-              response => onNotificationResponseReceived(response)
-            );
-          } else {
-            logger.warn('Non è stato possibile configurare le notifiche push');
           }
-        } catch (error) {
-          logger.error('Errore durante la configurazione delle notifiche push:', error);
+        } catch (err) {
+          logger.error('Errore nella configurazione delle notifiche push:', err);
         }
       };
       
       configurePushNotifications();
       
-      // Cleanup dei listener
-      return () => {
+      // Configura listener per notifiche
+      if (!notificationListener.current) {
+        // Rimuovi prima eventuali listener esistenti per evitare duplicati
         if (notificationListener.current) {
           Notifications.removeNotificationSubscription(notificationListener.current);
         }
+        
+        // Configura il nuovo listener
+        notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+          logger.log('Notifica ricevuta:', notification);
+        });
+      }
+      
+      if (!responseListener.current) {
+        // Rimuovi prima eventuali listener esistenti per evitare duplicati
         if (responseListener.current) {
           Notifications.removeNotificationSubscription(responseListener.current);
         }
-      };
-    }
-  }, [isAuthenticated, user]);
-
-  // Effetto per gestire cambiamenti di stato dell'app
-  useEffect(() => {
-    const handleAppStateChange = (nextAppState: AppStateStatus) => {
-      if (nextAppState === 'active') {
-        // L'app è tornata in primo piano, aggiorna lo stato dell'utente
-        logger.log('App tornata attiva, verifico autenticazione...');
-        refreshUserStatus().catch(err => {
-          logger.error('Errore durante il refresh al ritorno attivo:', err);
-        });
         
-        // Aggiorna anche le notifiche quando l'app torna attiva
-        if (isAuthenticated) {
-          logger.log('Aggiorno le notifiche al ritorno attivo...');
-          
-          // Usa un piccolo ritardo per dare priorità all'aggiornamento auth
-          setTimeout(() => {
-            // Qui possiamo richiamare il metodo di refresh dal contesto delle notifiche
-            // usando una funzione globale o un event emitter
-            emitEvent(APP_EVENTS.REFRESH_NOTIFICATIONS);
-          }, 1000);
-        }
+        // Configura il nuovo listener per le risposte alle notifiche
+        responseListener.current = Notifications.addNotificationResponseReceivedListener(onNotificationResponseReceived);
+      }
+    }
+    
+    // Gestione cambio di stato dell'applicazione (background, foreground)
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      logger.log(`App cambia stato: ${nextAppState}`);
+      
+      // Se l'app torna in foreground e l'utente è autenticato, aggiorna lo stato dell'utente
+      if (nextAppState === 'active' && isAuthenticated) {
+        logger.log('App tornata in foreground, aggiorno stato utente');
+        handleManualRefresh();
       }
     };
     
-    // Per il web, aggiungiamo listener per visibilitychange
+    // Gestione visibilità pagina specifica per browser
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        logger.log('Documento tornato visibile, verifico autenticazione...');
-        refreshUserStatus().catch(err => {
-          logger.error('Errore durante il refresh dopo visibilitychange:', err);
+      if (Platform.OS === 'web' && document.visibilityState === 'visible' && isAuthenticated) {
+        logger.log('Pagina tornata visibile, aggiorno stato utente');
+        
+        // Verifica che il token sia ancora presente
+        AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN).then(token => {
+          if (token) {
+            handleManualRefresh();
+          } else if (isAuthenticated) {
+            // Se il token è scomparso ma lo stato è autenticato, verifica l'autenticazione o esci
+            logger.warn('Token mancante ma stato autenticato, verifico autenticazione');
+            refreshUserStatus();
+          }
         });
       }
     };
     
-    // Aggiungi listener per i cambiamenti di stato dell'app
+    // Aggiungi listener per il cambio di stato dell'app
     const subscription = AppState.addEventListener('change', handleAppStateChange);
     
-    // Per il web, aggiungi listener per visibility change
-    if (!Platform.isTV && typeof document !== 'undefined') {
+    // Aggiungi listener di visibilità pagina per browser
+    if (Platform.OS === 'web') {
       document.addEventListener('visibilitychange', handleVisibilityChange);
     }
     
-    // Pulizia al dismount
+    // Controlla periodicamente lo stato di autenticazione (ogni 5 minuti)
+    const authCheckInterval = setInterval(() => {
+      if (isAuthenticated) {
+        // Verifica la validità del token
+        AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN).then(token => {
+          if (token) {
+            // Refresh silenzioso
+            refreshUserStatus().catch(err => {
+              logger.error('Errore nel refresh periodico:', err);
+            });
+          }
+        });
+      }
+    }, 5 * 60 * 1000); // 5 minuti
+    
+    // Verifica lo stato iniziale dopo il montaggio
+    if (isAuthenticated) {
+      AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN).then(token => {
+        if (!token && isAuthenticated) {
+          // Stato incoerente: autenticato ma senza token
+          logger.warn('Stato incoerente: autenticato ma senza token');
+          refreshUserStatus();
+        }
+      });
+    }
+    
+    // Pulisci listener e intervalli alla smontaggio
     return () => {
+      if (notificationListener.current) {
+        Notifications.removeNotificationSubscription(notificationListener.current);
+      }
+      if (responseListener.current) {
+        Notifications.removeNotificationSubscription(responseListener.current);
+      }
       subscription.remove();
-      if (!Platform.isTV && typeof document !== 'undefined') {
+      
+      if (Platform.OS === 'web') {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
       }
+      
+      clearInterval(authCheckInterval);
     };
-  }, [refreshUserStatus]);
+  }, [isAuthenticated, user]);
 
   // Gestione dei tentativi di refresh in caso di problemi
   const handleManualRefresh = () => {
@@ -361,7 +403,7 @@ function RootLayoutNav() {
         try {
           // Controlla se abbiamo dati utente locali
           const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-          const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+          const token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
           
           // Se abbiamo dati utente e token, ma lo stato è non autenticato, prova a forzare un refresh
           if (userData && token && !isAuthenticated) {
@@ -394,6 +436,10 @@ function RootLayoutNav() {
     >
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="admin" options={{ headerShown: false }} />
+      <Stack.Screen name="admin/utenti/index" />
+      <Stack.Screen name="admin/utenti/nuovo" />
+      <Stack.Screen name="admin/utenti/modifica/[id]" />
+      <Stack.Screen name="admin/utenti/operatori/[id]" />
       <Stack.Screen name="lotti/nuovo" options={{ headerShown: false }} />
       <Stack.Screen name="notifiche/index" options={{ headerShown: false }} />
       <Stack.Screen name="notifiche/[id]" options={{ headerShown: false }} />

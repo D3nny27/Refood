@@ -14,7 +14,7 @@ import {
   Prenotazione,
   invalidateCache
 } from '../../src/services/prenotazioniService';
-import { PRIMARY_COLOR, RUOLI } from '../../src/config/constants';
+import { PRIMARY_COLOR, USER_ROLES } from '../../src/config/constants';
 import { useAuth } from '../../src/context/AuthContext';
 import Toast from 'react-native-toast-message';
 
@@ -69,7 +69,7 @@ export default function PrenotazioniScreen() {
       
       if (user) {        
         // Per i centri sociali, mostra solo le proprie prenotazioni
-        if (user.ruolo === RUOLI.CENTRO_SOCIALE || user.ruolo === RUOLI.CENTRO_RICICLAGGIO) {
+        if (user.ruolo === USER_ROLES.ADMIN || user.ruolo === USER_ROLES.OPERATOR) {
           // Usa il centro_id dell'utente se disponibile
           if (user.centro_id) {
             filtriRuolo.centro_id = user.centro_id;
@@ -358,18 +358,18 @@ export default function PrenotazioniScreen() {
     
     // Verifica se l'utente può gestire la prenotazione (operatore o amministratore)
     const canManagePrenotazione = user && 
-      (user.ruolo === RUOLI.OPERATORE || user.ruolo === RUOLI.AMMINISTRATORE) && 
+      (user.ruolo === USER_ROLES.OPERATOR || user.ruolo === USER_ROLES.ADMIN) && 
       isStato(item.stato, ['Richiesta', 'Prenotato', 'InAttesa']);
     
     // Verifica se l'utente può eliminare la prenotazione (solo amministratore)
     const canDeletePrenotazione = user && 
-      user.ruolo === RUOLI.AMMINISTRATORE && 
+      user.ruolo === USER_ROLES.ADMIN && 
       isStato(item.stato, ['Richiesta', 'Confermata', 'Prenotato', 'InAttesa', 'Confermato', 'InTransito']);
     
     // Mostra i pulsanti di gestione
     const isOperatoreOrAdmin = user && 
-      (user.ruolo === RUOLI.OPERATORE || user.ruolo === RUOLI.AMMINISTRATORE);
-    const isAdmin = user && user.ruolo === RUOLI.AMMINISTRATORE;
+      (user.ruolo === USER_ROLES.OPERATOR || user.ruolo === USER_ROLES.ADMIN);
+    const isAdmin = user && user.ruolo === USER_ROLES.ADMIN;
     
     return (
       <Card 
@@ -447,7 +447,7 @@ export default function PrenotazioniScreen() {
           </Button>
           
           {/* Centro sociale può annullare le proprie prenotazioni in stato Richiesta */}
-          {(user?.ruolo === RUOLI.CENTRO_SOCIALE || user?.ruolo === RUOLI.CENTRO_RICICLAGGIO) && 
+          {(user?.ruolo === USER_ROLES.ADMIN || user?.ruolo === USER_ROLES.OPERATOR) && 
            isStato(item.stato, ['Richiesta']) && (
             <Button 
               mode="contained" 
@@ -666,12 +666,12 @@ export default function PrenotazioniScreen() {
   };
 
   // Controllo se l'utente può effettuare prenotazioni
-  const canBook = user && [RUOLI.CENTRO_SOCIALE, RUOLI.CENTRO_RICICLAGGIO].includes(user.ruolo);
+  const canBook = user && [USER_ROLES.ADMIN, USER_ROLES.OPERATOR].includes(user.ruolo);
 
   useEffect(() => {
     // Effetto che si attiva quando l'utente è operatore o amministratore
     // per impostare automaticamente il filtro su "Richiesta" alla prima apertura
-    if (user && (user.ruolo === RUOLI.OPERATORE || user.ruolo === RUOLI.AMMINISTRATORE) && 
+    if (user && (user.ruolo === USER_ROLES.OPERATOR || user.ruolo === USER_ROLES.ADMIN) && 
         !Object.keys(filtri).length && prenotazioni.length === 0) {
       console.log('Imposto filtro iniziale su "Prenotato" per operatore/admin');
       setFiltri({ stato: 'Prenotato' });

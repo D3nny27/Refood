@@ -1,55 +1,65 @@
+import React from 'react';
 import { Stack } from 'expo-router';
-import { useAuth } from '../../../src/context/AuthContext';
-import { RUOLI } from '../../../src/config/constants';
-import { useEffect } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import { router } from 'expo-router';
+import { useNavigation } from '@react-navigation/native';
+import { IconButton } from 'react-native-paper';
+import { TouchableOpacity, StyleSheet } from 'react-native';
+import { PRIMARY_COLOR } from '../../../src/config/constants';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-export default function AdminUtentiLayout() {
-  const { user, isLoading } = useAuth();
+export default function Layout() {
+  const navigation = useNavigation();
 
-  // Verifica l'autorizzazione dell'utente
-  useEffect(() => {
-    if (!isLoading && (!user || user.ruolo !== RUOLI.AMMINISTRATORE)) {
-      // Reindirizza alla home se l'utente non è un amministratore
-      alert('Accesso negato: questa sezione è riservata agli amministratori');
-      router.replace('/(tabs)');
-    }
-  }, [user, isLoading]);
+  // Funzione per tornare indietro
+  const handleBack = () => {
+    navigation.goBack();
+  };
 
-  // Mostra un caricamento mentre verifichiamo l'utente
-  if (isLoading) {
-    return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#0000ff" />
-        <Text style={styles.text}>Caricamento...</Text>
-      </View>
-    );
-  }
-
-  // Se l'utente non è admin, non mostra nulla mentre reindirizza
-  if (!user || user.ruolo !== RUOLI.AMMINISTRATORE) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.text}>Accesso negato</Text>
-      </View>
-    );
-  }
-
-  // L'utente è un amministratore, mostra il contenuto
   return (
-    <Stack>
-      <Stack.Screen 
-        name="index" 
-        options={{ 
-          title: "Gestione Utenti"
-        }} 
+    <Stack screenOptions={{
+      headerStyle: {
+        backgroundColor: PRIMARY_COLOR,
+      },
+      headerTintColor: '#fff',
+      headerTitleStyle: {
+        fontWeight: 'bold',
+      },
+      headerLeft: () => (
+        <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+          <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
+        </TouchableOpacity>
+      ),
+      headerShadowVisible: true,
+    }}>
+      <Stack.Screen
+        name="index"
+        options={{
+          title: 'Gestione Utenti',
+          headerTitleAlign: 'center',
+        }}
       />
-      <Stack.Screen 
-        name="nuovo" 
-        options={{ 
-          title: "Nuovo Utente"
-        }} 
+      <Stack.Screen
+        name="nuovo"
+        options={{
+          title: 'Nuovo Utente',
+          headerTitleAlign: 'center',
+          presentation: 'modal',
+        }}
+      />
+      <Stack.Screen
+        name="modifica"
+        options={{
+          title: 'Modifica Utente',
+          headerTitleAlign: 'center',
+          presentation: 'modal',
+        }}
+      />
+      <Stack.Screen
+        name="operatori"
+        options={{
+          title: 'Gestione Operatori',
+          headerTitleAlign: 'center',
+          presentation: 'card',
+        }}
       />
     </Stack>
   );
@@ -58,13 +68,8 @@ export default function AdminUtentiLayout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f5f5f5',
   },
-  text: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#666',
+  backButton: {
+    marginLeft: 15,
   },
 }); 

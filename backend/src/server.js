@@ -6,6 +6,7 @@ const dotenv = require('dotenv');
 const compression = require('compression');
 const path = require('path');
 const http = require('http');
+const cookieParser = require('cookie-parser');
 
 // Caricamento delle variabili d'ambiente
 dotenv.config();
@@ -27,7 +28,8 @@ app.use(helmet());
 app.use(cors({
   origin: process.env.CORS_ORIGIN || '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true // Importante per i cookie
 }));
 
 // Compressione delle risposte
@@ -36,6 +38,9 @@ app.use(compression());
 // Parsing del body JSON
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Parsing dei cookie
+app.use(cookieParser());
 
 // Logging delle richieste con Morgan
 const morganFormat = process.env.NODE_ENV === 'production' ? 'combined' : 'dev';

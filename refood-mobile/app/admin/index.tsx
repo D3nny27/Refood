@@ -1,23 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, ScrollView } from 'react-native';
 import { Text, Card, Title, Paragraph, Button, ActivityIndicator, Appbar, Divider, List } from 'react-native-paper';
-import { PRIMARY_COLOR, STORAGE_KEYS, API_URL } from '../../src/config/constants';
+import { PRIMARY_COLOR } from '../../src/config/constants';
 import { useAuth } from '../../src/context/AuthContext';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import Toast from 'react-native-toast-message';
-
-interface AssociazioneCentro {
-  id: number;
-  nome: string;
-  tipo: string;
-  tipo_descrizione?: string;
-  indirizzo: string;
-}
+import utentiService from '../../src/services/utentiService';
+import { Utente } from '../../src/types/user';
 
 export default function AdminDashboardScreen() {
   const { user } = useAuth();
-  const [centri, setCentri] = useState<AssociazioneCentro[]>([]);
+  const [utenti, setUtenti] = useState<Utente[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -28,26 +21,16 @@ export default function AdminDashboardScreen() {
   const loadAssociazioni = async () => {
     setLoading(true);
     try {
-      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
-      
-      // Ottieni le associazioni dell'amministratore corrente
-      const response = await fetch(`${API_URL}/centri?associatiA=${user?.id}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error(`Errore nel caricamento delle associazioni (${response.status})`);
+      if (!user?.id) {
+        throw new Error('ID utente non disponibile');
       }
-
-      const data = await response.json();
       
-      if (data && data.data) {
-        setCentri(data.data);
-      } else {
-        setCentri([]);
-      }
+      // Ottieni le associazioni dell'amministratore corrente usando il nuovo servizio
+      const response = await utentiService.getUtenti({
+        associatiA: user.id
+      }, true);
+      
+      setUtenti(response.data || []);
     } catch (error) {
       console.error('Errore nel caricamento delle associazioni:', error);
       Toast.show({
@@ -67,7 +50,7 @@ export default function AdminDashboardScreen() {
     loadAssociazioni();
   };
 
-  const goToCentriManagement = () => {
+  const goToUtentiManagement = () => {
     router.push('/admin/centri');
   };
 
@@ -96,9 +79,9 @@ export default function AdminDashboardScreen() {
 
         <Card style={styles.section}>
           <Card.Content>
-            <Title style={styles.sectionTitle}>I tuoi centri</Title>
+            <Title style={styles.sectionTitle}>I tuoi utenti</Title>
             <Paragraph style={styles.sectionSubtitle}>
-              Centri a cui sei associato
+              Utenti a cui sei associato
             </Paragraph>
             
             {loading && !refreshing ? (
@@ -108,16 +91,16 @@ export default function AdminDashboardScreen() {
               </View>
             ) : (
               <>
-                {centri.length > 0 ? (
+                {utenti.length > 0 ? (
                   <List.Section>
-                    {centri.map((centro) => (
+                    {utenti.map((utente) => (
                       <List.Item
-                        key={centro.id}
-                        title={centro.nome}
-                        description={`${centro.indirizzo} • ${centro.tipo_descrizione || centro.tipo}`}
+                        key={utente.id}
+                        title={utente.nome}
+                        description={`${utente.indirizzo || 'Indirizzo non specificato'} • ${utente.tipo_descrizione || utente.tipo}`}
                         left={props => <List.Icon {...props} icon="domain" />}
                         right={props => <List.Icon {...props} icon="chevron-right" />}
-                        onPress={() => router.push(`/admin/centri/operatori?id=${centro.id}`)}
+                        onPress={() => router.push(`/admin/centri/operatori?id=${utente.id}`)}
                         style={styles.listItem}
                       />
                     ))}
@@ -125,10 +108,10 @@ export default function AdminDashboardScreen() {
                 ) : (
                   <View style={styles.emptyState}>
                     <Text style={styles.emptyStateText}>
-                      Non sei associato a nessun centro.
+                      Non sei associato a nessun utente.
                     </Text>
                     <Text style={styles.emptyStateSubtext}>
-                      Vai alla gestione centri e associati a un centro.
+                      Vai alla gestione utenti e associati a un utente.
                     </Text>
                   </View>
                 )}
@@ -141,10 +124,10 @@ export default function AdminDashboardScreen() {
           <Button
             mode="contained"
             icon="domain"
-            onPress={goToCentriManagement}
+            onPress={goToUtentiManagement}
             style={styles.button}
           >
-            Gestione Centri
+            Gestione Utenti
           </Button>
         </View>
       </ScrollView>

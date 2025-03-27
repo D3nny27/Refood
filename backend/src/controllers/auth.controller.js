@@ -15,10 +15,10 @@ logger.info('Moduli caricati:', {
 
 /**
  * Genera un JWT access token
- * @param {Object} user - Oggetto utente
+ * @param {Object} attore - Oggetto attore
  * @returns {Object} - Access token, refresh token e scadenza
  */
-const generateTokens = async (user) => {
+const generateTokens = async (attore) => {
   // Ottieni la durata dei token dalle impostazioni
   const [accessTokenDuration, refreshTokenDuration] = await Promise.all([
     db.get('SELECT valore FROM ParametriSistema WHERE chiave = "jwt_access_token_durata"'),
@@ -34,11 +34,11 @@ const generateTokens = async (user) => {
   // Crea l'access token
   const accessToken = jwt.sign(
     { 
-      sub: user.id,
-      email: user.email,
-      nome: user.nome,
-      cognome: user.cognome,
-      ruolo: user.ruolo,
+      sub: attore.id,
+      email: attore.email,
+      nome: attore.nome,
+      cognome: attore.cognome,
+      ruolo: attore.ruolo,
       jti: tokenId 
     },
     process.env.JWT_SECRET,
@@ -62,7 +62,7 @@ const generateTokens = async (user) => {
 };
 
 /**
- * Login utente
+ * Login attore
  */
 const login = async (req, res, next) => {
   try {
@@ -71,35 +71,35 @@ const login = async (req, res, next) => {
     
     logger.info(`Tentativo di login con email: ${email}`);
     
-    // Trova l'utente per email
-    const user = await db.get(`
+    // Trova l'attore per email
+    const attore = await db.get(`
       SELECT id, email, password, nome, cognome, ruolo
-      FROM Utenti
+      FROM Attori
       WHERE email = ?
     `, [email]);
     
-    if (!user) {
-      logger.warn(`Login fallito: utente non trovato con email ${email}`);
+    if (!attore) {
+      logger.warn(`Login fallito: attore non trovato con email ${email}`);
       throw new ApiError(401, 'Credenziali non valide');
     }
     
-    logger.info(`Utente trovato: ${user.email}, verifica password...`);
-    logger.info(`Hash della password nel DB: ${user.password}`);
+    logger.info(`Attore trovato: ${attore.email}, verifica password...`);
+    logger.info(`Hash della password nel DB: ${attore.password}`);
     
-    // Caso speciale per l'utente admin@refood.org
+    // Caso speciale per l'attore admin@refood.org
     let passwordMatch = false;
     
-    // Controlla se l'utente è admin@refood.org e se la password è 'admin123'
+    // Controlla se l'attore è admin@refood.org e se la password è 'admin123'
     if (email === 'admin@refood.org' && password === 'admin123') {
-      logger.info('Utente admin riconosciuto, bypass della verifica standard');
+      logger.info('Attore admin riconosciuto, bypass della verifica standard');
       passwordMatch = true;
     } else if (email === 'test@refood.org' && password === 'admin123') {
-      logger.info('Utente test riconosciuto, bypass della verifica standard');
+      logger.info('Attore test riconosciuto, bypass della verifica standard');
       passwordMatch = true;
     } else {
       try {
         // Verifica standard della password con bcrypt
-        passwordMatch = await bcrypt.compare(password, user.password);
+        passwordMatch = await bcrypt.compare(password, attore.password);
         logger.info(`Risultato verifica password standard: ${passwordMatch ? 'OK' : 'NON valida'}`);
       } catch (bcryptError) {
         logger.error(`Errore durante la verifica bcrypt: ${bcryptError.message}`);
@@ -113,13 +113,29 @@ const login = async (req, res, next) => {
       throw new ApiError(401, 'Credenziali non valide');
     }
     
+    // Controlla se l'attore ha un utente associato (necessario per ruolo "Utente")
+    let utenteAssociato = null;
+    if (attore.ruolo === 'Utente') {
+      utenteAssociato = await db.get(`
+        SELECT id, nome, tipo
+        FROM Utenti
+        WHERE attore_id = ?
+      `, [attore.id]);
+      
+      // Se è un utente ma non ha un'entità utente associata, errore
+      if (!utenteAssociato) {
+        logger.warn(`Login fallito: attore con ruolo "Utente" senza entità utente associata: ${email}`);
+        throw new ApiError(401, 'Account non configurato correttamente. Contattare l\'amministratore.');
+      }
+    }
+    
     // Genera tokens
-    const tokens = await generateTokens(user);
+    const tokens = await generateTokens(attore);
     
     // Salva i token nel database
     await db.run(`
       INSERT INTO TokenAutenticazione (
-        utente_id, 
+        attore_id, 
         access_token, 
         refresh_token, 
         access_token_scadenza, 
@@ -128,7 +144,7 @@ const login = async (req, res, next) => {
         ip_address
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [
-      user.id,
+      attore.id,
       tokens.accessToken,
       tokens.refreshToken,
       tokens.accessTokenScadenza.toISOString(),
@@ -139,19 +155,29 @@ const login = async (req, res, next) => {
     
     // Aggiorna ultimo accesso
     await db.run(`
-      UPDATE Utenti
+      UPDATE Attori
       SET ultimo_accesso = CURRENT_TIMESTAMP
       WHERE id = ?
-    `, [user.id]);
+    `, [attore.id]);
     
     // Non esporre la password nella risposta
-    delete user.password;
+    delete attore.password;
+    
+    // Preparare i dati dell'utente per la risposta
+    const risposta = {
+      ...attore
+    };
+    
+    // Se è un utente, aggiungi i dati dell'entità utente
+    if (utenteAssociato) {
+      risposta.utente = utenteAssociato;
+    }
     
     logger.info(`Login avvenuto con successo per ${email}`);
     
-    // Restituisci utente e tokens
+    // Restituisci attore e tokens
     res.json({
-      user,
+      user: risposta,
       tokens: {
         access: tokens.accessToken,
         refresh: tokens.refreshToken,
@@ -173,13 +199,12 @@ const refreshToken = async (req, res, next) => {
     // Verifica che il refresh token esista nel database
     const tokenEntry = await db.get(`
       SELECT 
-        t.utente_id, t.refresh_token_scadenza, t.access_token,
-        u.id, u.email, u.nome, u.cognome, u.ruolo
+        t.attore_id, t.access_token_scadenza, t.access_token,
+        a.id, a.email, a.nome, a.cognome, a.ruolo
       FROM TokenAutenticazione t
-      JOIN Utenti u ON t.utente_id = u.id
+      JOIN Attori a ON t.attore_id = a.id
       WHERE t.refresh_token = ?
-      AND t.refresh_token_scadenza > datetime('now')
-      AND t.revocato = 0
+      AND t.access_token_scadenza > datetime('now')
     `, [refresh_token]);
     
     if (!tokenEntry) {
@@ -225,30 +250,18 @@ const logout = async (req, res, next) => {
   try {
     const token = req.headers.authorization.split(' ')[1];
     
-    // Revoca il token corrente
-    await db.run(`
-      UPDATE TokenAutenticazione
-      SET 
-        revocato = 1,
-        revocato_il = CURRENT_TIMESTAMP
-      WHERE access_token = ?
-    `, [token]);
-    
     // Aggiungi alla blacklist
     const decoded = jwt.decode(token);
     if (decoded && decoded.jti) {
       await db.run(`
         INSERT INTO TokenRevocati (
           token_hash, 
-          revocato_da, 
-          motivo, 
-          scadenza_originale
-        ) VALUES (?, ?, ?, ?)
+          revocato_il, 
+          attore_id
+        ) VALUES (?, CURRENT_TIMESTAMP, ?)
       `, [
         decoded.jti,
-        req.user.id,
-        'Logout utente',
-        new Date(decoded.exp * 1000).toISOString()
+        req.user.id
       ]);
     }
     
@@ -259,37 +272,25 @@ const logout = async (req, res, next) => {
 };
 
 /**
- * Revoca tutti i token dell'utente (logout da tutti i dispositivi)
+ * Revoca tutti i token dell'attore (logout da tutti i dispositivi)
  */
 const logoutAll = async (req, res, next) => {
   try {
-    // Revoca tutti i token dell'utente
-    await db.run(`
-      UPDATE TokenAutenticazione
-      SET 
-        revocato = 1,
-        revocato_il = CURRENT_TIMESTAMP
-      WHERE utente_id = ?
-      AND revocato = 0
-    `, [req.user.id]);
-    
     // Ottieni tutti i token attivi per inserirli nella blacklist
     const tokens = await db.all(`
       SELECT access_token, access_token_scadenza
       FROM TokenAutenticazione
-      WHERE utente_id = ?
-      AND revocato = 1
-      AND revocato_il = CURRENT_TIMESTAMP
+      WHERE attore_id = ?
+      AND access_token_scadenza > datetime('now')
     `, [req.user.id]);
     
     // Inserisci tutti i token nella blacklist
     const stmt = await db.prepare(`
       INSERT INTO TokenRevocati (
         token_hash, 
-        revocato_da, 
-        motivo, 
-        scadenza_originale
-      ) VALUES (?, ?, ?, ?)
+        revocato_il, 
+        attore_id
+      ) VALUES (?, CURRENT_TIMESTAMP, ?)
     `);
 
     for (const token of tokens) {
@@ -297,9 +298,7 @@ const logoutAll = async (req, res, next) => {
       if (decoded && decoded.jti) {
         await stmt.run([
           decoded.jti,
-          req.user.id,
-          'Logout da tutti i dispositivi',
-          token.access_token_scadenza
+          req.user.id
         ]);
       }
     }
@@ -313,7 +312,7 @@ const logoutAll = async (req, res, next) => {
 };
 
 /**
- * Ottieni tutte le sessioni attive dell'utente
+ * Ottieni tutte le sessioni attive dell'attore
  */
 const getActiveSessions = async (req, res, next) => {
   try {
@@ -323,12 +322,10 @@ const getActiveSessions = async (req, res, next) => {
         device_info,
         ip_address,
         creato_il,
-        access_token_scadenza,
-        refresh_token_scadenza
+        access_token_scadenza
       FROM TokenAutenticazione
-      WHERE utente_id = ?
-      AND revocato = 0
-      AND refresh_token_scadenza > datetime('now')
+      WHERE attore_id = ?
+      AND access_token_scadenza > datetime('now')
       ORDER BY creato_il DESC
     `, [req.user.id]);
     
@@ -345,25 +342,16 @@ const revokeSession = async (req, res, next) => {
   try {
     const sessionId = parseInt(req.params.id);
     
-    // Verifica che la sessione esista ed appartenga all'utente
+    // Verifica che la sessione esista ed appartenga all'attore
     const session = await db.get(`
       SELECT id, access_token, access_token_scadenza
       FROM TokenAutenticazione
-      WHERE id = ? AND utente_id = ?
+      WHERE id = ? AND attore_id = ?
     `, [sessionId, req.user.id]);
     
     if (!session) {
       throw new ApiError(404, 'Sessione non trovata');
     }
-    
-    // Revoca la sessione
-    await db.run(`
-      UPDATE TokenAutenticazione
-      SET 
-        revocato = 1,
-        revocato_il = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `, [sessionId]);
     
     // Aggiungi alla blacklist
     const decoded = jwt.decode(session.access_token);
@@ -371,15 +359,12 @@ const revokeSession = async (req, res, next) => {
       await db.run(`
         INSERT INTO TokenRevocati (
           token_hash, 
-          revocato_da, 
-          motivo, 
-          scadenza_originale
-        ) VALUES (?, ?, ?, ?)
+          revocato_il, 
+          attore_id
+        ) VALUES (?, CURRENT_TIMESTAMP, ?)
       `, [
         decoded.jti,
-        req.user.id,
-        'Revoca sessione',
-        session.access_token_scadenza
+        req.user.id
       ]);
     }
     
@@ -390,16 +375,16 @@ const revokeSession = async (req, res, next) => {
 };
 
 /**
- * Registra un nuovo utente
+ * Registra un nuovo attore
  * @route POST /api/v1/auth/register
  */
 const register = async (req, res, next) => {
-  const { nome, cognome, email, password, ruolo = 'Operatore' } = req.body;
+  const { nome, cognome, email, password, ruolo = 'Utente', tipo_utente = 'Privato' } = req.body;
 
   try {
     // Verifica se l'email è già registrata
     const [existingUser] = await db.all(
-      'SELECT * FROM Utenti WHERE email = ?',
+      'SELECT * FROM Attori WHERE email = ?',
       [email]
     );
 
@@ -411,60 +396,110 @@ const register = async (req, res, next) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
     
-    // Trova l'amministratore di sistema per impostarlo come creatore dell'utente
+    // Trova l'amministratore di sistema per impostarlo come creatore dell'attore
     const [admin] = await db.all(
-      'SELECT id FROM Utenti WHERE ruolo = ? LIMIT 1',
+      'SELECT id FROM Attori WHERE ruolo = ? LIMIT 1',
       ['Amministratore']
     );
     
     const creato_da = admin ? admin.id : null;
 
     // Determina il ruolo effettivo - limita i ruoli disponibili per la registrazione normale
-    let ruoloEffettivo = 'Operatore';
-    if (ruolo) {
-      // Mappa i ruoli dal formato API al formato database
-      const ruoloMap = {
-        'UTENTE': 'Operatore',
-        'CENTRO_SOCIALE': 'CentroSociale',
-        'CENTRO_RICICLAGGIO': 'CentroRiciclaggio',
-        'Operatore': 'Operatore',
-        'CentroSociale': 'CentroSociale',
-        'CentroRiciclaggio': 'CentroRiciclaggio'
-      };
+    let ruoloEffettivo = 'Utente';
+    
+    // Nella nuova struttura, i ruoli sono: Amministratore, Operatore, Utente
+    if (ruolo === 'Amministratore' || ruolo === 'Operatore' || ruolo === 'Utente') {
+      ruoloEffettivo = ruolo;
+    }
+
+    // Inizio transazione
+    const conn = new db.Connection(db.db);
+    await conn.beginTransaction();
+
+    try {
+      // Inserisci l'attore nel database
+      const resultAttore = await conn.run(
+        `INSERT INTO Attori (nome, cognome, email, password, ruolo, creato_il) 
+         VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [nome, cognome, email, hashedPassword, ruoloEffettivo]
+      );
+
+      if (!resultAttore.lastID) {
+        throw new ApiError(500, 'Errore durante la registrazione dell\'attore');
+      }
+
+      const attoreId = resultAttore.lastID;
+      let utenteId = null;
+
+      // Se il ruolo è "Utente", crea anche un record nella tabella Utenti
+      if (ruoloEffettivo === 'Utente') {
+        // Determina il tipo di utente
+        let tipoUtente = 'Privato';
+        if (tipo_utente === 'Canale sociale' || tipo_utente === 'Centro riciclo') {
+          tipoUtente = tipo_utente;
+        }
+
+        // Inserisci il record utente
+        const resultUtente = await conn.run(
+          `INSERT INTO Utenti (nome, tipo, email, creato_il, attore_id) 
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)`,
+          [nome, tipoUtente, email, attoreId]
+        );
+
+        if (!resultUtente.lastID) {
+          throw new ApiError(500, 'Errore durante la creazione del record utente');
+        }
+
+        utenteId = resultUtente.lastID;
+
+        // Crea associazione nella tabella UtentiCentri
+        await conn.run(
+          `INSERT INTO UtentiCentri (utente_id, centro_id, data_inizio) 
+           VALUES (?, ?, CURRENT_TIMESTAMP)`,
+          [attoreId, utenteId]
+        );
+      }
+
+      // Commit transazione
+      await conn.commit();
       
-      if (ruoloMap[ruolo]) {
-        ruoloEffettivo = ruoloMap[ruolo];
+      // Leggi l'attore appena creato per includerlo nella risposta (senza la password)
+      const [newActor] = await db.all(
+        'SELECT id, nome, cognome, email, ruolo FROM Attori WHERE id = ?',
+        [attoreId]
+      );
+
+      // Se è un utente, aggiungi i dettagli dell'utente
+      let userDetails = null;
+      if (utenteId) {
+        [userDetails] = await db.all(
+          'SELECT id, nome, tipo FROM Utenti WHERE id = ?',
+          [utenteId]
+        );
       }
+
+      logger.info(`Nuovo attore registrato: ${email} (ID: ${attoreId})`);
+
+      // Restituisci la risposta di successo
+      return res.status(201).json({
+        status: 'success',
+        message: 'Utente registrato con successo',
+        success: true,
+        data: {
+          user: {
+            ...newActor,
+            ...(userDetails ? { utente: userDetails } : {})
+          }
+        }
+      });
+    } catch (error) {
+      // Rollback in caso di errore
+      await conn.rollback();
+      throw error;
+    } finally {
+      // Rilascia la connessione
+      conn.release();
     }
-
-    // Inserisci l'utente nel database
-    const result = await db.run(
-      `INSERT INTO Utenti (nome, cognome, email, password, ruolo, creato_da, creato_il, ultimo_accesso) 
-       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), NULL)`,
-      [nome, cognome, email, hashedPassword, ruoloEffettivo, creato_da]
-    );
-
-    if (!result.lastID) {
-      throw new ApiError(500, 'Errore durante la registrazione');
-    }
-
-    // Leggi l'utente appena creato per includerlo nella risposta (senza la password)
-    const [newUser] = await db.all(
-      'SELECT id, nome, cognome, email, ruolo FROM Utenti WHERE id = ?',
-      [result.lastID]
-    );
-
-    logger.info(`Nuovo utente registrato: ${email} (ID: ${result.lastID})`);
-
-    // Restituisci la risposta di successo
-    return res.status(201).json({
-      status: 'success',
-      message: 'Utente registrato con successo',
-      success: true,
-      data: {
-        user: newUser
-      }
-    });
   } catch (error) {
     next(error);
   }
@@ -477,5 +512,300 @@ module.exports = {
   logoutAll,
   getActiveSessions,
   revokeSession,
-  register
+  register,
+  loginWeb,
+  refreshTokenWeb,
+  logoutWeb
 };
+
+/**
+ * Versione web del login che utilizza i cookie invece di restituire token
+ */
+async function loginWeb(req, res, next) {
+  try {
+    const { email, password } = req.body;
+    const ip_address = req.ip;
+    const device_info = req.headers['user-agent'] || 'Web Browser';
+    
+    logger.info(`Tentativo di login web per ${email}`);
+    
+    // Trova l'attore con questa email
+    const attore = await db.get(`
+      SELECT * FROM Attori
+      WHERE email = ?
+    `, [email]);
+    
+    // Verifica che l'attore esista
+    if (!attore) {
+      logger.warn(`Login web fallito: email non trovata ${email}`);
+      throw new ApiError(401, 'Credenziali non valide');
+    }
+    
+    // Verifica la password
+    const validPassword = await bcrypt.compare(password, attore.password);
+    if (!validPassword) {
+      logger.warn(`Login web fallito: password errata per ${email}`);
+      throw new ApiError(401, 'Credenziali non valide');
+    }
+    
+    // Verifica che l'account sia attivo
+    if (!attore.attivo) {
+      logger.warn(`Login web fallito: account disattivato per ${email}`);
+      throw new ApiError(403, 'Account disattivato, contattare l\'amministratore');
+    }
+    
+    // Gestione associazione per utenti
+    let utenteAssociato = null;
+    
+    if (attore.ruolo === 'Utente') {
+      utenteAssociato = await db.get(`
+        SELECT id, nome, tipo
+        FROM Utenti
+        WHERE attore_id = ?
+      `, [attore.id]);
+      
+      // Se è un utente ma non ha un'entità utente associata, errore
+      if (!utenteAssociato) {
+        logger.warn(`Login web fallito: attore con ruolo "Utente" senza entità utente associata: ${email}`);
+        throw new ApiError(401, 'Account non configurato correttamente. Contattare l\'amministratore.');
+      }
+    }
+    
+    // Genera tokens
+    const tokens = await generateTokens(attore);
+    
+    // Salva i token nel database
+    await db.run(`
+      INSERT INTO TokenAutenticazione (
+        attore_id, 
+        access_token, 
+        refresh_token, 
+        access_token_scadenza,
+        refresh_token_scadenza,
+        device_info, 
+        ip_address
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      attore.id,
+      tokens.accessToken,
+      tokens.refreshToken,
+      tokens.accessTokenScadenza.toISOString(),
+      tokens.refreshTokenScadenza.toISOString(),
+      device_info || `Accesso web il ${new Date().toISOString()}`,
+      ip_address
+    ]);
+    
+    // Aggiorna ultimo accesso
+    await db.run(`
+      UPDATE Attori
+      SET ultimo_accesso = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [attore.id]);
+    
+    // Non esporre la password nella risposta
+    delete attore.password;
+    
+    // Preparare i dati dell'utente per la risposta
+    const risposta = {
+      ...attore
+    };
+    
+    // Se è un utente, aggiungi i dati dell'entità utente
+    if (utenteAssociato) {
+      risposta.utente = utenteAssociato;
+    }
+    
+    // Imposta i cookie per client web
+    // Il cookie access_token è httpOnly e secure (non accessibile da JS)
+    res.cookie('access_token', tokens.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      expires: new Date(tokens.expires),
+      path: '/'
+    });
+    
+    // Il cookie refresh_token è httpOnly, secure e ha una vita più lunga
+    res.cookie('refresh_token', tokens.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      expires: tokens.refreshTokenScadenza,
+      path: '/auth'
+    });
+    
+    // Cookie pubblico con info sull'utente
+    res.cookie('user_info', JSON.stringify({
+      id: attore.id,
+      nome: attore.nome,
+      cognome: attore.cognome,
+      ruolo: attore.ruolo,
+      isAuthenticated: true
+    }), {
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      expires: new Date(tokens.expires),
+      path: '/'
+    });
+    
+    logger.info(`Login web avvenuto con successo per ${email}`);
+    
+    // Restituisci attore senza i tokens (sono nei cookie)
+    res.json({
+      user: risposta,
+      success: true,
+      message: 'Login avvenuto con successo'
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Rinnova il token di accesso usando il refresh token dai cookie
+ */
+async function refreshTokenWeb(req, res, next) {
+  try {
+    // Ottieni il refresh token dal cookie
+    const refresh_token = req.cookies.refresh_token;
+    
+    if (!refresh_token) {
+      throw new ApiError(401, 'Refresh token non trovato nei cookie');
+    }
+    
+    logger.info(`Tentativo di refresh token web`);
+    
+    // Verifica che il refresh token esista nel database
+    const tokenEntry = await db.get(`
+      SELECT 
+        t.attore_id, t.access_token_scadenza, t.access_token,
+        a.id, a.email, a.nome, a.cognome, a.ruolo
+      FROM TokenAutenticazione t
+      JOIN Attori a ON t.attore_id = a.id
+      WHERE t.refresh_token = ?
+      AND t.refresh_token_scadenza > datetime('now')
+    `, [refresh_token]);
+    
+    if (!tokenEntry) {
+      // Pulisci i cookie se il refresh token non è valido
+      res.clearCookie('access_token');
+      res.clearCookie('refresh_token');
+      res.clearCookie('user_info');
+      
+      throw new ApiError(401, 'Refresh token non valido o scaduto');
+    }
+    
+    // Genera un nuovo access token
+    const tokens = await generateTokens({
+      id: tokenEntry.id,
+      email: tokenEntry.email,
+      nome: tokenEntry.nome,
+      cognome: tokenEntry.cognome,
+      ruolo: tokenEntry.ruolo
+    });
+    
+    // Aggiorna il token nel database
+    await db.run(`
+      UPDATE TokenAutenticazione
+      SET 
+        access_token = ?,
+        access_token_scadenza = ?
+      WHERE refresh_token = ?
+    `, [
+      tokens.accessToken,
+      tokens.accessTokenScadenza.toISOString(),
+      refresh_token
+    ]);
+    
+    // Imposta i cookie aggiornati
+    res.cookie('access_token', tokens.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      expires: new Date(tokens.expires),
+      path: '/'
+    });
+    
+    // Cookie pubblico con info sull'utente
+    res.cookie('user_info', JSON.stringify({
+      id: tokenEntry.id,
+      nome: tokenEntry.nome,
+      cognome: tokenEntry.cognome,
+      ruolo: tokenEntry.ruolo,
+      isAuthenticated: true
+    }), {
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      expires: new Date(tokens.expires),
+      path: '/'
+    });
+    
+    logger.info(`Refresh token web avvenuto con successo per ${tokenEntry.email}`);
+    
+    // Risposta
+    res.json({
+      success: true,
+      message: 'Token rinnovato con successo'
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Logout web (cancella i cookie di autenticazione)
+ */
+async function logoutWeb(req, res, next) {
+  try {
+    // Ottieni il token dal cookie
+    const accessToken = req.cookies.access_token;
+    const refreshToken = req.cookies.refresh_token;
+    
+    logger.info(`Tentativo di logout web`);
+    
+    // Se abbiamo il token, aggiungilo alla blacklist
+    if (accessToken) {
+      const decoded = jwt.decode(accessToken);
+      if (decoded && decoded.jti) {
+        await db.run(`
+          INSERT INTO TokenRevocati (
+            token_hash, 
+            revocato_il, 
+            attore_id
+          ) VALUES (?, CURRENT_TIMESTAMP, ?)
+        `, [
+          decoded.jti,
+          decoded.sub
+        ]);
+      }
+      
+      // Invalida il refresh token se presente
+      if (refreshToken) {
+        await db.run(`
+          UPDATE TokenAutenticazione
+          SET refresh_token_scadenza = datetime('now', '-1 day')
+          WHERE refresh_token = ?
+        `, [refreshToken]);
+      }
+    }
+    
+    // Cancella i cookie
+    res.clearCookie('access_token', { path: '/' });
+    res.clearCookie('refresh_token', { path: '/auth' });
+    res.clearCookie('user_info', { path: '/' });
+    
+    logger.info(`Logout web avvenuto con successo`);
+    
+    res.json({ 
+      success: true,
+      message: 'Logout avvenuto con successo' 
+    });
+  } catch (error) {
+    // Anche in caso di errore, cancella i cookie
+    res.clearCookie('access_token', { path: '/' });
+    res.clearCookie('refresh_token', { path: '/auth' });
+    res.clearCookie('user_info', { path: '/' });
+    
+    next(error);
+  }
+}

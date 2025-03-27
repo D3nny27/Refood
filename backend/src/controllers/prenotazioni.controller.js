@@ -21,8 +21,8 @@ const getPrenotazioni = async (req, res, next) => {
         cr.nome AS centro_ricevente_nome
       FROM Prenotazioni p
       JOIN Lotti l ON p.lotto_id = l.id
-      JOIN Centri co ON l.centro_origine_id = co.id
-      JOIN Centri cr ON p.centro_ricevente_id = cr.id
+      JOIN Utenti co ON l.centro_origine_id = co.id
+      JOIN Utenti cr ON p.utente_id = cr.id
       WHERE 1=1
     `;
     
@@ -36,11 +36,11 @@ const getPrenotazioni = async (req, res, next) => {
     
     // Filtro per centro
     if (centro) {
-      query += ' AND (p.centro_ricevente_id = ? OR l.centro_origine_id = ?)';
+      query += ' AND (p.utente_id = ? OR l.centro_origine_id = ?)';
       params.push(centro, centro);
     }
     
-    // Per utenti con ruoli specifici, limita alle prenotazioni dei propri centri
+    // Per attori con ruoli specifici, limita alle prenotazioni dei propri centri
     if (req.user.ruolo !== 'Amministratore') {
       const userCentriQuery = `
         SELECT centro_id FROM UtentiCentri WHERE utente_id = ?
@@ -50,7 +50,7 @@ const getPrenotazioni = async (req, res, next) => {
       const centriIds = userCentri.map(row => row.centro_id);
       
       if (centriIds.length === 0) {
-        // Se l'utente non è associato a nessun centro, non mostrare niente
+        // Se l'attore non è associato a nessun centro, non mostrare niente
         return res.json({
           data: [],
           pagination: {
@@ -63,7 +63,7 @@ const getPrenotazioni = async (req, res, next) => {
       }
       
       const placeholders = centriIds.map(() => '?').join(',');
-      query += ` AND (p.centro_ricevente_id IN (${placeholders}) OR l.centro_origine_id IN (${placeholders}))`;
+      query += ` AND (p.utente_id IN (${placeholders}) OR l.centro_origine_id IN (${placeholders}))`;
       params.push(...centriIds, ...centriIds);
     }
     
@@ -71,7 +71,7 @@ const getPrenotazioni = async (req, res, next) => {
     const countQuery = `SELECT COUNT(*) AS total FROM (${query}) AS filtered`;
     
     // Aggiunge ordinamento e paginazione
-    query += ' ORDER BY p.data_prenotazione DESC LIMIT ? OFFSET ?';
+    query += ' ORDER BY p.data_creazione DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit), parseInt(offset));
     
     // Esegue entrambe le query
@@ -112,8 +112,8 @@ const getPrenotazioneById = async (req, res, next) => {
         cr.nome AS centro_ricevente_nome, cr.indirizzo AS indirizzo_ricevente, cr.telefono AS telefono_ricevente
       FROM Prenotazioni p
       JOIN Lotti l ON p.lotto_id = l.id
-      JOIN Centri co ON l.centro_origine_id = co.id
-      JOIN Centri cr ON p.centro_ricevente_id = cr.id
+      JOIN Utenti co ON l.centro_origine_id = co.id
+      JOIN Utenti cr ON p.utente_id = cr.id
       WHERE p.id = ?
     `;
     
@@ -123,9 +123,9 @@ const getPrenotazioneById = async (req, res, next) => {
       throw new ApiError(404, 'Prenotazione non trovata');
     }
     
-    // Verifica i permessi dell'utente
+    // Verifica i permessi dell'attore
     if (req.user.ruolo !== 'Amministratore') {
-      // Controlla se l'utente appartiene al centro origine o ricevente
+      // Controlla se l'attore appartiene al centro origine o ricevente
       const userCentriQuery = `
         SELECT 1 FROM UtentiCentri 
         WHERE utente_id = ? AND centro_id IN (?, ?)
@@ -133,7 +133,7 @@ const getPrenotazioneById = async (req, res, next) => {
       
       const userCanAccess = await db.get(
         userCentriQuery, 
-        [req.user.id, prenotazione.centro_origine_id, prenotazione.centro_ricevente_id]
+        [req.user.id, prenotazione.centro_origine_id, prenotazione.utente_id]
       );
       
       if (!userCanAccess) {
@@ -170,22 +170,22 @@ const getPrenotazioneById = async (req, res, next) => {
  */
 async function notificaAmministratoriCentroOrigine(prenotazioneId, lotto, centro, data_ritiro, note) {
   try {
-    // Recupera gli utenti amministratori e operatori del centro di origine
-    const utentiQuery = `
+    // Recupera gli attori amministratori e operatori del centro di origine
+    const attoriQuery = `
       SELECT 
-        u.id, 
-        u.nome, 
-        u.cognome, 
-        u.token_notifiche
-      FROM Utenti u
-      JOIN UtentiCentri uc ON u.id = uc.utente_id
+        a.id, 
+        a.nome, 
+        a.cognome, 
+        a.token_notifiche
+      FROM Attori a
+      JOIN UtentiCentri uc ON a.id = uc.utente_id
       WHERE uc.centro_id = ? 
-      AND (u.ruolo = 'Amministratore' OR u.ruolo = 'Operatore')
-      AND u.token_notifiche IS NOT NULL
+      AND (a.ruolo = 'Amministratore' OR a.ruolo = 'Operatore')
+      AND a.token_notifiche IS NOT NULL
     `;
     
-    const utenti = await db.all(utentiQuery, [lotto.centro_origine_id]);
-    if (utenti.length === 0) {
+    const attori = await db.all(attoriQuery, [lotto.centro_origine_id]);
+    if (attori.length === 0) {
       console.log(`Nessun amministratore o operatore con token notifiche trovato per il centro ${lotto.centro_origine_id}`);
       return;
     }
@@ -195,7 +195,7 @@ async function notificaAmministratoriCentroOrigine(prenotazioneId, lotto, centro
     const messaggio = `Il lotto "${lotto.prodotto}" (${lotto.quantita} ${lotto.unita_misura}) è stato prenotato dal centro "${centro.nome}". ${data_ritiro ? `Ritiro previsto: ${data_ritiro}` : 'Data ritiro non specificata'}.`;
     
     // Log per debug
-    console.log(`Invio notifiche push a ${utenti.length} utenti per la prenotazione ${prenotazioneId}`);
+    console.log(`Invio notifiche push a ${attori.length} attori per la prenotazione ${prenotazioneId}`);
     
     // Imposta le notifiche nel sistema (usato poi per le notifiche push)
     const notificaQuery = `
@@ -212,26 +212,26 @@ async function notificaAmministratoriCentroOrigine(prenotazioneId, lotto, centro
       ) VALUES (?, ?, 'Prenotazione', 'Alta', ?, ?, 'Prenotazione', 0, CURRENT_TIMESTAMP)
     `;
     
-    for (const utente of utenti) {
-      if (utente.token_notifiche) {
+    for (const attore of attori) {
+      if (attore.token_notifiche) {
         try {
-          // Inserisci la notifica nel database per questo utente specifico
+          // Inserisci la notifica nel database per questo attore specifico
           await db.run(
             notificaQuery, 
             [
               titolo,
               messaggio,
-              utente.id,
+              attore.id,
               prenotazioneId
             ]
           );
           
-          console.log(`Notifica inserita per l'utente ${utente.id} (${utente.nome} ${utente.cognome})`);
+          console.log(`Notifica inserita per l'attore ${attore.id} (${attore.nome} ${attore.cognome})`);
           
           // Qui potremmo inviare una notifica push tramite Firebase o altro servizio esterno
-          // usando il token_notifiche dell'utente
+          // usando il token_notifiche dell'attore
         } catch (notificaErr) {
-          console.error(`Errore durante l'inserimento della notifica per l'utente ${utente.id}:`, notificaErr);
+          console.error(`Errore durante l'inserimento della notifica per l'attore ${attore.id}:`, notificaErr);
         }
       }
     }
@@ -255,7 +255,7 @@ const createPrenotazione = async (req, res, next) => {
       SELECT l.*, c.nome AS centro_nome, c.latitudine AS origine_lat, 
              c.longitudine AS origine_lng, c.indirizzo AS origine_indirizzo
       FROM Lotti l
-      JOIN Centri c ON l.centro_origine_id = c.id
+      JOIN Utenti c ON l.centro_origine_id = c.id
       WHERE l.id = ?
     `;
     
@@ -281,7 +281,7 @@ const createPrenotazione = async (req, res, next) => {
     const centroQuery = `
       SELECT c.*, c.latitudine AS dest_lat, c.longitudine AS dest_lng, 
              c.indirizzo AS dest_indirizzo 
-      FROM Centri c 
+      FROM Utenti c 
       WHERE id = ?
     `;
     const centro = await db.get(centroQuery, [centro_ricevente_id]);
@@ -334,7 +334,7 @@ const createPrenotazione = async (req, res, next) => {
       const insertQuery = `
         INSERT INTO Prenotazioni (
           lotto_id, centro_ricevente_id, stato, 
-          data_prenotazione, data_ritiro, note
+          data_creazione, data_ritiro, note
         ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
       `;
       
@@ -446,8 +446,8 @@ const createPrenotazione = async (req, res, next) => {
           t.distanza_km, t.emissioni_co2, t.stato AS stato_trasporto
         FROM Prenotazioni p
         JOIN Lotti l ON p.lotto_id = l.id
-        JOIN Centri co ON l.centro_origine_id = co.id
-        JOIN Centri cr ON p.centro_ricevente_id = cr.id
+        JOIN Utenti co ON l.centro_origine_id = co.id
+        JOIN Utenti cr ON p.utente_id = cr.id
         LEFT JOIN Trasporti t ON p.id = t.prenotazione_id
         WHERE p.id = ?
       `;
@@ -496,7 +496,7 @@ const updatePrenotazione = async (req, res, next) => {
       `SELECT p.*, l.prodotto, l.centro_origine_id, c.nome as centro_nome
        FROM Prenotazioni p
        JOIN Lotti l ON p.lotto_id = l.id
-       JOIN Centri c ON p.centro_destinazione_id = c.id
+       JOIN Utenti c ON p.centro_ricevente_id = c.id
        WHERE p.id = ?`,
       [prenotazioneId]
     );
@@ -524,7 +524,7 @@ const updatePrenotazione = async (req, res, next) => {
       `SELECT p.*, l.prodotto, l.centro_origine_id, c.nome as centro_nome
        FROM Prenotazioni p
        JOIN Lotti l ON p.lotto_id = l.id
-       JOIN Centri c ON p.centro_destinazione_id = c.id
+       JOIN Utenti c ON p.centro_ricevente_id = c.id
        WHERE p.id = ?`,
       [prenotazioneId]
     );
@@ -557,13 +557,13 @@ const updatePrenotazione = async (req, res, next) => {
        FROM Utenti u
        JOIN UtentiCentri uc ON u.id = uc.utente_id
        WHERE uc.centro_id = ?`,
-      [prenotazione.centro_destinazione_id]
+      [prenotazione.centro_ricevente_id]
     );
     
     // Aggiungi gli operatori ai destinatari
     operatoriDestinazione.forEach(op => destinatariNotifica.add(op.id));
     
-    // Escludi l'utente che ha effettuato l'aggiornamento
+    // Escludi l'attore che ha effettuato l'aggiornamento
     destinatariNotifica.delete(req.user.id);
     
     // Invia notifiche a tutti i destinatari
@@ -773,7 +773,7 @@ const cancelPrenotazione = async (req, res, next) => {
     // Aggiorna lo stato della prenotazione
     await db.run(
       `UPDATE Prenotazioni SET stato = 'Annullato', note = CASE WHEN note IS NULL THEN ? ELSE note || ' | Annullata: ' || ? END WHERE id = ?`,
-      [motivo || 'Annullata dall\'utente', motivo || 'Annullata dall\'utente', id]
+      [motivo || 'Annullata dall\'attore', motivo || 'Annullata dall\'attore', id]
     );
     
     // Se esiste un trasporto, aggiorna anche lo stato del trasporto
@@ -819,7 +819,7 @@ const getPrenotazioniByCentro = async (req, res, next) => {
     const offset = (page - 1) * limit;
     
     // Verifica che il centro esista
-    const centroQuery = `SELECT * FROM Centri WHERE id = ?`;
+    const centroQuery = `SELECT * FROM Utenti WHERE id = ?`;
     const centro = await db.get(centroQuery, [centro_id]);
     
     if (!centro) {
@@ -835,9 +835,9 @@ const getPrenotazioniByCentro = async (req, res, next) => {
         cr.nome AS centro_ricevente_nome
       FROM Prenotazioni p
       JOIN Lotti l ON p.lotto_id = l.id
-      JOIN Centri co ON l.centro_origine_id = co.id
-      JOIN Centri cr ON p.centro_ricevente_id = cr.id
-      WHERE (p.centro_ricevente_id = ? OR l.centro_origine_id = ?)
+      JOIN Utenti co ON l.centro_origine_id = co.id
+      JOIN Utenti cr ON p.utente_id = cr.id
+      WHERE (p.utente_id = ? OR l.centro_origine_id = ?)
     `;
     
     const params = [centro_id, centro_id];
@@ -852,7 +852,7 @@ const getPrenotazioniByCentro = async (req, res, next) => {
     const countQuery = `SELECT COUNT(*) AS total FROM (${query}) AS filtered`;
     
     // Aggiunge ordinamento e paginazione
-    query += ' ORDER BY p.data_prenotazione DESC LIMIT ? OFFSET ?';
+    query += ' ORDER BY p.data_creazione DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit), parseInt(offset));
     
     // Esegue entrambe le query
@@ -897,7 +897,7 @@ const accettaPrenotazione = async (req, res, next) => {
           cr.nome AS centro_ricevente_nome
         FROM Prenotazioni p
         JOIN Lotti l ON p.lotto_id = l.id
-        JOIN Centri cr ON p.centro_ricevente_id = cr.id
+        JOIN Utenti cr ON p.utente_id = cr.id
         WHERE p.id = ?
       `;
       
@@ -907,7 +907,7 @@ const accettaPrenotazione = async (req, res, next) => {
         throw new ApiError(404, 'Prenotazione non trovata');
       }
       
-      // Verifica che l'utente abbia i permessi necessari (deve appartenere al centro origine)
+      // Verifica che l'attore abbia i permessi necessari (deve appartenere al centro origine)
       if (req.user.ruolo !== 'Amministratore') {
         const userCentriQuery = `
           SELECT 1 FROM UtentiCentri 
@@ -973,7 +973,7 @@ const accettaPrenotazione = async (req, res, next) => {
           prenotazione.prodotto,
           data_ritiro_prevista,
           id,
-          prenotazione.centro_ricevente_id
+          prenotazione.utente_id
         ]
       );
       
@@ -986,8 +986,8 @@ const accettaPrenotazione = async (req, res, next) => {
           cr.nome AS centro_ricevente_nome
         FROM Prenotazioni p
         JOIN Lotti l ON p.lotto_id = l.id
-        JOIN Centri co ON l.centro_origine_id = co.id
-        JOIN Centri cr ON p.centro_ricevente_id = cr.id
+        JOIN Utenti co ON l.centro_origine_id = co.id
+        JOIN Utenti cr ON p.utente_id = cr.id
         WHERE p.id = ?
       `;
       
@@ -1031,7 +1031,7 @@ const rifiutaPrenotazione = async (req, res, next) => {
           cr.nome AS centro_ricevente_nome
         FROM Prenotazioni p
         JOIN Lotti l ON p.lotto_id = l.id
-        JOIN Centri cr ON p.centro_ricevente_id = cr.id
+        JOIN Utenti cr ON p.utente_id = cr.id
         WHERE p.id = ?
       `;
       
@@ -1041,7 +1041,7 @@ const rifiutaPrenotazione = async (req, res, next) => {
         throw new ApiError(404, 'Prenotazione non trovata');
       }
       
-      // Verifica che l'utente abbia i permessi necessari (deve appartenere al centro origine)
+      // Verifica che l'attore abbia i permessi necessari (deve appartenere al centro origine)
       if (req.user.ruolo !== 'Amministratore') {
         const userCentriQuery = `
           SELECT 1 FROM UtentiCentri 
@@ -1108,7 +1108,7 @@ const rifiutaPrenotazione = async (req, res, next) => {
           prenotazione.prodotto,
           motivo || 'Non specificato',
           id,
-          prenotazione.centro_ricevente_id
+          prenotazione.utente_id
         ]
       );
       
@@ -1130,8 +1130,8 @@ const rifiutaPrenotazione = async (req, res, next) => {
           cr.nome AS centro_ricevente_nome
         FROM Prenotazioni p
         JOIN Lotti l ON p.lotto_id = l.id
-        JOIN Centri co ON l.centro_origine_id = co.id
-        JOIN Centri cr ON p.centro_ricevente_id = cr.id
+        JOIN Utenti co ON l.centro_origine_id = co.id
+        JOIN Utenti cr ON p.utente_id = cr.id
         WHERE p.id = ?
       `;
       
@@ -1163,7 +1163,7 @@ const rifiutaPrenotazione = async (req, res, next) => {
  */
 const cleanupDuplicatePrenotazioni = async (req, res, next) => {
   try {
-    // Verifica che l'utente sia un amministratore
+    // Verifica che l'attore sia un amministratore
     if (req.user.ruolo !== 'Amministratore') {
       throw new ApiError(403, 'Questa operazione è riservata agli amministratori');
     }
@@ -1201,10 +1201,10 @@ const cleanupDuplicatePrenotazioni = async (req, res, next) => {
       for (const dup of duplicates) {
         // Ottieni tutte le prenotazioni attive per questo lotto
         const prenotazioniQuery = `
-          SELECT id, lotto_id, centro_ricevente_id, stato, data_prenotazione
+          SELECT id, lotto_id, utente_id, stato, data_creazione
           FROM Prenotazioni
           WHERE lotto_id = ? AND stato IN ('Prenotato', 'InAttesa', 'Confermato', 'InTransito')
-          ORDER BY data_prenotazione DESC
+          ORDER BY data_creazione DESC
         `;
         
         const prenotazioni = await db.all(prenotazioniQuery, [dup.lotto_id]);
