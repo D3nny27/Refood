@@ -293,7 +293,20 @@ router.post('/register', [
   body('email').isEmail().withMessage('Email non valida'),
   body('password').isLength({ min: 8 }).withMessage('La password deve essere di almeno 8 caratteri'),
   body('nome').notEmpty().withMessage('Il nome è obbligatorio'),
-  body('cognome').notEmpty().withMessage('Il cognome è obbligatorio'),
+  body('cognome').custom((value, { req }) => {
+    const { ruolo, tipoUtente } = req.body;
+    
+    const cognomeObbligatorio = 
+      ruolo === 'Operatore' || 
+      ruolo === 'Amministratore' || 
+      (ruolo === 'Utente' && tipoUtente?.tipo === 'Privato');
+    
+    if (cognomeObbligatorio && (!value || value.trim() === '')) {
+      throw new Error('Il cognome è obbligatorio');
+    }
+    
+    return true;
+  }),
   body('ruolo').isIn(['Operatore', 'Amministratore', 'Utente']).withMessage('Ruolo non valido'),
   body('tipoUtente.tipo').optional().isIn(['Privato', 'Canale sociale', 'centro riciclo']).withMessage('Tipo utente non valido'),
   body('tipoUtente.indirizzo').optional().notEmpty().withMessage('Indirizzo obbligatorio per tipi utente'),

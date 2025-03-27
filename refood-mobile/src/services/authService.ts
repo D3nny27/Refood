@@ -299,7 +299,7 @@ export const registerUser = async (userData: {
   email: string;
   password: string;
   nome: string;
-  cognome: string;
+  cognome: string | null;
   ruolo: string;
   tipoUtente?: {
     tipo: string;
@@ -309,6 +309,23 @@ export const registerUser = async (userData: {
   };
 }) => {
   try {
+    // Assicuriamoci che il cognome sia null per Canale sociale e centro riciclo
+    if (userData.ruolo === 'Utente' && userData.tipoUtente) {
+      if (userData.tipoUtente.tipo === 'Canale sociale' || userData.tipoUtente.tipo === 'centro riciclo') {
+        userData = {
+          ...userData,
+          cognome: null
+        };
+        console.log('Cognome impostato esplicitamente a null per tipo:', userData.tipoUtente.tipo);
+      }
+    }
+    
+    // Se il cognome è una stringa vuota, impostalo a null
+    if (userData.cognome === '') {
+      userData.cognome = null;
+      console.log('Cognome (stringa vuota) convertito a null prima dell\'invio API');
+    }
+    
     console.log(`Invio richiesta di registrazione al backend (${API_URL}/auth/register):`, userData);
     
     // Chiama l'API reale senza meccanismi di fallback

@@ -399,9 +399,24 @@ const revokeSession = async (req, res, next) => {
 const register = async (req, res, next) => {
   const { email, password, nome, cognome, ruolo, tipoUtente } = req.body;
   
-  // Verifica campi obbligatori
-  if (!email || !password || !nome || !cognome || !ruolo) {
-    return next(new ApiError(400, 'Tutti i campi sono obbligatori'));
+  // Logging dettagliato per debug
+  console.log('==== DATI RICEVUTI NELLA REGISTRAZIONE ====');
+  console.log('email:', email);
+  console.log('nome:', nome);
+  console.log('cognome:', cognome, typeof cognome);
+  console.log('ruolo:', ruolo);
+  if (tipoUtente) {
+    console.log('tipoUtente.tipo:', tipoUtente.tipo);
+    console.log('tipoUtente.indirizzo:', tipoUtente.indirizzo);
+    console.log('tipoUtente.telefono:', tipoUtente.telefono);
+  } else {
+    console.log('tipoUtente: non presente');
+  }
+  console.log('==========================================');
+  
+  // Verifica campi obbligatori di base
+  if (!email || !password || !nome || !ruolo) {
+    return next(new ApiError(400, 'I campi email, password, nome e ruolo sono obbligatori'));
   }
   
   // Verifica che il ruolo sia valido
@@ -422,6 +437,25 @@ const register = async (req, res, next) => {
   if (ruolo === 'Utente' && !tipoUtente.indirizzo) {
     return next(new ApiError(400, 'È necessario specificare l\'indirizzo'));
   }
+  
+  // Validazione del cognome con log dettagliati:
+  // - Obbligatorio per organizzazione
+  // - Obbligatorio per utenti privati
+  // - Opzionale per canale sociale e centro riciclo
+  const isCognomeRequired = 
+      ruolo === 'Operatore' || 
+      ruolo === 'Amministratore' || 
+      (ruolo === 'Utente' && tipoUtente?.tipo === 'Privato');
+  
+  console.log('DEBUG COGNOME:');
+  console.log('- isCognomeRequired:', isCognomeRequired);
+  console.log('- cognome presente:', !!cognome);
+  console.log('- condizione test:', isCognomeRequired && !cognome);
+  
+  if (isCognomeRequired && !cognome) {
+    console.log('ERRORE: Cognome mancante quando richiesto');
+    return next(new ApiError(400, 'Il cognome è obbligatorio'));
+  }
 
   try {
     // Verifica che l'email non sia già registrata
@@ -439,9 +473,9 @@ const register = async (req, res, next) => {
     
     // Inserisci il nuovo attore
     const resultAttore = await db.run(
-      `INSERT INTO Attori (email, password, nome, cognome, ruolo, creato_il) 
-       VALUES (?, ?, ?, ?, ?, datetime('now'))`,
-      [email, hashedPassword, nome, cognome, ruolo]
+      `INSERT INTO Attori (email, password, nome, cognome, cognome_old, ruolo, creato_il) 
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+      [email, hashedPassword, nome, cognome || null, cognome || '', ruolo]
     );
     
     const nuovoAttoreId = resultAttore.lastID;
@@ -519,7 +553,7 @@ const register = async (req, res, next) => {
       id: nuovoAttoreId,
       email,
       nome,
-      cognome,
+      cognome: cognome || null,
       ruolo
     };
     

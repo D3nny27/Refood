@@ -67,6 +67,12 @@ const RegisterScreen = () => {
       ruoloOrganizzazione: form.ruoloOrganizzazione,
       tipoUtente: form.tipoUtente 
     });
+    
+    // Gestione speciale per il cognome quando cambia il tipo utente
+    if (form.tipologia === 'utente' && (form.tipoUtente === 'Canale sociale' || form.tipoUtente === 'centro riciclo')) {
+      setForm(prev => ({ ...prev, cognome: '' }));
+      console.log('Cognome impostato a stringa vuota per tipo:', form.tipoUtente);
+    }
   }, [form.tipologia, form.ruoloOrganizzazione, form.tipoUtente]);
   
   // Metodo per mostrare la selezione in un alert per sceglierne uno direttamente
@@ -239,6 +245,16 @@ const RegisterScreen = () => {
 
   // Validazione cognome
   const validateCognome = () => {
+    // Salta la validazione per tipi utente che non richiedono il cognome
+    if (form.tipologia === 'utente' && (form.tipoUtente === 'Canale sociale' || form.tipoUtente === 'centro riciclo')) {
+      setErrori(prev => ({ ...prev, cognome: '' }));
+      // Assicuriamoci che il campo cognome sia vuoto per questi tipi
+      if (form.cognome) {
+        setForm(prev => ({ ...prev, cognome: '' }));
+      }
+      return true;
+    }
+    
     if (!form.cognome) {
       setErrori(prev => ({ ...prev, cognome: 'Cognome obbligatorio' }));
       return false;
@@ -526,21 +542,24 @@ const RegisterScreen = () => {
                 </View>
                 
                 {/* Cognome */}
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    label="Cognome"
-                    value={form.cognome}
-                    onChangeText={(text) => setForm(prev => ({ ...prev, cognome: text }))}
-                    onBlur={validateCognome}
-                    error={!!errori.cognome}
-                    mode="outlined"
-                    style={styles.input}
-                    outlineColor={PRIMARY_COLOR}
-                    activeOutlineColor={PRIMARY_COLOR}
-                    left={<TextInput.Icon icon="account" />}
-                  />
-                  {!!errori.cognome && <HelperText type="error">{errori.cognome}</HelperText>}
-                </View>
+                {(!form.tipologia || form.tipologia === 'organizzazione' || 
+                 (form.tipologia === 'utente' && form.tipoUtente === 'Privato')) && (
+                  <View style={styles.inputWrapper}>
+                    <TextInput
+                      label="Cognome"
+                      value={form.cognome}
+                      onChangeText={(text) => setForm(prev => ({ ...prev, cognome: text }))}
+                      onBlur={validateCognome}
+                      error={!!errori.cognome}
+                      mode="outlined"
+                      style={styles.input}
+                      outlineColor={PRIMARY_COLOR}
+                      activeOutlineColor={PRIMARY_COLOR}
+                      left={<TextInput.Icon icon="account" />}
+                    />
+                    {!!errori.cognome && <HelperText type="error">{errori.cognome}</HelperText>}
+                  </View>
+                )}
                 
                 {/* Selezione tipologia - Migliorata UI */}
                 <Subheading style={styles.sectionTitle}>Seleziona Tipologia</Subheading>

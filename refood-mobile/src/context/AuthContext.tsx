@@ -500,7 +500,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Funzione per registrare un nuovo utente
   const register = async (
     nome: string, 
-    cognome: string, 
+    cognome: string | null, 
     email: string, 
     password: string,
     tipologia: 'organizzazione' | 'utente' | null,
@@ -513,10 +513,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
       clearError();
       
+      // Log per debug
+      console.log('DATI REGISTRAZIONE:');
+      console.log('- nome:', nome);
+      console.log('- cognome:', cognome, typeof cognome);
+      console.log('- tipologia:', tipologia);
+      console.log('- tipoUtente:', tipoUtente);
+      
+      // Gestione speciale per cognome in base al tipo utente
+      let cognomeToSend = cognome;
+      
+      // Se il cognome è una stringa vuota o il tipoUtente è Canale sociale/centro riciclo, invialo come null
+      if (!cognome || cognome === '' || 
+          (tipologia === 'utente' && (tipoUtente === 'Canale sociale' || tipoUtente === 'centro riciclo'))) {
+        cognomeToSend = null;
+        console.log('Impostato cognome a null per tipo:', tipoUtente);
+      }
+      
       // Chiama il servizio di registrazione con i dati correttamente formattati
       const userData: any = {
         nome,
-        cognome,
+        cognome: cognomeToSend, // Usa il valore appropriato
         email,
         password,
         ruolo: tipologia === 'organizzazione' 
