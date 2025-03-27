@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, param, query } = require('express-validator');
 const validator = require('../middlewares/validator');
-const { authenticate, authorize, belongsToCenter, authMiddleware, isAuthorized } = require('../middlewares/auth');
+const { authenticate, authorize, belongsToTipoUtente, authMiddleware, isAuthorized } = require('../middlewares/auth');
 const prenotazioniController = require('../controllers/prenotazioni.controller');
 
 const router = express.Router();
@@ -115,11 +115,11 @@ router.get('/:id', [
  *             type: object
  *             required:
  *               - lotto_id
- *               - centro_ricevente_id
+ *               - tipo_utente_ricevente_id
  *             properties:
  *               lotto_id:
  *                 type: integer
- *               centro_ricevente_id:
+ *               tipo_utente_ricevente_id:
  *                 type: integer
  *               note:
  *                 type: string
@@ -132,19 +132,19 @@ router.get('/:id', [
  *       400:
  *         description: Dati non validi
  *       404:
- *         description: Lotto o centro non trovato
+ *         description: Lotto o tipo utente non trovato
  *       409:
  *         description: Lotto già prenotato o non disponibile
  */
 router.post('/', [
   authenticate,
-  authorize(['CentroSociale', 'CentroRiciclaggio', 'Amministratore']),
+  authorize(['TipoUtenteSociale', 'TipoUtenteRiciclaggio', 'Amministratore']),
   body('lotto_id').isInt().withMessage('ID lotto deve essere un numero intero'),
-  body('centro_ricevente_id').isInt().withMessage('ID centro ricevente deve essere un numero intero'),
+  body('tipo_utente_ricevente_id').isInt().withMessage('ID centro ricevente deve essere un numero intero'),
   body('note').optional().isString().withMessage('Note deve essere una stringa'),
   body('data_ritiro').optional().isISO8601().withMessage('Data ritiro deve essere una data valida'),
   validator.validate,
-  belongsToCenter(req => req.body.centro_ricevente_id)
+  belongsToTipoUtente(req => req.body.tipo_utente_ricevente_id)
 ], prenotazioniController.createPrenotazione);
 
 /**
@@ -376,7 +376,7 @@ router.put('/:id/rifiuta', authenticate, prenotazioniController.rifiutaPrenotazi
 
 /**
  * @swagger
- * /prenotazioni/centro/{centro_id}:
+ * /prenotazioni/centro/{tipo_utente_id}:
  *   get:
  *     summary: Ottieni prenotazioni di un centro specifico
  *     tags: [Prenotazioni]
@@ -384,7 +384,7 @@ router.put('/:id/rifiuta', authenticate, prenotazioniController.rifiutaPrenotazi
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
- *         name: centro_id
+ *         name: tipo_utente_id
  *         required: true
  *         schema:
  *           type: integer
@@ -399,15 +399,15 @@ router.put('/:id/rifiuta', authenticate, prenotazioniController.rifiutaPrenotazi
  *       200:
  *         description: Lista di prenotazioni del centro
  *       404:
- *         description: Centro non trovato
+ *         description: TipoUtente non trovato
  */
-router.get('/centro/:centro_id', [
+router.get('/centro/:tipo_utente_id', [
   authenticate,
-  param('centro_id').isInt().withMessage('ID centro deve essere un numero intero'),
+  param('tipo_utente_id').isInt().withMessage('ID centro deve essere un numero intero'),
   query('stato').optional().isIn(['Prenotato', 'InTransito', 'Consegnato', 'Annullato']).withMessage('Stato non valido'),
   validator.validate,
-  belongsToCenter(req => req.params.centro_id)
-], prenotazioniController.getPrenotazioniByCentro);
+  belongsToTipoUtente(req => req.params.tipo_utente_id)
+], prenotazioniController.getPrenotazioniByTipoUtente);
 
 // Aggiungo la nuova rotta per la pulizia delle prenotazioni duplicate
 // Questa rotta dovrebbe essere accessibile solo agli amministratori

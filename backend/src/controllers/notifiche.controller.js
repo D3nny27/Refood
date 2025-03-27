@@ -8,15 +8,15 @@ const websocket = require('../utils/websocket');
  * Può essere usata per test automatici o per implementare logiche che non dipendono da ID specifici
  * @returns {Promise<{centro: Object, amministratori: Array}>} Un oggetto con il centro e i suoi amministratori
  */
-async function trovaCentroConAmministratori() {
+async function trovaTipoUtenteConAmministratori() {
   try {
     // Prima troviamo tutti i centri
     const centri = await db.all(`
       SELECT c.id, c.nome, c.tipo,
-        (SELECT COUNT(*) FROM UtentiCentri uc 
-         JOIN Utenti u ON uc.utente_id = u.id 
-         WHERE uc.centro_id = c.id AND u.ruolo = 'Amministratore') AS num_amministratori
-      FROM Centri c
+        (SELECT COUNT(*) FROM AttoriTipo_Utente uc 
+         JOIN Attori u ON uc.attore_id = u.id 
+         WHERE uc.tipo_utente_id = c.id AND u.ruolo = 'Amministratore') AS num_amministratori
+      FROM Tipo_Utente c
       ORDER BY num_amministratori DESC
     `);
     
@@ -31,9 +31,9 @@ async function trovaCentroConAmministratori() {
     // Troviamo gli amministratori associati a questo centro
     const amministratori = await db.all(`
       SELECT u.id, u.nome, u.cognome, u.email
-      FROM Utenti u
-      JOIN UtentiCentri uc ON u.id = uc.utente_id
-      WHERE uc.centro_id = ? AND u.ruolo = 'Amministratore'
+      FROM Attori u
+      JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+      WHERE uc.tipo_utente_id = ? AND u.ruolo = 'Amministratore'
     `, [centro.id]);
     
     logger.info(`Trovato centro ID ${centro.id} con ${amministratori.length} amministratori associati`);
@@ -49,7 +49,7 @@ async function trovaCentroConAmministratori() {
 }
 
 /**
- * Ottiene tutte le notifiche per l'utente corrente
+ * Ottiene tutte le notifiche per l'attore corrente
  * con supporto per paginazione e filtri
  */
 exports.getNotifiche = async (req, res, next) => {
@@ -58,7 +58,7 @@ exports.getNotifiche = async (req, res, next) => {
     const { page = 1, limit = 20, tipo, priorita, letta } = req.query;
     const offset = (page - 1) * limit;
     
-    logger.info(`Richiesta notifiche per utente ${userId} con filtri: ${JSON.stringify(req.query)}`);
+    logger.info(`Richiesta notifiche per attore ${userId} con filtri: ${JSON.stringify(req.query)}`);
     
     // Costruzione della query di base
     let query = `
@@ -68,8 +68,8 @@ exports.getNotifiche = async (req, res, next) => {
         u.cognome AS origine_cognome,
         c.nome AS centro_nome
       FROM Notifiche n
-      LEFT JOIN Utenti u ON n.origine_id = u.id
-      LEFT JOIN Centri c ON n.centro_id = c.id
+      LEFT JOIN Attori u ON n.origine_id = u.id
+      LEFT JOIN Tipo_Utente c ON n.tipo_utente_id = c.id
       WHERE n.destinatario_id = ? AND n.eliminato = 0
     `;
     
@@ -127,8 +127,8 @@ exports.getNotifiche = async (req, res, next) => {
         id: n.origine_id,
         nome: `${n.origine_nome || ''} ${n.origine_cognome || ''}`.trim()
       } : null,
-      centro: n.centro_id ? {
-        id: n.centro_id,
+      centro: n.tipo_utente_id ? {
+        id: n.tipo_utente_id,
         nome: n.centro_nome
       } : null,
       riferimento: n.riferimento_id ? {
@@ -137,7 +137,7 @@ exports.getNotifiche = async (req, res, next) => {
       } : null
     }));
     
-    logger.info(`Restituite ${formattedNotifiche.length} notifiche per l'utente ${userId}`);
+    logger.info(`Restituite ${formattedNotifiche.length} notifiche per l'attore ${userId}`);
     
     res.json({
       data: formattedNotifiche,
@@ -161,9 +161,9 @@ exports.getNotificaById = async (req, res, next) => {
     const { id } = req.params;
     const userId = req.user.id;
     
-    logger.info(`Richiesta dettaglio notifica ${id} per utente ${userId}`);
+    logger.info(`Richiesta dettaglio notifica ${id} per attore ${userId}`);
     
-    // Controllo dei permessi: un utente può vedere solo le proprie notifiche
+    // Controllo dei permessi: un attore può vedere solo le proprie notifiche
     const query = `
       SELECT 
         n.*,
@@ -171,15 +171,15 @@ exports.getNotificaById = async (req, res, next) => {
         u.cognome AS origine_cognome,
         c.nome AS centro_nome
       FROM Notifiche n
-      LEFT JOIN Utenti u ON n.origine_id = u.id
-      LEFT JOIN Centri c ON n.centro_id = c.id
+      LEFT JOIN Attori u ON n.origine_id = u.id
+      LEFT JOIN Tipo_Utente c ON n.tipo_utente_id = c.id
       WHERE n.id = ? AND n.destinatario_id = ? AND n.eliminato = 0
     `;
     
     const notifica = await db.get(query, [id, userId]);
     
     if (!notifica) {
-      logger.warn(`Notifica ${id} non trovata o non accessibile per l'utente ${userId}`);
+      logger.warn(`Notifica ${id} non trovata o non accessibile per l'attore ${userId}`);
       return next(new ApiError(404, 'Notifica non trovata'));
     }
     
@@ -198,8 +198,8 @@ exports.getNotificaById = async (req, res, next) => {
         id: notifica.origine_id,
         nome: `${notifica.origine_nome || ''} ${notifica.origine_cognome || ''}`.trim()
       } : null,
-      centro: notifica.centro_id ? {
-        id: notifica.centro_id,
+      centro: notifica.tipo_utente_id ? {
+        id: notifica.tipo_utente_id,
         nome: notifica.centro_nome
       } : null,
       riferimento: notifica.riferimento_id ? {
@@ -217,8 +217,8 @@ exports.getNotificaById = async (req, res, next) => {
 };
 
 /**
- * Crea una nuova notifica per un utente
- * @param {number} destinatario_id - ID dell'utente destinatario
+ * Crea una nuova notifica per un attore
+ * @param {number} destinatario_id - ID dell'attore destinatario
  * @param {string} tipo - Tipo di notifica (deve essere uno dei valori consentiti: 'CambioStato', 'Prenotazione', 'Alert')
  * @param {string} titolo - Titolo della notifica
  * @param {string} messaggio - Testo del messaggio
@@ -228,15 +228,15 @@ exports.getNotificaById = async (req, res, next) => {
  */
 exports.creaNotifica = async function(destinatario_id, tipo, titolo, messaggio, link = null, datiExtra = null) {
   try {
-    logger.info(`Creazione notifica per utente ${destinatario_id}: ${titolo}`);
+    logger.info(`Creazione notifica per attore ${destinatario_id}: ${titolo}`);
     
     if (!destinatario_id || !tipo || !titolo || !messaggio) {
       logger.error('Parametri mancanti nella creazione della notifica');
       return null;
     }
     
-    // Verifica che l'utente esista
-    const userResult = await db.get(`SELECT id FROM Utenti WHERE id = ?`, [destinatario_id]);
+    // Verifica che l'attore esista
+    const userResult = await db.get(`SELECT id FROM Attori WHERE id = ?`, [destinatario_id]);
     
     if (!userResult) {
       logger.error(`Impossibile creare notifica: destinatario con ID ${destinatario_id} non trovato`);
@@ -272,11 +272,11 @@ exports.creaNotifica = async function(destinatario_id, tipo, titolo, messaggio, 
       );
       
       if (!result || !result.lastID) {
-        logger.error(`Errore nell'inserimento della notifica nel database per l'utente ${destinatario_id}`);
+        logger.error(`Errore nell'inserimento della notifica nel database per l'attore ${destinatario_id}`);
         return null;
       }
       
-      logger.info(`Notifica creata nel DB per utente ${destinatario_id}, ID: ${result.lastID}`);
+      logger.info(`Notifica creata nel DB per attore ${destinatario_id}, ID: ${result.lastID}`);
       
       // Recupera la notifica appena creata
       const notifica = await db.get(
@@ -296,7 +296,7 @@ exports.creaNotifica = async function(destinatario_id, tipo, titolo, messaggio, 
         
         if (webSocketService && typeof webSocketService.inviaNotifica === 'function') {
           await webSocketService.inviaNotifica(destinatario_id, notifica);
-          logger.info(`Notifica inviata via WebSocket all'utente ${destinatario_id}`);
+          logger.info(`Notifica inviata via WebSocket all'attore ${destinatario_id}`);
         } else {
           logger.warn(`Servizio WebSocket non disponibile per l'invio della notifica ID: ${notifica.id}`);
         }
@@ -325,9 +325,9 @@ exports.markAsRead = async (req, res, next) => {
     const { id } = req.params;
     const userId = req.user.id;
     
-    logger.info(`Richiesta di segnare come letta la notifica ${id} per l'utente ${userId}`);
+    logger.info(`Richiesta di segnare come letta la notifica ${id} per l'attore ${userId}`);
     
-    // Verifica che la notifica esista e appartenga all'utente
+    // Verifica che la notifica esista e appartenga all'attore
     const notifica = await db.get(
       'SELECT id, letto FROM Notifiche WHERE id = ? AND destinatario_id = ? AND eliminato = 0',
       [id, userId]
@@ -371,15 +371,15 @@ exports.markAllAsRead = async (req, res, next) => {
   try {
     const userId = req.user.id;
     
-    logger.info(`Richiesta di segnare tutte le notifiche come lette per l'utente ${userId}`);
+    logger.info(`Richiesta di segnare tutte le notifiche come lette per l'attore ${userId}`);
     
-    // Aggiorna tutte le notifiche non lette dell'utente
+    // Aggiorna tutte le notifiche non lette dell'attore
     const result = await db.run(
       'UPDATE Notifiche SET letto = 1, data_lettura = datetime("now") WHERE destinatario_id = ? AND letto = 0 AND eliminato = 0',
       [userId]
     );
     
-    logger.info(`${result.changes || 0} notifiche segnate come lette per l'utente ${userId}`);
+    logger.info(`${result.changes || 0} notifiche segnate come lette per l'attore ${userId}`);
     
     res.json({
       success: true,
@@ -400,9 +400,9 @@ exports.deleteNotifica = async (req, res, next) => {
     const { id } = req.params;
     const userId = req.user.id;
     
-    logger.info(`Richiesta di eliminazione della notifica ${id} per l'utente ${userId}`);
+    logger.info(`Richiesta di eliminazione della notifica ${id} per l'attore ${userId}`);
     
-    // Verifica che la notifica esista e appartenga all'utente
+    // Verifica che la notifica esista e appartenga all'attore
     const notifica = await db.get(
       'SELECT id, eliminato FROM Notifiche WHERE id = ? AND destinatario_id = ?',
       [id, userId]
@@ -450,7 +450,7 @@ exports.deleteNotifica = async (req, res, next) => {
  * @param {number} [operatoreId] - ID dell'operatore che ha effettuato l'azione (per includerlo tra i destinatari)
  * @returns {Promise<number[]>} Array di ID delle notifiche create
  */
-exports.notificaAdminCentro = async (centroId, tipo, titolo, messaggio, link = null, datiExtra = null, operatoreId = null) => {
+exports.notificaAdminTipoUtente = async (centroId, tipo, titolo, messaggio, link = null, datiExtra = null, operatoreId = null) => {
   try {
     // Mappa il tipo di notifica a un valore consentito
     let tipoEffettivo = tipo;
@@ -469,9 +469,9 @@ exports.notificaAdminCentro = async (centroId, tipo, titolo, messaggio, link = n
     // Trova gli amministratori del centro
     const amministratori = await db.all(`
       SELECT u.id
-      FROM Utenti u
-      JOIN UtentiCentri uc ON u.id = uc.utente_id
-      WHERE uc.centro_id = ? AND u.ruolo = 'Amministratore'
+      FROM Attori u
+      JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+      WHERE uc.tipo_utente_id = ? AND u.ruolo = 'Amministratore'
     `, [centroId]);
     
     if (!amministratori || amministratori.length === 0) {
@@ -525,13 +525,13 @@ exports.notificaAdminCentro = async (centroId, tipo, titolo, messaggio, link = n
 };
 
 /**
- * Conta le notifiche non lette per l'utente corrente
+ * Conta le notifiche non lette per l'attore corrente
  */
 exports.countUnread = async (req, res, next) => {
   try {
     const userId = req.user.id;
     
-    logger.info(`Richiesta conteggio notifiche non lette per l'utente ${userId}`);
+    logger.info(`Richiesta conteggio notifiche non lette per l'attore ${userId}`);
     
     const result = await db.get(
       'SELECT COUNT(*) as count FROM Notifiche WHERE destinatario_id = ? AND letto = 0 AND eliminato = 0',
@@ -540,7 +540,7 @@ exports.countUnread = async (req, res, next) => {
     
     const count = result ? result.count : 0;
     
-    logger.info(`${count} notifiche non lette per l'utente ${userId}`);
+    logger.info(`${count} notifiche non lette per l'attore ${userId}`);
     
     res.json({ count });
     
@@ -566,7 +566,7 @@ exports.syncLocalNotifica = async (req, res, next) => {
     
     const userId = req.user.id;
     
-    logger.info(`Richiesta di sincronizzazione notifica locale per l'utente ${userId}`);
+    logger.info(`Richiesta di sincronizzazione notifica locale per l'attore ${userId}`);
     
     // Validazione dei dati
     if (!titolo || !messaggio) {
@@ -611,7 +611,7 @@ exports.syncLocalNotifica = async (req, res, next) => {
       return next(new ApiError(500, 'Errore nella sincronizzazione della notifica'));
     }
     
-    logger.info(`Sincronizzata notifica locale con ID ${result.lastID} per l'utente ${userId}`);
+    logger.info(`Sincronizzata notifica locale con ID ${result.lastID} per l'attore ${userId}`);
     
     // Recupero della notifica completa
     const notifica = await db.get(
@@ -653,12 +653,12 @@ exports.syncLocalNotifica = async (req, res, next) => {
 
 /**
  * Restituisce un centro valido per i test di notifica
- * Utile per il client mobile per ottenere un centro_id valido
+ * Utile per il client mobile per ottenere un tipo_utente_id valido
  * per testare l'invio di notifiche agli amministratori
  */
-exports.getCentroTestNotifiche = async (req, res, next) => {
+exports.getTipoUtenteTestNotifiche = async (req, res, next) => {
   try {
-    const risultato = await trovaCentroConAmministratori();
+    const risultato = await trovaTipoUtenteConAmministratori();
     
     if (!risultato) {
       return next(new ApiError(404, 'Nessun centro con amministratori trovato'));
@@ -700,7 +700,7 @@ exports.notifyAdmins = async (req, res, next) => {
   try {
     await connection.beginTransaction();
     
-    const { centro_id } = req.params;
+    const { tipo_utente_id } = req.params;
     const { 
       titolo, 
       messaggio, 
@@ -710,7 +710,7 @@ exports.notifyAdmins = async (req, res, next) => {
       riferimento_tipo
     } = req.body;
     
-    logger.info(`Richiesta di invio notifica agli amministratori del centro ${centro_id}`);
+    logger.info(`Richiesta di invio notifica agli amministratori del centro ${tipo_utente_id}`);
     
     // Validazione dei dati obbligatori
     if (!titolo || !messaggio) {
@@ -719,25 +719,25 @@ exports.notifyAdmins = async (req, res, next) => {
     }
     
     // Verifica che il centro esista
-    const centro = await connection.get('SELECT id FROM Centri WHERE id = ?', [centro_id]);
+    const centro = await connection.get('SELECT id FROM Tipo_Utente WHERE id = ?', [tipo_utente_id]);
     if (!centro) {
       await connection.rollback();
-      return next(new ApiError(404, 'Centro non trovato'));
+      return next(new ApiError(404, 'TipoUtente non trovato'));
     }
     
     // Trova gli amministratori del centro
     const query = `
       SELECT u.id 
-      FROM Utenti u
-      JOIN UtentiCentri uc ON u.id = uc.utente_id
-      WHERE uc.centro_id = ? 
+      FROM Attori u
+      JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+      WHERE uc.tipo_utente_id = ? 
       AND u.ruolo = 'Amministratore'
     `;
     
-    const amministratori = await connection.all(query, [centro_id]);
+    const amministratori = await connection.all(query, [tipo_utente_id]);
     
     if (!amministratori || amministratori.length === 0) {
-      logger.warn(`Nessun amministratore trovato per il centro ${centro_id}`);
+      logger.warn(`Nessun amministratore trovato per il centro ${tipo_utente_id}`);
       await connection.rollback();
       return res.status(200).json({
         success: true,
@@ -746,7 +746,7 @@ exports.notifyAdmins = async (req, res, next) => {
       });
     }
     
-    // L'utente corrente è l'origine della notifica
+    // L'attore corrente è l'origine della notifica
     const origine_id = req.user.id;
     
     // Inserisci una notifica per ogni amministratore
@@ -760,7 +760,7 @@ exports.notifyAdmins = async (req, res, next) => {
         origine_id,
         riferimento_id,
         riferimento_tipo,
-        centro_id,
+        tipo_utente_id,
         creato_il
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     `;
@@ -769,7 +769,7 @@ exports.notifyAdmins = async (req, res, next) => {
     
     for (const admin of amministratori) {
       try {
-        // Salta l'invio se l'amministratore è l'utente stesso che sta creando la notifica
+        // Salta l'invio se l'amministratore è l'attore stesso che sta creando la notifica
         if (admin.id === origine_id) {
           logger.info(`Saltato invio a se stessi (admin ${admin.id})`);
           continue;
@@ -786,7 +786,7 @@ exports.notifyAdmins = async (req, res, next) => {
             origine_id, // origine
             riferimento_id || null,
             riferimento_tipo || null,
-            centro_id
+            tipo_utente_id
           ]
         );
         
@@ -803,7 +803,7 @@ exports.notifyAdmins = async (req, res, next) => {
     // Commit della transazione
     await connection.commit();
     
-    logger.info(`Inviate ${notificheInviate} notifiche agli amministratori del centro ${centro_id}`);
+    logger.info(`Inviate ${notificheInviate} notifiche agli amministratori del centro ${tipo_utente_id}`);
     
     res.status(200).json({
       success: true,
@@ -833,7 +833,7 @@ exports.createNotifica = async (req, res, next) => {
       destinatario_id,
       riferimento_id,
       riferimento_tipo,
-      centro_id
+      tipo_utente_id
     } = req.body;
     
     // Validazione dei dati obbligatori
@@ -842,12 +842,12 @@ exports.createNotifica = async (req, res, next) => {
     }
     
     // Verifica che il destinatario esista
-    const destinatario = await db.get('SELECT id FROM Utenti WHERE id = ?', [destinatario_id]);
+    const destinatario = await db.get('SELECT id FROM Attori WHERE id = ?', [destinatario_id]);
     if (!destinatario) {
       return next(new ApiError(404, 'Destinatario non trovato'));
     }
     
-    // L'utente corrente è l'origine della notifica
+    // L'attore corrente è l'origine della notifica
     const origine_id = req.user.id;
     
     // Inserimento della notifica nel database
@@ -861,7 +861,7 @@ exports.createNotifica = async (req, res, next) => {
         origine_id,
         riferimento_id,
         riferimento_tipo,
-        centro_id,
+        tipo_utente_id,
         creato_il
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     `;
@@ -877,7 +877,7 @@ exports.createNotifica = async (req, res, next) => {
         origine_id,
         riferimento_id || null,
         riferimento_tipo || null,
-        centro_id || null
+        tipo_utente_id || null
       ]
     );
     
@@ -885,7 +885,7 @@ exports.createNotifica = async (req, res, next) => {
       return next(new ApiError(500, 'Errore nella creazione della notifica'));
     }
     
-    logger.info(`Creata notifica con ID ${result.lastID} per l'utente ${destinatario_id}`);
+    logger.info(`Creata notifica con ID ${result.lastID} per l'attore ${destinatario_id}`);
     
     // Recupero della notifica completa
     const notifica = await db.get(
@@ -916,4 +916,4 @@ exports.createNotifica = async (req, res, next) => {
   }
 };
 
-module.exports.trovaCentroConAmministratori = trovaCentroConAmministratori; 
+module.exports.trovaTipoUtenteConAmministratori = trovaTipoUtenteConAmministratori; 

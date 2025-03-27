@@ -7,7 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import Toast from 'react-native-toast-message';
 
-interface AssociazioneCentro {
+interface AssociazioneTipoUtente {
   id: number;
   nome: string;
   tipo: string;
@@ -17,7 +17,7 @@ interface AssociazioneCentro {
 
 export default function AdminDashboardScreen() {
   const { user } = useAuth();
-  const [centri, setCentri] = useState<AssociazioneCentro[]>([]);
+  const [tipiUtente, setTipiUtente] = useState<AssociazioneTipoUtente[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -31,7 +31,7 @@ export default function AdminDashboardScreen() {
       const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
       
       // Ottieni le associazioni dell'amministratore corrente
-      const response = await fetch(`${API_URL}/centri?associatiA=${user?.id}`, {
+      const response = await fetch(`${API_URL}/tipiUtente?associatiA=${user?.id}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -44,9 +44,9 @@ export default function AdminDashboardScreen() {
       const data = await response.json();
       
       if (data && data.data) {
-        setCentri(data.data);
+        setTipiUtente(data.data);
       } else {
-        setCentri([]);
+        setTipiUtente([]);
       }
     } catch (error) {
       console.error('Errore nel caricamento delle associazioni:', error);
@@ -67,8 +67,8 @@ export default function AdminDashboardScreen() {
     loadAssociazioni();
   };
 
-  const goToCentriManagement = () => {
-    router.push('/admin/centri');
+  const goToTipiUtenteManagement = () => {
+    router.push('/admin/tipiUtente');
   };
 
   return (
@@ -96,9 +96,9 @@ export default function AdminDashboardScreen() {
 
         <Card style={styles.section}>
           <Card.Content>
-            <Title style={styles.sectionTitle}>I tuoi centri</Title>
+            <Title style={styles.sectionTitle}>I tuoi tipiUtente</Title>
             <Paragraph style={styles.sectionSubtitle}>
-              Centri a cui sei associato
+              TipiUtente a cui sei associato
             </Paragraph>
             
             {loading && !refreshing ? (
@@ -108,16 +108,16 @@ export default function AdminDashboardScreen() {
               </View>
             ) : (
               <>
-                {centri.length > 0 ? (
+                {tipiUtente.length > 0 ? (
                   <List.Section>
-                    {centri.map((centro) => (
+                    {tipiUtente.map((centro) => (
                       <List.Item
                         key={centro.id}
                         title={centro.nome}
                         description={`${centro.indirizzo} • ${centro.tipo_descrizione || centro.tipo}`}
                         left={props => <List.Icon {...props} icon="domain" />}
                         right={props => <List.Icon {...props} icon="chevron-right" />}
-                        onPress={() => router.push(`/admin/centri/operatori?id=${centro.id}`)}
+                        onPress={() => router.push(`/admin/tipiUtente/operatori?id=${centro.id}`)}
                         style={styles.listItem}
                       />
                     ))}
@@ -128,7 +128,7 @@ export default function AdminDashboardScreen() {
                       Non sei associato a nessun centro.
                     </Text>
                     <Text style={styles.emptyStateSubtext}>
-                      Vai alla gestione centri e associati a un centro.
+                      Vai alla gestione tipiUtente e associati a un centro.
                     </Text>
                   </View>
                 )}
@@ -141,10 +141,10 @@ export default function AdminDashboardScreen() {
           <Button
             mode="contained"
             icon="domain"
-            onPress={goToCentriManagement}
+            onPress={goToTipiUtenteManagement}
             style={styles.button}
           >
-            Gestione Centri
+            Gestione TipiUtente
           </Button>
         </View>
       </ScrollView>

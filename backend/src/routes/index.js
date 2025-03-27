@@ -1,37 +1,40 @@
 const express = require('express');
+const router = express.Router();
+
 const authRoutes = require('./auth.routes');
-const userRoutes = require('./user.routes');
+const attoreRoutes = require('./attore.routes');
+const tipoUtenteRoutes = require('./tipo_utente.routes');
+const centriRedirectRoutes = require('./centri_redirect.js');
 const lottiRoutes = require('./lotti.routes');
 const prenotazioniRoutes = require('./prenotazioni.routes');
-const centriRoutes = require('./centri.routes');
-const statisticheRoutes = require('./statistiche.routes');
 const notificheRoutes = require('./notifiche.routes');
-const db = require('../config/database');
-
-const router = express.Router();
+const statisticheRoutes = require('./statistiche.routes');
+const { ApiError } = require('../middlewares/errorHandler');
 
 /**
  * @swagger
- * tags:
- *   name: API
- *   description: Endpoints dell'API Refood per la gestione della piattaforma
+ * components:
+ *   securitySchemes:
+ *     bearerAuth:
+ *       type: http
+ *       scheme: bearer
+ *       bearerFormat: JWT
  */
 
 /**
  * @swagger
  * /:
  *   get:
- *     summary: Informazioni sull'API
- *     tags: [API]
+ *     summary: Health check
+ *     description: Verifica che l'API sia attiva
  *     responses:
  *       200:
- *         description: Informazioni sulla versione e stato dell'API
+ *         description: L'API è attiva e funzionante
  */
 router.get('/', (req, res) => {
   res.json({
-    app: 'Refood API',
-    version: process.env.npm_package_version || '1.0.0',
-    status: 'online',
+    status: 'success',
+    message: 'ReFood API v1',
     timestamp: new Date().toISOString()
   });
 });
@@ -109,13 +112,50 @@ router.get('/debug/database', async (req, res) => {
   }
 });
 
-// Raggruppa le routes per ciascun modulo
+// Rotte autenticazione
 router.use('/auth', authRoutes);
-router.use('/users', userRoutes);
+
+// Rotte attori
+router.use('/attori', attoreRoutes);
+
+// Rotte tipi utente (precedentemente centri)
+router.use('/tipi-utente', tipoUtenteRoutes);
+
+// Reindirizzamento temporaneo dalle vecchie rotte
+router.use('/centri', centriRedirectRoutes);
+
+// Rotte lotti
 router.use('/lotti', lottiRoutes);
+
+// Rotte prenotazioni
 router.use('/prenotazioni', prenotazioniRoutes);
-router.use('/centri', centriRoutes);
-router.use('/statistiche', statisticheRoutes);
+
+// Rotte notifiche
 router.use('/notifiche', notificheRoutes);
+
+// Rotte statistiche
+router.use('/statistiche', statisticheRoutes);
+
+// Errore 404
+router.use((req, res, next) => {
+  next(new ApiError(404, 'Risorsa non trovata'));
+});
+
+// Middleware per la gestione degli errori
+router.use((err, req, res, next) => {
+  const statusCode = err.statusCode || 500;
+  const message = err.message || 'Errore interno del server';
+  
+  // Log errore
+  console.error(`[ERROR] ${statusCode} - ${message}`);
+  if (err.stack) {
+    console.error(err.stack);
+  }
+  
+  res.status(statusCode).json({
+    status: 'error',
+    message
+  });
+});
 
 module.exports = router; 

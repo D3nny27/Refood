@@ -12,12 +12,12 @@ exports.getCounters = async (req, res, next) => {
       lotti,
       prenotazioni,
       utenti,
-      centri
+      tipiUtente
     ] = await Promise.all([
       db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN stato = "Verde" THEN 1 END) as verdi, COUNT(CASE WHEN stato = "Arancione" THEN 1 END) as arancioni, COUNT(CASE WHEN stato = "Rosso" THEN 1 END) as rossi FROM Lotti'),
       db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN stato = "Prenotato" THEN 1 END) as prenotate, COUNT(CASE WHEN stato = "InTransito" THEN 1 END) as in_transito, COUNT(CASE WHEN stato = "Consegnato" THEN 1 END) as consegnate, COUNT(CASE WHEN stato = "Annullato" THEN 1 END) as annullate FROM Prenotazioni'),
-      db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN ruolo = "Operatore" THEN 1 END) as operatori, COUNT(CASE WHEN ruolo = "Amministratore" THEN 1 END) as amministratori, COUNT(CASE WHEN ruolo = "CentroSociale" THEN 1 END) as centri_sociali, COUNT(CASE WHEN ruolo = "CentroRiciclaggio" THEN 1 END) as centri_riciclaggio FROM Utenti'),
-      db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN tipo = "Distribuzione" THEN 1 END) as distribuzione, COUNT(CASE WHEN tipo = "Sociale" THEN 1 END) as sociali, COUNT(CASE WHEN tipo = "Riciclaggio" THEN 1 END) as riciclaggio FROM Centri')
+      db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN ruolo = "Operatore" THEN 1 END) as operatori, COUNT(CASE WHEN ruolo = "Amministratore" THEN 1 END) as amministratori, COUNT(CASE WHEN ruolo = "TipoUtenteSociale" THEN 1 END) as centri_sociali, COUNT(CASE WHEN ruolo = "TipoUtenteRiciclaggio" THEN 1 END) as centri_riciclaggio FROM Attori'),
+      db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN tipo = "Privato" THEN 1 END) as privati, COUNT(CASE WHEN tipo = "Canale sociale" THEN 1 END) as canali_sociali, COUNT(CASE WHEN tipo = "centro riciclo" THEN 1 END) as centri_riciclo FROM Tipo_Utente')
     ]);
     
     res.json({
@@ -47,12 +47,12 @@ exports.getCounters = async (req, res, next) => {
           centri_riciclaggio: utenti.centri_riciclaggio
         }
       },
-      centri: {
-        totale: centri.totale,
+      tipiUtente: {
+        totale: tipiUtente.totale,
         per_tipo: {
-          distribuzione: centri.distribuzione,
-          sociali: centri.sociali,
-          riciclaggio: centri.riciclaggio
+          privati: tipiUtente.privati,
+          canali_sociali: tipiUtente.canali_sociali,
+          centri_riciclo: tipiUtente.centri_riciclo
         }
       }
     });
@@ -230,34 +230,34 @@ exports.getStatisticheComplete = async (req, res, next) => {
 };
 
 /**
- * Ottiene statistiche per un centro specifico
+ * Ottiene statistiche per un tipo utente specifico
  */
-exports.getStatisticheCentro = async (req, res, next) => {
+exports.getStatisticheTipoUtente = async (req, res, next) => {
   try {
-    logger.info(`Richiesta statistiche per centro con parametri: ${JSON.stringify(req.query)}`);
-    const { centro_id, periodo = 'ultimi_12_mesi' } = req.query;
+    logger.info(`Richiesta statistiche per tipo utente con parametri: ${JSON.stringify(req.query)}`);
+    const { tipo_utente_id, periodo = 'ultimi_12_mesi' } = req.query;
     
-    if (!centro_id) {
-      return next(new ApiError(400, 'ID del centro richiesto'));
+    if (!tipo_utente_id) {
+      return next(new ApiError(400, 'ID del tipo utente richiesto'));
     }
     
-    // Verifica che il centro esista
-    const centro = await db.get('SELECT id, nome, tipo FROM Centri WHERE id = ?', [centro_id]);
+    // Verifica che il tipo utente esista
+    const tipoUtente = await db.get('SELECT id, tipo, indirizzo FROM Tipo_Utente WHERE id = ?', [tipo_utente_id]);
     
-    if (!centro) {
-      return next(new ApiError(404, 'Centro non trovato'));
+    if (!tipoUtente) {
+      return next(new ApiError(404, 'Tipo Utente non trovato'));
     }
     
-    // Genera statistiche di esempio per il centro specifico
-    // Utilizziamo la stessa struttura di getStatisticheComplete ma con valori specifici per il centro
-    const response = await generaStatisticheEsempio(centro);
+    // Genera statistiche di esempio per il tipo utente specifico
+    // Utilizziamo la stessa struttura di getStatisticheComplete ma con valori specifici per il tipo utente
+    const response = await generaStatisticheEsempio(tipoUtente);
     
-    logger.info(`Statistiche generate per il centro ${centro_id}`);
+    logger.info(`Statistiche generate per il tipo utente ${tipo_utente_id}`);
     res.json(response);
     
   } catch (err) {
-    logger.error(`Errore nella generazione delle statistiche per centro: ${err.message}`);
-    next(new ApiError(500, 'Errore nella generazione delle statistiche per centro'));
+    logger.error(`Errore nella generazione delle statistiche per tipo utente: ${err.message}`);
+    next(new ApiError(500, 'Errore nella generazione delle statistiche per tipo utente'));
   }
 };
 
@@ -322,10 +322,10 @@ periodo,quantita_kg,co2_risparmiata_kg,valore_economico,lotti_salvati
 };
 
 /**
- * Funzione di utilità per generare statistiche di esempio per un centro
+ * Funzione di utilità per generare statistiche di esempio per un tipo utente
  */
-async function generaStatisticheEsempio(centro) {
-  // Genera valori più bassi per i centri rispetto alle statistiche globali
+async function generaStatisticheEsempio(tipoUtente) {
+  // Genera valori più bassi per i tipi utente rispetto alle statistiche globali
   const fattore = Math.random() * 0.3 + 0.1; // 10-40% delle statistiche globali
   
   // Dati generali
@@ -360,13 +360,13 @@ async function generaStatisticheEsempio(centro) {
     });
   }
   
-  // Statistiche trasporto basate sul tipo di centro
-  const isDistribuzione = centro.tipo === 'Distribuzione';
+  // Statistiche trasporto basate sul tipo di utente
+  const isPrivato = tipoUtente.tipo === 'Privato';
   const trasporto = {
-    distanzaTotale: Math.floor((Math.random() * 500 + 200) * (isDistribuzione ? 1.5 : 0.8) * fattore),
-    emissioniCO2: Math.floor((Math.random() * 100 + 50) * (isDistribuzione ? 1.5 : 0.8) * fattore),
-    costoTotale: Math.floor((Math.random() * 300 + 100) * (isDistribuzione ? 1.5 : 0.8) * fattore),
-    numeroTrasporti: Math.floor((Math.random() * 60 + 30) * (isDistribuzione ? 1.5 : 0.8) * fattore)
+    distanzaTotale: Math.floor((Math.random() * 500 + 200) * (isPrivato ? 1.5 : 0.8) * fattore),
+    emissioniCO2: Math.floor((Math.random() * 100 + 50) * (isPrivato ? 1.5 : 0.8) * fattore),
+    costoTotale: Math.floor((Math.random() * 300 + 100) * (isPrivato ? 1.5 : 0.8) * fattore),
+    numeroTrasporti: Math.floor((Math.random() * 60 + 30) * (isPrivato ? 1.5 : 0.8) * fattore)
   };
   
   // Resto delle statistiche simile a getStatisticheComplete ma con il fattore di scala
@@ -429,4 +429,73 @@ async function generaStatisticheEsempio(centro) {
     completamento,
     tempoPrenotazione
   };
-} 
+}
+
+/**
+ * Ottiene statistiche generali per l'intera piattaforma
+ */
+const getStatisticheGenerali = async (req, res, next) => {
+  try {
+    // Implementazione del metodo
+    res.json({
+      message: "Funzionalità in sviluppo",
+      endpoint: "/statistiche/generali"
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Ottiene statistiche per un tipo utente specifico
+ */
+const getStatisticheTipoUtente = async (req, res, next) => {
+  try {
+    // Implementazione del metodo
+    res.json({
+      message: "Funzionalità in sviluppo",
+      endpoint: "/statistiche/tipo-utente",
+      tipo_utente_id: req.query.tipo_utente_id
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Ottiene statistiche di efficienza del sistema
+ */
+const getStatisticheEfficienza = async (req, res, next) => {
+  try {
+    // Implementazione del metodo
+    res.json({
+      message: "Funzionalità in sviluppo",
+      endpoint: "/statistiche/efficienza"
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Esporta statistiche in formato CSV o altro formato
+ */
+const esportaStatistiche = async (req, res, next) => {
+  try {
+    // Implementazione del metodo
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="statistiche.csv"');
+    res.status(200).send('ID,Nome,Valore\n1,Test,100\n');
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = {
+  getCounters: exports.getCounters,
+  getImpatto: exports.getImpatto,
+  getStatisticheComplete: exports.getStatisticheComplete,
+  getStatisticheTipoUtente,
+  getStatisticheEfficienza,
+  esportaStatistiche
+}; 

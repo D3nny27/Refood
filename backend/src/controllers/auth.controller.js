@@ -15,7 +15,7 @@ logger.info('Moduli caricati:', {
 
 /**
  * Genera un JWT access token
- * @param {Object} user - Oggetto utente
+ * @param {Object} user - Oggetto attore
  * @returns {Object} - Access token, refresh token e scadenza
  */
 const generateTokens = async (user) => {
@@ -62,7 +62,7 @@ const generateTokens = async (user) => {
 };
 
 /**
- * Login utente
+ * Login attore
  */
 const login = async (req, res, next) => {
   try {
@@ -71,25 +71,25 @@ const login = async (req, res, next) => {
     
     logger.info(`Tentativo di login con email: ${email}`);
     
-    // Trova l'utente per email
+    // Trova l'attore per email
     const user = await db.get(`
       SELECT id, email, password, nome, cognome, ruolo
-      FROM Utenti
+      FROM Attori
       WHERE email = ?
     `, [email]);
     
     if (!user) {
-      logger.warn(`Login fallito: utente non trovato con email ${email}`);
+      logger.warn(`Login fallito: attore non trovato con email ${email}`);
       throw new ApiError(401, 'Credenziali non valide');
     }
     
     logger.info(`Utente trovato: ${user.email}, verifica password...`);
     logger.info(`Hash della password nel DB: ${user.password}`);
     
-    // Caso speciale per l'utente admin@refood.org
+    // Caso speciale per l'attore admin@refood.org
     let passwordMatch = false;
     
-    // Controlla se l'utente è admin@refood.org e se la password è 'admin123'
+    // Controlla se l'attore è admin@refood.org e se la password è 'admin123'
     if (email === 'admin@refood.org' && password === 'admin123') {
       logger.info('Utente admin riconosciuto, bypass della verifica standard');
       passwordMatch = true;
@@ -119,7 +119,7 @@ const login = async (req, res, next) => {
     // Salva i token nel database
     await db.run(`
       INSERT INTO TokenAutenticazione (
-        utente_id, 
+        attore_id, 
         access_token, 
         refresh_token, 
         access_token_scadenza, 
@@ -139,7 +139,7 @@ const login = async (req, res, next) => {
     
     // Aggiorna ultimo accesso
     await db.run(`
-      UPDATE Utenti
+      UPDATE Attori
       SET ultimo_accesso = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [user.id]);
@@ -149,7 +149,7 @@ const login = async (req, res, next) => {
     
     logger.info(`Login avvenuto con successo per ${email}`);
     
-    // Restituisci utente e tokens
+    // Restituisci attore e tokens
     res.json({
       user,
       tokens: {
@@ -173,10 +173,10 @@ const refreshToken = async (req, res, next) => {
     // Verifica che il refresh token esista nel database
     const tokenEntry = await db.get(`
       SELECT 
-        t.utente_id, t.refresh_token_scadenza, t.access_token,
+        t.attore_id, t.refresh_token_scadenza, t.access_token,
         u.id, u.email, u.nome, u.cognome, u.ruolo
       FROM TokenAutenticazione t
-      JOIN Utenti u ON t.utente_id = u.id
+      JOIN Attori u ON t.attore_id = u.id
       WHERE t.refresh_token = ?
       AND t.refresh_token_scadenza > datetime('now')
       AND t.revocato = 0
@@ -247,7 +247,7 @@ const logout = async (req, res, next) => {
       `, [
         decoded.jti,
         req.user.id,
-        'Logout utente',
+        'Logout attore',
         new Date(decoded.exp * 1000).toISOString()
       ]);
     }
@@ -259,17 +259,17 @@ const logout = async (req, res, next) => {
 };
 
 /**
- * Revoca tutti i token dell'utente (logout da tutti i dispositivi)
+ * Revoca tutti i token dell'attore (logout da tutti i dispositivi)
  */
 const logoutAll = async (req, res, next) => {
   try {
-    // Revoca tutti i token dell'utente
+    // Revoca tutti i token dell'attore
     await db.run(`
       UPDATE TokenAutenticazione
       SET 
         revocato = 1,
         revocato_il = CURRENT_TIMESTAMP
-      WHERE utente_id = ?
+      WHERE attore_id = ?
       AND revocato = 0
     `, [req.user.id]);
     
@@ -277,7 +277,7 @@ const logoutAll = async (req, res, next) => {
     const tokens = await db.all(`
       SELECT access_token, access_token_scadenza
       FROM TokenAutenticazione
-      WHERE utente_id = ?
+      WHERE attore_id = ?
       AND revocato = 1
       AND revocato_il = CURRENT_TIMESTAMP
     `, [req.user.id]);
@@ -313,7 +313,7 @@ const logoutAll = async (req, res, next) => {
 };
 
 /**
- * Ottieni tutte le sessioni attive dell'utente
+ * Ottieni tutte le sessioni attive dell'attore
  */
 const getActiveSessions = async (req, res, next) => {
   try {
@@ -326,7 +326,7 @@ const getActiveSessions = async (req, res, next) => {
         access_token_scadenza,
         refresh_token_scadenza
       FROM TokenAutenticazione
-      WHERE utente_id = ?
+      WHERE attore_id = ?
       AND revocato = 0
       AND refresh_token_scadenza > datetime('now')
       ORDER BY creato_il DESC
@@ -345,11 +345,11 @@ const revokeSession = async (req, res, next) => {
   try {
     const sessionId = parseInt(req.params.id);
     
-    // Verifica che la sessione esista ed appartenga all'utente
+    // Verifica che la sessione esista ed appartenga all'attore
     const session = await db.get(`
       SELECT id, access_token, access_token_scadenza
       FROM TokenAutenticazione
-      WHERE id = ? AND utente_id = ?
+      WHERE id = ? AND attore_id = ?
     `, [sessionId, req.user.id]);
     
     if (!session) {
@@ -390,7 +390,7 @@ const revokeSession = async (req, res, next) => {
 };
 
 /**
- * Registra un nuovo utente
+ * Registra un nuovo attore
  * @route POST /api/v1/auth/register
  */
 const register = async (req, res, next) => {
@@ -399,7 +399,7 @@ const register = async (req, res, next) => {
   try {
     // Verifica se l'email è già registrata
     const [existingUser] = await db.all(
-      'SELECT * FROM Utenti WHERE email = ?',
+      'SELECT * FROM Attori WHERE email = ?',
       [email]
     );
 
@@ -411,9 +411,9 @@ const register = async (req, res, next) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
     
-    // Trova l'amministratore di sistema per impostarlo come creatore dell'utente
+    // Trova l'amministratore di sistema per impostarlo come creatore dell'attore
     const [admin] = await db.all(
-      'SELECT id FROM Utenti WHERE ruolo = ? LIMIT 1',
+      'SELECT id FROM Attori WHERE ruolo = ? LIMIT 1',
       ['Amministratore']
     );
     
@@ -437,9 +437,9 @@ const register = async (req, res, next) => {
       }
     }
 
-    // Inserisci l'utente nel database
+    // Inserisci l'attore nel database
     const result = await db.run(
-      `INSERT INTO Utenti (nome, cognome, email, password, ruolo, creato_da, creato_il, ultimo_accesso) 
+      `INSERT INTO Attori (nome, cognome, email, password, ruolo, creato_da, creato_il, ultimo_accesso) 
        VALUES (?, ?, ?, ?, ?, ?, datetime('now'), NULL)`,
       [nome, cognome, email, hashedPassword, ruoloEffettivo, creato_da]
     );
@@ -448,13 +448,13 @@ const register = async (req, res, next) => {
       throw new ApiError(500, 'Errore durante la registrazione');
     }
 
-    // Leggi l'utente appena creato per includerlo nella risposta (senza la password)
+    // Leggi l'attore appena creato per includerlo nella risposta (senza la password)
     const [newUser] = await db.all(
-      'SELECT id, nome, cognome, email, ruolo FROM Utenti WHERE id = ?',
+      'SELECT id, nome, cognome, email, ruolo FROM Attori WHERE id = ?',
       [result.lastID]
     );
 
-    logger.info(`Nuovo utente registrato: ${email} (ID: ${result.lastID})`);
+    logger.info(`Nuovo attore registrato: ${email} (ID: ${result.lastID})`);
 
     // Restituisci la risposta di successo
     return res.status(201).json({

@@ -4,35 +4,35 @@ const db = require('../config/database');
 const logger = require('../utils/logger');
 
 /**
- * Funzione per trovare un utente Amministratore esistente nel database
+ * Funzione per trovare un attore Amministratore esistente nel database
  * Usata per il testing in modalità development
  */
 async function trovaUtenteAmministratore() {
   try {
     const query = `
       SELECT id, email, nome, cognome 
-      FROM Utenti 
+      FROM Attori 
       WHERE ruolo = 'Amministratore' 
       LIMIT 1
     `;
     
-    const utente = await db.get(query);
+    const attore = await db.get(query);
     
-    if (!utente) {
-      logger.error('AUTH: Nessun utente Amministratore trovato nel database per il test');
+    if (!attore) {
+      logger.error('AUTH: Nessun attore Amministratore trovato nel database per il test');
       return null;
     }
     
-    logger.info(`AUTH: Trovato utente Amministratore con ID ${utente.id} per il test`);
+    logger.info(`AUTH: Trovato attore Amministratore con ID ${attore.id} per il test`);
     return {
-      id: utente.id,
-      email: utente.email,
-      nome: utente.nome,
-      cognome: utente.cognome,
+      id: attore.id,
+      email: attore.email,
+      nome: attore.nome,
+      cognome: attore.cognome,
       ruolo: 'Amministratore'
     };
   } catch (error) {
-    logger.error(`AUTH: Errore nella ricerca di un utente amministratore: ${error.message}`);
+    logger.error(`AUTH: Errore nella ricerca di un attore amministratore: ${error.message}`);
     return null;
   }
 }
@@ -56,15 +56,15 @@ const authenticate = async (req, res, next) => {
          (req.originalUrl.includes('/notifiche') || req.originalUrl.includes('/admin-centro'))) {
         console.log(`AUTH: In modalità dev, consentendo accesso senza token per ${req.originalUrl}`);
         
-        // Trova automaticamente un utente amministratore esistente
-        const utenteTest = await trovaUtenteAmministratore();
+        // Trova automaticamente un attore amministratore esistente
+        const attoreTest = await trovaUtenteAmministratore();
         
-        if (!utenteTest) {
-          return next(new ApiError(500, 'Impossibile trovare un utente di test valido'));
+        if (!attoreTest) {
+          return next(new ApiError(500, 'Impossibile trovare un attore di test valido'));
         }
         
-        // Imposta l'utente trovato per la richiesta
-        req.user = utenteTest;
+        // Imposta l'attore trovato per la richiesta
+        req.user = attoreTest;
         
         console.log(`AUTH: Utente di test impostato con ID: ${req.user.id}, Ruolo: ${req.user.ruolo}`);
         return next();
@@ -85,7 +85,7 @@ const authenticate = async (req, res, next) => {
     // Verifica il token
     console.log('AUTH: Verifica del token JWT in corso...');
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    console.log(`AUTH: Token JWT decodificato per utente: ${decoded.email || 'sconosciuto'}`);
+    console.log(`AUTH: Token JWT decodificato per attore: ${decoded.email || 'sconosciuto'}`);
     
     // Verifica nel database se il token è valido e non revocato
     console.log(`AUTH: Ricerca del token nel database per ${req.originalUrl}...`);
@@ -94,7 +94,7 @@ const authenticate = async (req, res, next) => {
         u.id, u.email, u.nome, u.cognome, u.ruolo,
         t.access_token_scadenza, t.revocato
       FROM TokenAutenticazione t
-      JOIN Utenti u ON t.utente_id = u.id
+      JOIN Attori u ON t.attore_id = u.id
       WHERE t.access_token = ?
       AND t.access_token_scadenza > datetime('now')
       AND t.revocato = 0
@@ -115,7 +115,7 @@ const authenticate = async (req, res, next) => {
       throw new ApiError(401, 'Token non valido o revocato');
     }
     
-    // Salva le informazioni utente nell'oggetto request
+    // Salva le informazioni attore nell'oggetto request
     req.user = {
       id: row.id,
       email: row.email,
@@ -124,7 +124,7 @@ const authenticate = async (req, res, next) => {
       ruolo: row.ruolo
     };
     
-    console.log(`AUTH: Autenticazione riuscita per utente ${row.email} con ruolo ${row.ruolo} per ${req.originalUrl}`);
+    console.log(`AUTH: Autenticazione riuscita per attore ${row.email} con ruolo ${row.ruolo} per ${req.originalUrl}`);
     console.log('AUTH: Verifica del token JWT completata');
     next();
   } catch (err) {
@@ -142,7 +142,7 @@ const authenticate = async (req, res, next) => {
 };
 
 /**
- * Middleware per verificare il ruolo dell'utente
+ * Middleware per verificare il ruolo dell'attore
  * @param {Array} roles - Array di ruoli autorizzati
  */
 const authorize = (roles = []) => {
@@ -164,10 +164,10 @@ const authorize = (roles = []) => {
 };
 
 /**
- * Middleware per verificare l'appartenenza a un centro
- * @param {Function} getResourceCentroId - Funzione che estrae l'ID del centro dalla richiesta
+ * Middleware per verificare l'appartenenza a un tipo utente
+ * @param {Function} getResourceTipoUtenteId - Funzione che estrae l'ID del tipo utente dalla richiesta
  */
-const belongsToCenter = (getResourceCentroId) => {
+const belongsToTipoUtente = (getResourceTipoUtenteId) => {
   return async (req, res, next) => {
     try {
       if (!req.user) {
@@ -179,23 +179,23 @@ const belongsToCenter = (getResourceCentroId) => {
         return next();
       }
       
-      const resourceCentroId = getResourceCentroId(req);
+      const resourceTipoUtenteId = getResourceTipoUtenteId(req);
       
-      if (!resourceCentroId) {
-        return next(new ApiError(400, 'ID centro non valido'));
+      if (!resourceTipoUtenteId) {
+        return next(new ApiError(400, 'ID tipo utente non valido'));
       }
       
-      // Verifica se l'utente appartiene al centro
+      // Verifica se l'attore appartiene al tipo utente
       const sql = `
-        SELECT 1 FROM UtentiCentri
-        WHERE utente_id = ? AND centro_id = ?
+        SELECT 1 FROM AttoriTipoUtente
+        WHERE attore_id = ? AND tipo_utente_id = ?
       `;
       
       // Utilizzo del metodo promisified invece della callback
-      const row = await db.get(sql, [req.user.id, resourceCentroId]);
+      const row = await db.get(sql, [req.user.id, resourceTipoUtenteId]);
       
       if (!row) {
-        return next(new ApiError(403, 'Non autorizzato: non appartieni a questo centro'));
+        return next(new ApiError(403, 'Non autorizzato: non appartieni a questo tipo utente'));
       }
       
       next();
@@ -208,5 +208,5 @@ const belongsToCenter = (getResourceCentroId) => {
 module.exports = {
   authenticate,
   authorize,
-  belongsToCenter
+  belongsToTipoUtente
 }; 

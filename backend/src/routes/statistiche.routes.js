@@ -92,20 +92,20 @@ router.get('/complete', authenticate, statisticheController.getStatisticheComple
 
 /**
  * @swagger
- * /statistiche/centro:
+ * /statistiche/tipo-utente:
  *   get:
- *     summary: Ottiene statistiche specifiche per un centro
- *     description: Restituisce statistiche dettagliate per un centro specifico
+ *     summary: Ottiene statistiche relative a un tipo utente
+ *     description: Restituisce i dati statistici su lotti, prenotazioni e attività di un tipo utente
  *     tags: [Statistiche]
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: query
- *         name: centro_id
+ *         name: tipo_utente_id
  *         required: true
  *         schema:
  *           type: integer
- *         description: ID del centro
+ *         description: ID del tipo utente
  *       - in: query
  *         name: periodo
  *         schema:
@@ -114,17 +114,17 @@ router.get('/complete', authenticate, statisticheController.getStatisticheComple
  *         description: Periodo per cui generare le statistiche
  *     responses:
  *       200:
- *         description: Statistiche del centro ottenute con successo
+ *         description: Statistiche del tipo utente ottenute con successo
  *       400:
- *         description: ID del centro mancante
+ *         description: ID del tipo utente mancante
  *       401:
  *         description: Non autorizzato
  *       404:
- *         description: Centro non trovato
+ *         description: Tipo utente non trovato
  *       500:
  *         description: Errore del server
  */
-router.get('/centro', authenticate, statisticheController.getStatisticheCentro);
+router.get('/tipo-utente', authenticate, statisticheController.getStatisticheTipoUtente);
 
 /**
  * @swagger

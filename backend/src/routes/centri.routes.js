@@ -283,9 +283,9 @@ router.get('/tipi', authenticate, centriController.getCentriTipi);
 
 /**
  * @swagger
- * /centri/{id}/utenti:
+ * /centri/{id}/attori:
  *   get:
- *     summary: Ottieni gli utenti associati a un centro
+ *     summary: Ottieni gli attori associati a un centro
  *     tags: [Centri]
  *     security:
  *       - bearerAuth: []
@@ -298,16 +298,16 @@ router.get('/tipi', authenticate, centriController.getCentriTipi);
  *         description: ID del centro
  *     responses:
  *       200:
- *         description: Lista degli utenti del centro
+ *         description: Lista degli attori del centro
  *       404:
  *         description: Centro non trovato
  */
-router.get('/:id/utenti', [
+router.get('/:id/attori', [
   authenticate,
   authorize(['Amministratore']),
   param('id').isInt().withMessage('ID centro deve essere un numero intero'),
   validator.validate
-], centriController.getCentroUtenti);
+], centriController.getCentroAttori);
 
 /**
  * @swagger
@@ -343,7 +343,7 @@ router.get('/:id/utenti', [
  *                 description: Array di ID degli amministratori da associare al centro (solo per SuperAdmin)
  *     responses:
  *       200:
- *         description: Utenti associati con successo
+ *         description: Attori associati con successo
  *       403:
  *         description: Non autorizzato (richiede SuperAdmin per aggiungere amministratori)
  *       404:
@@ -362,9 +362,9 @@ router.post('/:id/operatori', [
 
 /**
  * @swagger
- * /centri/{id}/utenti/{utente_id}:
+ * /centri/{id}/attori/{attore_id}:
  *   post:
- *     summary: Associa un utente a un centro
+ *     summary: Associa un attore a un centro
  *     tags: [Centri]
  *     security:
  *       - bearerAuth: []
@@ -376,32 +376,32 @@ router.post('/:id/operatori', [
  *           type: integer
  *         description: ID del centro
  *       - in: path
- *         name: utente_id
+ *         name: attore_id
  *         required: true
  *         schema:
  *           type: integer
- *         description: ID dell'utente
+ *         description: ID dell'attore
  *     responses:
  *       201:
- *         description: Utente associato con successo
+ *         description: Attore associato con successo
  *       404:
- *         description: Centro o utente non trovato
+ *         description: Centro o attore non trovato
  *       409:
- *         description: Utente già associato al centro
+ *         description: Attore già associato al centro
  */
-router.post('/:id/utenti/:utente_id', [
+router.post('/:id/attori/:attore_id', [
   authenticate,
   authorize(['Amministratore']),
   param('id').isInt().withMessage('ID centro deve essere un numero intero'),
-  param('utente_id').isInt().withMessage('ID utente deve essere un numero intero'),
+  param('attore_id').isInt().withMessage('ID attore deve essere un numero intero'),
   validator.validate
-], centriController.associaUtente);
+], centriController.associaAttore);
 
 /**
  * @swagger
- * /centri/{id}/utenti/{utente_id}:
+ * /centri/{id}/attori/{attore_id}:
  *   delete:
- *     summary: Rimuovi un utente da un centro
+ *     summary: Rimuovi un attore da un centro
  *     tags: [Centri]
  *     security:
  *       - bearerAuth: []
@@ -413,26 +413,26 @@ router.post('/:id/utenti/:utente_id', [
  *           type: integer
  *         description: ID del centro
  *       - in: path
- *         name: utente_id
+ *         name: attore_id
  *         required: true
  *         schema:
  *           type: integer
- *         description: ID dell'utente
+ *         description: ID dell'attore
  *     responses:
  *       200:
- *         description: Utente rimosso con successo
+ *         description: Attore rimosso con successo
  *       404:
- *         description: Centro o utente non trovato
+ *         description: Centro o attore non trovato
  *       400:
- *         description: Utente non associato al centro
+ *         description: Attore non associato al centro
  */
-router.delete('/:id/utenti/:utente_id', [
+router.delete('/:id/attori/:attore_id', [
   authenticate,
   authorize(['Amministratore']),
   param('id').isInt().withMessage('ID centro deve essere un numero intero'),
-  param('utente_id').isInt().withMessage('ID utente deve essere un numero intero'),
+  param('attore_id').isInt().withMessage('ID attore deve essere un numero intero'),
   validator.validate
-], centriController.rimuoviUtente);
+], centriController.rimuoviAttore);
 
 /**
  * @swagger

@@ -28,7 +28,7 @@ exports.getLotti = async (req, res, next) => {
       SELECT l.*, c.nome as centro_nome
       ${hasCategorieTable ? ', GROUP_CONCAT(cat.nome) as categorie' : ', NULL as categorie'}
       FROM Lotti l
-      LEFT JOIN Centri c ON l.centro_origine_id = c.id
+      LEFT JOIN Tipo_Utente c ON l.tipo_utente_origine_id = c.id
       ${hasCategorieTable ? 'LEFT JOIN LottiCategorie lc ON l.id = lc.lotto_id' : ''}
       ${hasCategorieTable ? 'LEFT JOIN Categorie cat ON lc.categoria_id = cat.id' : ''}
     `;
@@ -45,7 +45,7 @@ exports.getLotti = async (req, res, next) => {
     }
     
     if (centro) {
-      whereConditions.push('l.centro_origine_id = ?');
+      whereConditions.push('l.tipo_utente_origine_id = ?');
       params.push(centro);
     }
     
@@ -66,7 +66,7 @@ exports.getLotti = async (req, res, next) => {
     const countQuery = `
       SELECT COUNT(DISTINCT l.id) as total
       FROM Lotti l
-      LEFT JOIN Centri c ON l.centro_origine_id = c.id
+      LEFT JOIN Tipo_Utente c ON l.tipo_utente_origine_id = c.id
       ${whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : ''}
     `;
     
@@ -130,7 +130,7 @@ exports.getLottoById = async (req, res, next) => {
       SELECT l.*, c.nome as centro_nome, c.indirizzo, c.latitudine, c.longitudine
       ${hasCategorieTable ? ', GROUP_CONCAT(DISTINCT cat.nome) as categorie' : ', NULL as categorie'}
       FROM Lotti l
-      LEFT JOIN Centri c ON l.centro_origine_id = c.id
+      LEFT JOIN Tipo_Utente c ON l.tipo_utente_origine_id = c.id
       ${hasCategorieTable ? 'LEFT JOIN LottiCategorie lc ON l.id = lc.lotto_id' : ''}
       ${hasCategorieTable ? 'LEFT JOIN Categorie cat ON lc.categoria_id = cat.id' : ''}
       WHERE l.id = ?
@@ -174,7 +174,7 @@ exports.createLotto = async (req, res, next) => {
     logger.info(`Richiesta POST /lotti ricevuta: ${JSON.stringify(req.body)}`);
     logger.info(`Utente richiedente: ${JSON.stringify(req.user)}`);
     
-    // Verifica che l'utente sia autenticato e abbia un ID
+    // Verifica che l'attore sia autenticato e abbia un ID
     if (!req.user || !req.user.id) {
       logger.error('Utente non identificato nella richiesta');
       return next(new ApiError(401, 'Utente non identificato. Impossibile procedere.'));
@@ -187,23 +187,23 @@ exports.createLotto = async (req, res, next) => {
       unita_misura,
       data_scadenza,
       giorni_permanenza = 7,
-      centro_origine_id,
+      tipo_utente_origine_id,
       categorie_ids = []
     } = req.body;
     
-    if (!prodotto || !quantita || !unita_misura || !data_scadenza || !centro_origine_id) {
+    if (!prodotto || !quantita || !unita_misura || !data_scadenza || !tipo_utente_origine_id) {
       logger.error(`Dati mancanti per la creazione del lotto: ${JSON.stringify(req.body)}`);
       return next(new ApiError(400, 'Dati incompleti per la creazione del lotto'));
     }
     
     // Verifica che il centro esista prima di procedere
     try {
-      const centroExists = await db.get('SELECT id FROM Centri WHERE id = ?', [centro_origine_id]);
+      const centroExists = await db.get('SELECT id FROM Tipo_Utente WHERE id = ?', [tipo_utente_origine_id]);
       if (!centroExists) {
-        logger.error(`Il centro con ID ${centro_origine_id} non esiste nel database`);
-        return next(new ApiError(400, `Il centro con ID ${centro_origine_id} non esiste. Seleziona un centro valido.`));
+        logger.error(`Il centro con ID ${tipo_utente_origine_id} non esiste nel database`);
+        return next(new ApiError(400, `Il centro con ID ${tipo_utente_origine_id} non esiste. Seleziona un centro valido.`));
       }
-      logger.info(`Centro con ID ${centro_origine_id} verificato con successo`);
+      logger.info(`TipoUtente con ID ${tipo_utente_origine_id} verificato con successo`);
     } catch (centroError) {
       logger.error(`Errore nella verifica del centro: ${centroError.message}`);
       return next(new ApiError(500, `Errore nella verifica del centro: ${centroError.message}`));
@@ -239,7 +239,7 @@ exports.createLotto = async (req, res, next) => {
           unita_misura, 
           data_scadenza, 
           giorni_permanenza, 
-          centro_origine_id, 
+          tipo_utente_origine_id, 
           stato, 
           inserito_da, 
           creato_il
@@ -252,7 +252,7 @@ exports.createLotto = async (req, res, next) => {
         unita_misura,
         data_scadenza,
         giorni_permanenza,
-        centro_origine_id,
+        tipo_utente_origine_id,
         stato,
         req.user.id
       ];
@@ -330,13 +330,13 @@ exports.createLotto = async (req, res, next) => {
       
       // Crea notifiche per gli amministratori del centro
       try {
-        // Ottieni l'informazione sull'utente che ha creato il lotto
-        const utente = await db.get(
-          'SELECT nome, cognome FROM Utenti WHERE id = ?', 
+        // Ottieni l'informazione sull'attore che ha creato il lotto
+        const attore = await db.get(
+          'SELECT nome, cognome FROM Attori WHERE id = ?', 
           [req.user.id]
         );
         
-        const nomeOperatore = utente ? `${utente.nome} ${utente.cognome}` : 'Operatore';
+        const nomeOperatore = attore ? `${attore.nome} ${attore.cognome}` : 'Operatore';
         
         // Creiamo il titolo e il messaggio della notifica
         const titolo = 'Nuovo lotto creato';
@@ -344,8 +344,8 @@ exports.createLotto = async (req, res, next) => {
         
         // Usa il metodo corretto per notificare gli amministratori
         // Questo metodo si occupa di gestire tutti gli aspetti dell'invio della notifica
-        await notificheController.notificaAdminCentro(
-          centro_origine_id,
+        await notificheController.notificaAdminTipoUtente(
+          tipo_utente_origine_id,
           'LottoCreato', // Utilizzo un valore conforme al vincolo CHECK
           titolo,
           messaggio,
@@ -371,7 +371,7 @@ exports.createLotto = async (req, res, next) => {
             destinatario_id,
             origine_id,
             letto,
-            centro_id,
+            tipo_utente_id,
             riferimento_id,
             riferimento_tipo,
             creato_il
@@ -388,9 +388,9 @@ exports.createLotto = async (req, res, next) => {
             ?,
             'Lotto',
             datetime('now')
-          FROM Utenti u
-          JOIN UtentiCentri uc ON u.id = uc.utente_id
-          WHERE uc.centro_id = ? 
+          FROM Attori u
+          JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+          WHERE uc.tipo_utente_id = ? 
             AND u.ruolo = 'Amministratore'
             AND u.id != ? -- Non inviare a se stessi
         `;
@@ -401,14 +401,14 @@ exports.createLotto = async (req, res, next) => {
             titolo,
             messaggio,
             req.user.id, // origine della notifica
-            centro_origine_id,
+            tipo_utente_origine_id,
             lottoId, // riferimento_id
-            centro_origine_id,
+            tipo_utente_origine_id,
             req.user.id // non inviare a se stessi
           ]
         );
         
-        logger.info(`Notifiche create per gli amministratori del centro ${centro_origine_id} per il nuovo lotto ${lottoId}`);
+        logger.info(`Notifiche create per gli amministratori del centro ${tipo_utente_origine_id} per il nuovo lotto ${lottoId}`);
       } catch (notificaError) {
         logger.error(`Errore nella creazione delle notifiche per il lotto: ${notificaError.message}`);
         // Continuiamo comunque con il commit, non è un errore fatale
@@ -417,7 +417,7 @@ exports.createLotto = async (req, res, next) => {
       // Invia notifiche ai centri beneficiari
       try {
         // Chiamata alla nuova funzione per notificare i centri beneficiari
-        await notificaCentriBeneficiari(lottoId, prodotto, centro_origine_id);
+        await notificaTipo_UtenteBeneficiari(lottoId, prodotto, tipo_utente_origine_id);
         logger.info(`Notifiche inviate ai centri beneficiari per il lotto ${lottoId}`);
       } catch (notificaError) {
         logger.error(`Errore nell'invio di notifiche ai centri beneficiari: ${notificaError.message}`);
@@ -456,33 +456,33 @@ exports.createLotto = async (req, res, next) => {
 };
 
 /**
- * Verifica se un utente ha accesso a un lotto
- * @param {object} user - Oggetto utente
+ * Verifica se un attore ha accesso a un lotto
+ * @param {object} user - Oggetto attore
  * @param {number} lottoId - ID del lotto
- * @returns {Promise<boolean>} true se l'utente ha accesso, false altrimenti
+ * @returns {Promise<boolean>} true se l'attore ha accesso, false altrimenti
  */
 async function checkLottoAccess(user, lottoId) {
   try {
     // Recupera informazioni sul lotto
-    const lotto = await db.get('SELECT centro_origine_id FROM Lotti WHERE id = ?', [lottoId]);
+    const lotto = await db.get('SELECT tipo_utente_origine_id FROM Lotti WHERE id = ?', [lottoId]);
     
     if (!lotto) {
       logger.warn(`Lotto con ID ${lottoId} non trovato durante il controllo di accesso`);
       return false;
     }
     
-    // Se l'utente è un admin, ha accesso a tutto
+    // Se l'attore è un admin, ha accesso a tutto
     if (user.ruolo === 'Admin' || user.ruolo === 'SuperAdmin') {
       return true;
     }
     
-    // Verifica se l'utente appartiene al centro del lotto
-    const utenteCentro = await db.get(
-      'SELECT 1 FROM UtentiCentri WHERE utente_id = ? AND centro_id = ?',
-      [user.id, lotto.centro_origine_id]
+    // Verifica se l'attore appartiene al centro del lotto
+    const attoreTipoUtente = await db.get(
+      'SELECT 1 FROM AttoriTipo_Utente WHERE attore_id = ? AND tipo_utente_id = ?',
+      [user.id, lotto.tipo_utente_origine_id]
     );
     
-    return !!utenteCentro;
+    return !!attoreTipoUtente;
   } catch (error) {
     logger.error(`Errore nel controllo di accesso al lotto: ${error.message}`);
     return false;
@@ -633,8 +633,8 @@ exports.updateLotto = async (req, res, next) => {
           const dettaglioLotto = await db.get(
             `SELECT l.*, c.nome AS centro_nome, u.nome AS operatore_nome, u.cognome AS operatore_cognome 
              FROM Lotti l
-             LEFT JOIN Centri c ON l.centro_origine_id = c.id
-             LEFT JOIN Utenti u ON l.inserito_da = u.id
+             LEFT JOIN Tipo_Utente c ON l.tipo_utente_origine_id = c.id
+             LEFT JOIN Attori u ON l.inserito_da = u.id
              WHERE l.id = ?`,
             [lottoId]
           );
@@ -648,8 +648,8 @@ exports.updateLotto = async (req, res, next) => {
             const messaggio = `L'operatore ${nomeOperatore} ha modificato il lotto "${dettaglioLotto.prodotto}" (${tipoModifica})`;
             
             // Notifica tutti gli amministratori del centro
-            await notificheController.notificaAdminCentro(
-              dettaglioLotto.centro_origine_id,
+            await notificheController.notificaAdminTipoUtente(
+              dettaglioLotto.tipo_utente_origine_id,
               'LottoModificato',
               titolo,
               messaggio,
@@ -671,7 +671,7 @@ exports.updateLotto = async (req, res, next) => {
                 destinatario_id,
                 origine_id,
                 letto,
-                centro_id,
+                tipo_utente_id,
                 riferimento_id,
                 riferimento_tipo,
                 creato_il
@@ -688,9 +688,9 @@ exports.updateLotto = async (req, res, next) => {
                 ?,
                 'Lotto',
                 datetime('now')
-              FROM Utenti u
-              JOIN UtentiCentri uc ON u.id = uc.utente_id
-              WHERE uc.centro_id = ? 
+              FROM Attori u
+              JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+              WHERE uc.tipo_utente_id = ? 
                 AND u.ruolo = 'Amministratore'
                 AND u.id != ? -- Non inviare a se stessi
             `;
@@ -701,14 +701,14 @@ exports.updateLotto = async (req, res, next) => {
                 titolo,
                 messaggio,
                 req.user.id, // origine della notifica
-                dettaglioLotto.centro_origine_id,
+                dettaglioLotto.tipo_utente_origine_id,
                 lottoId, // riferimento_id
-                dettaglioLotto.centro_origine_id,
+                dettaglioLotto.tipo_utente_origine_id,
                 req.user.id // non inviare a se stessi
               ]
             );
             
-            logger.info(`Notifiche create per gli amministratori del centro ${dettaglioLotto.centro_origine_id} per la modifica del lotto ${lottoId}`);
+            logger.info(`Notifiche create per gli amministratori del centro ${dettaglioLotto.tipo_utente_origine_id} per la modifica del lotto ${lottoId}`);
           }
         } catch (notificaError) {
           logger.error(`Errore nella creazione delle notifiche per la modifica del lotto: ${notificaError.message}`);
@@ -725,7 +725,7 @@ exports.updateLotto = async (req, res, next) => {
           );
           
           // Notifica gli utenti interessati del cambio di stato
-          await notificaUtentiCambioStato(lottoId, lotto.stato, updateFields.stato, lotto.centro_origine_id);
+          await notificaAttoriCambioStato(lottoId, lotto.stato, updateFields.stato, lotto.tipo_utente_origine_id);
         }
       }
       
@@ -763,7 +763,7 @@ exports.updateLotto = async (req, res, next) => {
       const lottoAggiornato = await db.get(
         `SELECT l.*, c.nome as centro_nome 
          FROM Lotti l
-         LEFT JOIN Centri c ON l.centro_origine_id = c.id
+         LEFT JOIN Tipo_Utente c ON l.tipo_utente_origine_id = c.id
          WHERE l.id = ?`,
         [lottoId]
       );
@@ -827,7 +827,7 @@ exports.updateLotto = async (req, res, next) => {
  * @param {string} statoNuovo - Nuovo stato
  * @param {number} centroId - ID del centro
  */
-async function notificaUtentiCambioStato(lottoId, statoPrecedente, statoNuovo, centroId) {
+async function notificaAttoriCambioStato(lottoId, statoPrecedente, statoNuovo, centroId) {
   try {
     // Ottieni dettagli del lotto
     const lotto = await db.get(
@@ -840,9 +840,9 @@ async function notificaUtentiCambioStato(lottoId, statoPrecedente, statoNuovo, c
     // Ottieni utenti interessati (operatori del centro e amministratori)
     const utenti = await db.all(`
       SELECT DISTINCT u.id
-      FROM Utenti u
-      JOIN UtentiCentri uc ON u.id = uc.utente_id
-      WHERE uc.centro_id = ? AND u.ruolo IN ('Operatore', 'Amministratore')
+      FROM Attori u
+      JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+      WHERE uc.tipo_utente_id = ? AND u.ruolo IN ('Operatore', 'Amministratore')
     `, [centroId]);
     
     if (!utenti || utenti.length === 0) return;
@@ -881,7 +881,7 @@ async function notificaUtentiCambioStato(lottoId, statoPrecedente, statoNuovo, c
     
     // Ottieni prenotazioni attive per il lotto
     const prenotazioni = await db.all(`
-      SELECT p.id, p.centro_ricevente_id
+      SELECT p.id, p.tipo_utente_ricevente_id
       FROM Prenotazioni p
       WHERE p.lotto_id = ? AND p.stato = 'Attiva'
     `, [lottoId]);
@@ -889,15 +889,15 @@ async function notificaUtentiCambioStato(lottoId, statoPrecedente, statoNuovo, c
     // Notifica i centri che hanno prenotazioni attive
     for (const prenotazione of prenotazioni) {
       // Ottieni gli operatori del centro destinazione
-      const operatoriCentro = await db.all(`
+      const operatoriTipoUtente = await db.all(`
         SELECT u.id
-        FROM Utenti u
-        JOIN UtentiCentri uc ON u.id = uc.utente_id
-        WHERE uc.centro_id = ?
-      `, [prenotazione.centro_ricevente_id]);
+        FROM Attori u
+        JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+        WHERE uc.tipo_utente_id = ?
+      `, [prenotazione.tipo_utente_ricevente_id]);
       
       // Invia notifiche agli operatori
-      for (const operatore of operatoriCentro) {
+      for (const operatore of operatoriTipoUtente) {
         await notificheController.creaNotifica(
           operatore.id,
           'Prenotazione', // Utilizza un valore consentito dal vincolo CHECK
@@ -990,7 +990,7 @@ exports.deleteLotto = async (req, res, next) => {
 exports.getLottiDisponibili = async (req, res, next) => {
   try {
     logger.info(`Richiesta GET /lotti/disponibili ricevuta con query: ${JSON.stringify(req.query)}`);
-    const { stato, raggio, lat, lng, centro_id } = req.query;
+    const { stato, raggio, lat, lng, tipo_utente_id } = req.query;
     
     // Utente autenticato
     const userId = req.user.id;
@@ -998,29 +998,29 @@ exports.getLottiDisponibili = async (req, res, next) => {
     
     logger.debug(`Utente ${userId} con ruolo ${userRuolo} richiede lotti disponibili`);
     
-    // Determina il tipo di centro dell'utente (se è associato a un centro)
-    let tipoCentroUtente = null;
+    // Determina il tipo di centro dell'attore (se è associato a un centro)
+    let tipoTipoUtenteUtente = null;
     let centriUtente = [];
     
-    if (userRuolo === 'CentroSociale' || userRuolo === 'CentroRiciclaggio') {
+    if (userRuolo === 'TipoUtenteSociale' || userRuolo === 'TipoUtenteRiciclaggio') {
       try {
-        // Trova i centri dell'utente e il loro tipo
-        const userCentriQuery = `
+        // Trova i centri dell'attore e il loro tipo
+        const userTipo_UtenteQuery = `
           SELECT c.id, c.tipo, c.nome 
-          FROM Centri c
-          JOIN UtentiCentri uc ON c.id = uc.centro_id
-          WHERE uc.utente_id = ?
+          FROM Tipo_Utente c
+          JOIN AttoriTipo_Utente uc ON c.id = uc.tipo_utente_id
+          WHERE uc.attore_id = ?
         `;
         
-        centriUtente = await db.all(userCentriQuery, [userId]);
+        centriUtente = await db.all(userTipo_UtenteQuery, [userId]);
         
         if (centriUtente && centriUtente.length > 0) {
           // Prendi il tipo del primo centro come riferimento
-          tipoCentroUtente = centriUtente[0].tipo;
-          logger.debug(`Utente appartiene a centro di tipo: ${tipoCentroUtente}`);
+          tipoTipoUtenteUtente = centriUtente[0].tipo;
+          logger.debug(`Utente appartiene a centro di tipo: ${tipoTipoUtenteUtente}`);
         }
       } catch (err) {
-        logger.error(`Errore nel recupero dei centri dell'utente: ${err.message}`);
+        logger.error(`Errore nel recupero dei centri dell'attore: ${err.message}`);
       }
     }
     
@@ -1041,7 +1041,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
              c.latitudine, c.longitudine
       ${hasCategorieTable ? ', GROUP_CONCAT(cat.nome) as categorie' : ', NULL as categorie'}
       FROM Lotti l
-      LEFT JOIN Centri c ON l.centro_origine_id = c.id
+      LEFT JOIN Tipo_Utente c ON l.tipo_utente_origine_id = c.id
       ${hasCategorieTable ? 'LEFT JOIN LottiCategorie lc ON l.id = lc.lotto_id' : ''}
       ${hasCategorieTable ? 'LEFT JOIN Categorie cat ON lc.categoria_id = cat.id' : ''}
     `;
@@ -1050,7 +1050,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
     const params = [];
     const whereConditions = [];
     
-    // Filtro base: lotti che non sono stati prenotati da nessun altro utente
+    // Filtro base: lotti che non sono stati prenotati da nessun altro attore
     // Nota: utilizziamo UPPER() per fare un confronto case-insensitive
     whereConditions.push(`
       l.id NOT IN (
@@ -1063,17 +1063,17 @@ exports.getLottiDisponibili = async (req, res, next) => {
     if (userRuolo !== 'Amministratore') {
       if (centriUtente && centriUtente.length > 0) {
         const centriIds = centriUtente.map(c => c.id);
-        whereConditions.push(`l.centro_origine_id NOT IN (${centriIds.join(',')})`);
+        whereConditions.push(`l.tipo_utente_origine_id NOT IN (${centriIds.join(',')})`);
       }
     }
     
     // Filtra per tipo di centro beneficiario
-    if (tipoCentroUtente === 'Sociale' || tipoCentroUtente === 'Riciclaggio') {
+    if (tipoTipoUtenteUtente === 'Sociale' || tipoTipoUtenteUtente === 'Riciclaggio') {
       // Prioritizza i lotti più adatti al tipo di centro
-      if (tipoCentroUtente === 'Sociale') {
+      if (tipoTipoUtenteUtente === 'Sociale') {
         // I centri sociali hanno priorità sui lotti più freschi (Verde e inizio Arancione)
         whereConditions.push(`l.stato IN ('Verde', 'Arancione')`);
-      } else if (tipoCentroUtente === 'Riciclaggio') {
+      } else if (tipoTipoUtenteUtente === 'Riciclaggio') {
         // I centri di riciclaggio hanno priorità sui lotti in scadenza (Arancione avanzato e Rosso)
         // ma possono vedere anche quelli verdi
         // Non filtriamo per stato, ma cambieremo l'ordinamento per mostrare prima quelli più adatti
@@ -1090,9 +1090,9 @@ exports.getLottiDisponibili = async (req, res, next) => {
     }
     
     // Filtro per centro specifico
-    if (centro_id) {
-      whereConditions.push('l.centro_origine_id = ?');
-      params.push(centro_id);
+    if (tipo_utente_id) {
+      whereConditions.push('l.tipo_utente_origine_id = ?');
+      params.push(tipo_utente_id);
     }
     
     // Filtro geografico
@@ -1119,7 +1119,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
     query += ` GROUP BY l.id `;
     
     // Personalizza l'ordinamento in base al tipo di centro
-    if (tipoCentroUtente === 'Sociale') {
+    if (tipoTipoUtenteUtente === 'Sociale') {
       // I centri sociali vedono prima i lotti più freschi
       query += ` 
         ORDER BY 
@@ -1131,7 +1131,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
           END,
           l.data_scadenza DESC
       `;
-    } else if (tipoCentroUtente === 'Riciclaggio') {
+    } else if (tipoTipoUtenteUtente === 'Riciclaggio') {
       // I centri di riciclaggio vedono prima i lotti in scadenza
       query += ` 
         ORDER BY 
@@ -1160,7 +1160,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
     const countQuery = `
       SELECT COUNT(DISTINCT l.id) as total
       FROM Lotti l
-      LEFT JOIN Centri c ON l.centro_origine_id = c.id
+      LEFT JOIN Tipo_Utente c ON l.tipo_utente_origine_id = c.id
       ${whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : ''}
     `;
     
@@ -1222,13 +1222,13 @@ exports.getOriginiLotto = async (req, res, next) => {
     const [centro] = await db.query(`
       SELECT c.*, 
              cs.descrizione as tipo_descrizione
-      FROM Centri c
-      JOIN CentriTipi cs ON c.tipo_id = cs.id
+      FROM Tipo_Utente c
+      JOIN Tipo_UtenteTipi cs ON c.tipo_id = cs.id
       WHERE c.id = ?
-    `, [lotto.centro_origine_id]);
+    `, [lotto.tipo_utente_origine_id]);
     
     if (!centro) {
-      return next(new ApiError(404, 'Centro di origine non trovato'));
+      return next(new ApiError(404, 'TipoUtente di origine non trovato'));
     }
     
     // Ottieni informazioni sui prodotti e sulla filiera
@@ -1274,7 +1274,7 @@ exports.getImpattoLotto = async (req, res, next) => {
     
     // Verifica se il lotto esiste
     const [lotto] = await db.query(
-      'SELECT l.*, c.nome as centro_nome FROM Lotti l JOIN Centri c ON l.centro_origine_id = c.id WHERE l.id = ?',
+      'SELECT l.*, c.nome as centro_nome FROM Lotti l JOIN Tipo_Utente c ON l.tipo_utente_origine_id = c.id WHERE l.id = ?',
       [lottoId]
     );
     
@@ -1353,13 +1353,13 @@ exports.getImpattoLotto = async (req, res, next) => {
 };
 
 /**
- * Ottiene l'elenco dei centri disponibili per l'utente corrente
+ * Ottiene l'elenco dei centri disponibili per l'attore corrente
  */
-exports.getCentriDisponibili = async (req, res, next) => {
+exports.getTipo_UtenteDisponibili = async (req, res, next) => {
   try {
     logger.info('Richiesta GET /lotti/centri ricevuta');
     
-    // Verifica se l'utente è autenticato
+    // Verifica se l'attore è autenticato
     if (!req.user || !req.user.id) {
       logger.error('Utente non identificato nella richiesta');
       return next(new ApiError(401, 'Utente non identificato. Impossibile procedere.'));
@@ -1375,45 +1375,45 @@ exports.getCentriDisponibili = async (req, res, next) => {
     if (userRuolo === 'Amministratore') {
       query = `
         SELECT id, nome, indirizzo, tipo, tipo_id, latitudine, longitudine, telefono, email
-        FROM Centri
+        FROM Tipo_Utente
         ORDER BY nome
       `;
     } else {
       // Gli altri utenti vedono solo i centri a cui sono associati
       query = `
         SELECT c.id, c.nome, c.indirizzo, c.tipo, c.tipo_id, c.latitudine, c.longitudine, c.telefono, c.email
-        FROM Centri c
-        JOIN UtentiCentri uc ON c.id = uc.centro_id
-        WHERE uc.utente_id = ?
+        FROM Tipo_Utente c
+        JOIN AttoriTipo_Utente uc ON c.id = uc.tipo_utente_id
+        WHERE uc.attore_id = ?
         ORDER BY c.nome
       `;
       params = [userId];
     }
     
-    // Verifica se la tabella Centri esiste
+    // Verifica se la tabella Tipo_Utente esiste
     try {
       const tableCheck = await db.get(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='Centri'");
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='Tipo_Utente'");
       
       if (!tableCheck) {
-        logger.warn('La tabella Centri non esiste nel database');
-        return next(new ApiError(500, 'La tabella Centri non esiste nel database'));
+        logger.warn('La tabella Tipo_Utente non esiste nel database');
+        return next(new ApiError(500, 'La tabella Tipo_Utente non esiste nel database'));
       }
     } catch (tableErr) {
-      logger.error(`Errore nella verifica della tabella Centri: ${tableErr.message}`);
-      return next(new ApiError(500, `Errore nella verifica della tabella Centri: ${tableErr.message}`));
+      logger.error(`Errore nella verifica della tabella Tipo_Utente: ${tableErr.message}`);
+      return next(new ApiError(500, `Errore nella verifica della tabella Tipo_Utente: ${tableErr.message}`));
     }
     
     // Esegue la query
     try {
       const centri = await db.all(query, params);
       
-      logger.info(`Recuperati ${centri.length} centri per l'utente ${userId}`);
+      logger.info(`Recuperati ${centri.length} centri per l'attore ${userId}`);
       
       // Se non ci sono centri disponibili
       if (centri.length === 0) {
         if (userRuolo !== 'Amministratore') {
-          logger.warn(`L'utente ${userId} non è associato a nessun centro`);
+          logger.warn(`L'attore ${userId} non è associato a nessun centro`);
           return res.json({
             message: 'Non sei associato a nessun centro. Contatta l\'amministratore.',
             centri: []
@@ -1436,21 +1436,21 @@ exports.getCentriDisponibili = async (req, res, next) => {
 };
 
 /**
- * Invia notifiche ai centri beneficiari (Centro di Riciclaggio e Centro Sociale) 
+ * Invia notifiche ai centri beneficiari (TipoUtente di Riciclaggio e TipoUtente Sociale) 
  * quando un nuovo lotto è disponibile
  * @param {number} lottoId - ID del lotto creato
  * @param {string} prodotto - Nome del prodotto
- * @param {number} centro_origine_id - ID del centro di origine
+ * @param {number} tipo_utente_origine_id - ID del centro di origine
  */
-async function notificaCentriBeneficiari(lottoId, prodotto, centro_origine_id) {
+async function notificaTipo_UtenteBeneficiari(lottoId, prodotto, tipo_utente_origine_id) {
   try {
     // Ottieni il nome del centro di origine
     const centro = await db.get(
-      'SELECT nome FROM Centri WHERE id = ?',
-      [centro_origine_id]
+      'SELECT nome FROM Tipo_Utente WHERE id = ?',
+      [tipo_utente_origine_id]
     );
     
-    const nomeCentro = centro ? centro.nome : 'Centro sconosciuto';
+    const nomeTipoUtente = centro ? centro.nome : 'TipoUtente sconosciuto';
     
     // Invia notifiche agli utenti dei centri beneficiari
     const notificaQuery = `
@@ -1463,13 +1463,13 @@ async function notificaCentriBeneficiari(lottoId, prodotto, centro_origine_id) {
         riferimento_id,
         riferimento_tipo,
         origine_id,
-        centro_id,
+        tipo_utente_id,
         letto,
         creato_il
       )
       SELECT 
         'Nuovo lotto disponibile',
-        'Il centro "${nomeCentro}" ha reso disponibile un nuovo lotto di "${prodotto}" che puoi prenotare',
+        'Il centro "${nomeTipoUtente}" ha reso disponibile un nuovo lotto di "${prodotto}" che puoi prenotare',
         'LottoCreato',
         'Media',
         u.id,
@@ -1479,9 +1479,9 @@ async function notificaCentriBeneficiari(lottoId, prodotto, centro_origine_id) {
         c.id,
         0,
         datetime('now')
-      FROM Utenti u
-      JOIN UtentiCentri uc ON u.id = uc.utente_id
-      JOIN Centri c ON uc.centro_id = c.id
+      FROM Attori u
+      JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+      JOIN Tipo_Utente c ON uc.tipo_utente_id = c.id
       WHERE c.tipo IN ('Riciclaggio', 'Sociale')
         AND c.id != ?
     `;
@@ -1490,7 +1490,7 @@ async function notificaCentriBeneficiari(lottoId, prodotto, centro_origine_id) {
       notificaQuery, 
       [
         lottoId,  // riferimento_id
-        centro_origine_id // non inviare al centro di origine
+        tipo_utente_origine_id // non inviare al centro di origine
       ]
     );
     

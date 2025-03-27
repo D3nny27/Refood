@@ -36,7 +36,7 @@ class Scheduler {
         
         const oggi = new Date().toISOString().split('T')[0]; // Formato YYYY-MM-DD
         
-        // ID utente di sistema per i cambi di stato automatici
+        // ID attore di sistema per i cambi di stato automatici
         const SYSTEM_USER_ID = 2; // Utente amministratore con ID 2
         
         // Trova lotti che dovrebbero passare in stato arancione
@@ -243,13 +243,13 @@ class Scheduler {
         `);
         
         // Statistiche utenti
-        const [statsUtenti] = await connection.query(`
+        const [statsAttori] = await connection.query(`
           SELECT 
             COUNT(*) as totale_utenti,
             COUNT(CASE WHEN ruolo = 'Operatore' THEN 1 END) as operatori,
             COUNT(CASE WHEN ruolo = 'CentroSociale' THEN 1 END) as centri_sociali,
             COUNT(CASE WHEN ruolo = 'CentroRiciclaggio' THEN 1 END) as centri_riciclaggio
-          FROM Utenti
+          FROM Attori
         `);
         
         // Inserisci statistiche
@@ -281,10 +281,10 @@ class Scheduler {
           statsPrenotazioni[0].prenotazioni_attive,
           statsPrenotazioni[0].prenotazioni_completate,
           statsPrenotazioni[0].prenotazioni_annullate,
-          statsUtenti[0].totale_utenti,
-          statsUtenti[0].operatori,
-          statsUtenti[0].centri_sociali,
-          statsUtenti[0].centri_riciclaggio
+          statsAttori[0].totale_utenti,
+          statsAttori[0].operatori,
+          statsAttori[0].centri_sociali,
+          statsAttori[0].centri_riciclaggio
         ]);
         
         await connection.commit();

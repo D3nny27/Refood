@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, param, query } = require('express-validator');
 const validator = require('../middlewares/validator');
-const { authenticate, authorize, belongsToCenter } = require('../middlewares/auth');
+const { authenticate, authorize, belongsToTipoUtente } = require('../middlewares/auth');
 const lottiController = require('../controllers/lotti.controller');
 const db = require('../config/database');
 
@@ -65,7 +65,7 @@ router.get('/test', (req, res) => {
  */
 router.get('/disponibili', [
   authenticate,
-  authorize(['CentroSociale', 'CentroRiciclaggio', 'Amministratore']),
+  authorize(['TipoUtenteSociale', 'TipoUtenteRiciclaggio', 'Amministratore']),
   query('stato').optional().isString().isIn(['Verde', 'Arancione', 'Rosso']).withMessage('Stato non valido'),
   query('raggio').optional().isFloat({ min: 0.1 }).withMessage('Raggio deve essere un numero positivo'),
   query('lat').optional().isFloat().withMessage('Latitudine non valida'),
@@ -97,7 +97,7 @@ router.get('/disponibili', [
  *                 type: number
  *               categoria:
  *                 type: string
- *               centro_id:
+ *               tipo_utente_id:
  *                 type: integer
  *     responses:
  *       201:
@@ -112,7 +112,7 @@ router.post('/test-create', authenticate, async (req, res, next) => {
     console.log('Endpoint test-create chiamato');
     console.log('Headers ricevuti:', JSON.stringify(req.headers));
     console.log('Body ricevuto:', JSON.stringify(req.body));
-    console.log('Utente autenticato:', req.user ? JSON.stringify(req.user) : 'Nessun utente');
+    console.log('Utente autenticato:', req.user ? JSON.stringify(req.user) : 'Nessun attore');
     
     // Valida i dati di input
     const { nome, quantita } = req.body;
@@ -126,27 +126,27 @@ router.post('/test-create', authenticate, async (req, res, next) => {
       });
     }
     
-    // Estrai l'ID dell'utente dal token JWT
+    // Estrai l'ID dell'attore dal token JWT
     const userId = req.user.sub;
-    console.log('ID utente estratto dal token:', userId);
+    console.log('ID attore estratto dal token:', userId);
     
     // Ottieni un ID centro (utilizziamo il primo disponibile per semplicità)
     let centroId = 1; // Valore predefinito
     
     try {
-      console.log('Cerco un centro valido per l\'utente');
+      console.log('Cerco un centro valido per l\'attore');
       const rows = await new Promise((resolve, reject) => {
-        db.all('SELECT centro_id FROM UtentiCentri WHERE utente_id = ? LIMIT 1', [userId], (err, rows) => {
+        db.all('SELECT tipo_utente_id FROM AttoriTipo_Utente WHERE attore_id = ? LIMIT 1', [userId], (err, rows) => {
           if (err) reject(err);
           else resolve(rows);
         });
       });
       
       if (rows && rows.length > 0) {
-        centroId = rows[0].centro_id;
-        console.log('Centro trovato:', centroId);
+        centroId = rows[0].tipo_utente_id;
+        console.log('TipoUtente trovato:', centroId);
       } else {
-        console.log('Nessun centro trovato per l\'utente, uso valore predefinito:', centroId);
+        console.log('Nessun centro trovato per l\'attore, uso valore predefinito:', centroId);
       }
     } catch (dbErr) {
       console.error('Errore nel recupero del centro:', dbErr);
@@ -162,7 +162,7 @@ router.post('/test-create', authenticate, async (req, res, next) => {
       quantita: parseFloat(quantita),
       unita_misura: 'kg',
       data_scadenza: dataScadenza.toISOString().split('T')[0],
-      centro_origine_id: centroId,
+      tipo_utente_origine_id: centroId,
       stato: 'Verde',
       giorni_permanenza: 7
     };
@@ -187,7 +187,7 @@ router.post('/test-create', authenticate, async (req, res, next) => {
             const sql = `
               INSERT INTO Lotti (
                 prodotto, descrizione, quantita, unita_misura, 
-                data_inserimento, data_scadenza, centro_origine_id, 
+                data_inserimento, data_scadenza, tipo_utente_origine_id, 
                 stato, giorni_permanenza
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
@@ -199,7 +199,7 @@ router.post('/test-create', authenticate, async (req, res, next) => {
               lottoData.unita_misura,
               new Date().toISOString(),
               lottoData.data_scadenza,
-              lottoData.centro_origine_id,
+              lottoData.tipo_utente_origine_id,
               lottoData.stato,
               lottoData.giorni_permanenza
             ];
@@ -278,7 +278,7 @@ router.post("/simple-test", (req, res) => {
  * @swagger
  * /lotti/centri:
  *   get:
- *     summary: Ottieni centri disponibili per l'utente corrente
+ *     summary: Ottieni centri disponibili per l'attore corrente
  *     tags: [Lotti]
  *     security:
  *       - bearerAuth: []
@@ -292,7 +292,7 @@ router.post("/simple-test", (req, res) => {
  */
 router.get('/centri', [
   authenticate,
-], lottiController.getCentriDisponibili);
+], lottiController.getTipo_UtenteDisponibili);
 
 /**
  * @swagger
@@ -379,7 +379,7 @@ router.get('/', authenticate, lottiController.getLotti);
  *               - unita_misura
  *               - data_scadenza
  *               - giorni_permanenza
- *               - centro_origine_id
+ *               - tipo_utente_origine_id
  *             properties:
  *               prodotto:
  *                 type: string
@@ -392,7 +392,7 @@ router.get('/', authenticate, lottiController.getLotti);
  *                 format: date
  *               giorni_permanenza:
  *                 type: integer
- *               centro_origine_id:
+ *               tipo_utente_origine_id:
  *                 type: integer
  *               categorie_ids:
  *                 type: array
@@ -412,11 +412,11 @@ router.post('/', [
   body('unita_misura').isString().isIn(['kg', 'g', 'l', 'ml', 'pz']).withMessage('Unità di misura non valida'),
   body('data_scadenza').isDate().withMessage('Data di scadenza non valida'),
   body('giorni_permanenza').isInt({ min: 1 }).withMessage('Giorni di permanenza deve essere un numero intero positivo'),
-  body('centro_origine_id').isInt().withMessage('ID centro origine deve essere un numero intero'),
+  body('tipo_utente_origine_id').isInt().withMessage('ID centro origine deve essere un numero intero'),
   body('categorie_ids').optional().isArray().withMessage('Categorie deve essere un array di ID'),
   body('categorie_ids.*').optional().isInt().withMessage('ID categoria deve essere un numero intero'),
   validator.validate,
-  belongsToCenter(req => req.body.centro_origine_id)
+  belongsToTipoUtente(req => req.body.tipo_utente_origine_id)
 ], lottiController.createLotto);
 
 /**

@@ -87,10 +87,10 @@ class WebSocketService {
       }
       this.clients.get(userId).push(ws);
       
-      // Salva l'ID utente nel WebSocket per riferimento futuro
+      // Salva l'ID attore nel WebSocket per riferimento futuro
       ws.userId = userId;
       
-      logger.info(`Nuova connessione WebSocket stabilita per l'utente ID: ${userId}`);
+      logger.info(`Nuova connessione WebSocket stabilita per l'attore ID: ${userId}`);
       
       // Invia un messaggio di conferma connessione
       this.sendMessage(ws, {
@@ -107,7 +107,7 @@ class WebSocketService {
       
       // Gestione errori
       ws.on('error', (error) => {
-        logger.error(`Errore WebSocket per l'utente ${userId}: ${error.message}`);
+        logger.error(`Errore WebSocket per l'attore ${userId}: ${error.message}`);
         this.handleClose(ws);
       });
       
@@ -186,7 +186,7 @@ class WebSocketService {
     const userId = ws.userId;
     if (!userId) return;
     
-    logger.info(`Chiusura connessione WebSocket per l'utente ID: ${userId}`);
+    logger.info(`Chiusura connessione WebSocket per l'attore ID: ${userId}`);
     
     // Rimuove il client dalla mappa
     if (this.clients.has(userId)) {
@@ -197,7 +197,7 @@ class WebSocketService {
         userClients.splice(index, 1);
       }
       
-      // Se non ci sono più client per questo utente, rimuove l'utente dalla mappa
+      // Se non ci sono più client per questo attore, rimuove l'attore dalla mappa
       if (userClients.length === 0) {
         this.clients.delete(userId);
       }
@@ -232,25 +232,25 @@ class WebSocketService {
   }
 
   /**
-   * Invia una notifica a un utente specifico tramite WebSocket
-   * @param {number} userId - ID dell'utente destinatario
+   * Invia una notifica a un attore specifico tramite WebSocket
+   * @param {number} userId - ID dell'attore destinatario
    * @param {object} notifica - Oggetto con i dati della notifica
    */
   async inviaNotifica(userId, notifica) {
     try {
-      logger.info(`Tentativo di inviare notifica WebSocket a utente ${userId}: ${JSON.stringify(notifica)}`);
+      logger.info(`Tentativo di inviare notifica WebSocket a attore ${userId}: ${JSON.stringify(notifica)}`);
       
       if (!userId || !notifica) {
         logger.error(`Parametri invalidi per inviaNotifica: userId=${userId}, notifica=${notifica ? 'presente' : 'assente'}`);
         return;
       }
       
-      // Cerca tutte le connessioni dell'utente
+      // Cerca tutte le connessioni dell'attore
       const userConnections = [...this.clients.values()].filter(client => 
         client.authenticated && client.userId === userId);
       
       if (userConnections.length === 0) {
-        logger.warn(`Nessuna connessione WebSocket attiva per l'utente ${userId}, notifica non inviata via WebSocket`);
+        logger.warn(`Nessuna connessione WebSocket attiva per l'attore ${userId}, notifica non inviata via WebSocket`);
         return;
       }
       
@@ -261,23 +261,23 @@ class WebSocketService {
         timestamp: Date.now()
       };
       
-      // Invia a tutte le connessioni dell'utente
+      // Invia a tutte le connessioni dell'attore
       let sentCount = 0;
       for (const ws of userConnections) {
         if (ws.readyState === WebSocket.OPEN) {
           try {
             this.sendMessage(ws, message);
             sentCount++;
-            logger.info(`Notifica WebSocket inviata a utente ${userId} (connessione ${ws.id})`);
+            logger.info(`Notifica WebSocket inviata a attore ${userId} (connessione ${ws.id})`);
           } catch (err) {
-            logger.error(`Errore nell'invio della notifica a utente ${userId} (connessione ${ws.id}): ${err.message}`);
+            logger.error(`Errore nell'invio della notifica a attore ${userId} (connessione ${ws.id}): ${err.message}`);
           }
         } else {
-          logger.warn(`Connessione ${ws.id} dell'utente ${userId} non è aperta (stato: ${ws.readyState})`);
+          logger.warn(`Connessione ${ws.id} dell'attore ${userId} non è aperta (stato: ${ws.readyState})`);
         }
       }
       
-      logger.info(`Notifica inviata a ${sentCount}/${userConnections.length} connessioni dell'utente ${userId}`);
+      logger.info(`Notifica inviata a ${sentCount}/${userConnections.length} connessioni dell'attore ${userId}`);
     } catch (error) {
       logger.error(`Errore generale nell'invio della notifica WebSocket: ${error.message}`);
       logger.error(`Stack trace: ${error.stack}`);

@@ -17,7 +17,7 @@ router.use(authenticate);
  * @swagger
  * /notifiche:
  *   get:
- *     summary: Recupera tutte le notifiche per l'utente corrente
+ *     summary: Recupera tutte le notifiche per l'attore corrente
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -90,7 +90,7 @@ router.get('/', notificheController.getNotifiche);
  *                 type: integer
  *               riferimento_tipo:
  *                 type: string
- *               centro_id:
+ *               tipo_utente_id:
  *                 type: integer
  *     responses:
  *       201:
@@ -193,24 +193,24 @@ router.post('/sync', notificheController.syncLocalNotifica);
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Centro di test recuperato con successo
+ *         description: TipoUtente di test recuperato con successo
  *       404:
  *         description: Nessun centro con amministratori trovato
  *       500:
  *         description: Errore del server
  */
-router.get('/centro-test', notificheController.getCentroTestNotifiche);
+router.get('/centro-test', notificheController.getTipoUtenteTestNotifiche);
 
 /**
  * @swagger
- * /notifiche/admin-centro/{centro_id}:
+ * /notifiche/admin-centro/{tipo_utente_id}:
  *   post:
  *     summary: Invia una notifica a tutti gli amministratori di un centro
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
- *         name: centro_id
+ *         name: tipo_utente_id
  *         required: true
  *         schema:
  *           type: integer
@@ -247,11 +247,11 @@ router.get('/centro-test', notificheController.getCentroTestNotifiche);
  *       401:
  *         description: Non autorizzato
  *       404:
- *         description: Centro non trovato
+ *         description: TipoUtente non trovato
  *       500:
  *         description: Errore del server
  */
-router.post('/admin-centro/:centro_id', notificheController.notifyAdmins);
+router.post('/admin-centro/:tipo_utente_id', notificheController.notifyAdmins);
 
 /**
  * @swagger

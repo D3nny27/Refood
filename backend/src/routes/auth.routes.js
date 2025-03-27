@@ -178,7 +178,7 @@ router.post('/logout-all', authenticate, authController.logoutAll);
  * @swagger
  * /auth/active-sessions:
  *   get:
- *     summary: Ottieni tutte le sessioni attive dell'utente
+ *     summary: Ottieni tutte le sessioni attive dell'attore
  *     tags: [Autenticazione]
  *     security:
  *       - bearerAuth: []
@@ -235,7 +235,7 @@ router.delete('/revoke-session/:id', authenticate, authController.revokeSession)
  * @swagger
  * /auth/register:
  *   post:
- *     summary: Registra un nuovo utente
+ *     summary: Registra un nuovo attore
  *     tags: [Autenticazione]
  *     requestBody:
  *       required: true
