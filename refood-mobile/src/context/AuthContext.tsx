@@ -519,7 +519,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         cognome,
         email,
         password,
-        ruolo: tipologia === 'organizzazione' ? ruoloOrganizzazione : 'UTENTE'
+        ruolo: tipologia === 'organizzazione' 
+              ? (ruoloOrganizzazione || 'Operatore')  // Fallback a Operatore se non specificato
+              : 'Utente'
       };
       
       // Aggiungi i dati specifici del tipo utente se sono disponibili

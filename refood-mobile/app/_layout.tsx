@@ -1,7 +1,7 @@
-import { Stack, Slot, router, usePathname, useSegments } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import React, { useEffect, useState, useRef } from 'react';
 import { ActivityIndicator, View, StyleSheet, Text, Platform, AppState, AppStateStatus } from 'react-native';
-import { PaperProvider, MD3LightTheme as DefaultTheme, Button } from 'react-native-paper';
+import { PaperProvider, MD3LightTheme as DefaultTheme, Button, Portal, Dialog, Snackbar } from 'react-native-paper';
 import { PRIMARY_COLOR } from '../src/config/constants';
 import { AuthProvider, useAuth } from '../src/context/AuthContext';
 import { NotificheProvider } from '../src/context/NotificheContext';
@@ -15,8 +15,13 @@ import Toast from 'react-native-toast-message';
 import logger from '../src/utils/logger';
 import { listenEvent, APP_EVENTS } from '../src/utils/events';
 import { emitEvent } from '../src/utils/events';
-import { useFonts } from 'expo-font';
-import { useColorScheme } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+
+// Definizione di colori per il tema
+const ERROR_COLOR = '#D32F2F';
+const SUCCESS_COLOR = '#4CAF50';
+const INFO_COLOR = '#2196F3';
+const WARNING_COLOR = '#FFC107';
 
 // Definizione del tema personalizzato per react-native-paper
 const theme = {
@@ -25,10 +30,15 @@ const theme = {
     ...DefaultTheme.colors,
     primary: PRIMARY_COLOR,
     secondary: '#FF9800',
+    error: ERROR_COLOR,
+    success: SUCCESS_COLOR,
+    info: INFO_COLOR,
+    warning: WARNING_COLOR,
   },
+  roundness: 12,
 };
 
-// Aggiungo una utility per verificare se siamo in ambiente SSR e gestire AsyncStorage in modo sicuro
+// Verifica se siamo in ambiente SSR
 const isSSR = () => typeof window === 'undefined';
 
 // Wrapper sicuro per AsyncStorage che gestisce l'ambiente SSR
@@ -63,73 +73,50 @@ export default function RootLayout() {
 // Componente per gestire la navigazione dopo che AuthProvider è inizializzato
 function NavigationStructure() {
   const { isAuthenticated } = useAuth();
+  const [notificationVisible, setNotificationVisible] = useState(false);
+  const [notificationMessage, setNotificationMessage] = useState('');
+
+  // Configurazione per Stack.Screen
+  const screenOptions = {
+    headerShown: false,
+  };
 
   return (
     <NotificheProvider>
-      <Stack screenOptions={{ headerShown: false }}>
+      <Stack 
+        screenOptions={screenOptions}
+      >
         <Stack.Screen name="index" />
-        <Stack.Screen name="home/index" />
-        <Stack.Screen name="dashboard/index" />
-        <Stack.Screen name="prenotazioni/index" />
-        <Stack.Screen name="prenotazioni/dettaglio/[id]" />
-        <Stack.Screen name="prenotazioni/conferma/[id]" />
-        <Stack.Screen name="prenotazioni/termini" />
-        <Stack.Screen name="lotti/index" />
-        <Stack.Screen name="lotti/visualizza/[id]" />
-        <Stack.Screen name="lotti/aggiungi" />
-        <Stack.Screen name="lotti/modifica/[id]" />
-        <Stack.Screen name="statistiche/index" />
-        <Stack.Screen name="notifiche/index" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="admin" />
+        <Stack.Screen name="lotti/disponibili" />
+        <Stack.Screen name="lotti/nuovo" />
+        <Stack.Screen name="lotti/dettaglio/[id]" />
         <Stack.Screen name="notifiche/[id]" />
-        <Stack.Screen name="utenti/profilo" />
-        <Stack.Screen name="utenti/impostazioni" options={{ animation: 'slide_from_right' }} />
-        <Stack.Screen
-          name="login/index"
-          options={{
-            animationTypeForReplace: isAuthenticated ? 'pop' : 'push',
-          }}
-        />
-        <Stack.Screen 
-          name="registrazione/index" 
-          options={{ 
-            animation: 'slide_from_right'
-          }} 
-        />
-        <Stack.Screen 
-          name="recupero-password/index" 
-          options={{ 
-            animation: 'slide_from_right' 
-          }} 
-        />
+        <Stack.Screen name="notifiche/index" />
+        <Stack.Screen name="prenotazioni/index" />
+        <Stack.Screen name="register/index" />
+        <Stack.Screen name="+not-found" />
+        <Stack.Screen name="test-radio" />
       </Stack>
+
+      {/* Snackbar per notifiche del sistema */}
+      <Snackbar
+        visible={notificationVisible}
+        onDismiss={() => setNotificationVisible(false)}
+        duration={3000}
+        action={{
+          label: 'Chiudi',
+          onPress: () => setNotificationVisible(false),
+        }}
+        style={styles.snackbar}
+      >
+        {notificationMessage}
+      </Snackbar>
+
+      {/* Toast personalizzato */}
       <Toast />
     </NotificheProvider>
-  );
-}
-
-// Componente intermedio per garantire che AuthProvider sia completamente inizializzato
-function AuthProviderInitializer({ children }: { children: React.ReactNode }) {
-  // Ottieni l'autenticazione PRIMA di utilizzare NotificheProvider
-  const auth = useAuth();
-  
-  // Se l'autenticazione è in caricamento, mostra un loader
-  if (auth.isLoading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
-        <Text style={styles.loadingText}>Caricamento in corso...</Text>
-      </View>
-    );
-  }
-  
-  // Solo dopo che l'autenticazione è completamente inizializzata, renderizziamo NotificheProvider
-  return (
-    <>
-      <NotificheProvider>
-        <RootLayoutNav />
-      </NotificheProvider>
-      {children}
-    </>
   );
 }
 
@@ -140,6 +127,7 @@ function RootLayoutNav() {
   const notificationListener = useRef<Notifications.Subscription>();
   const responseListener = useRef<Notifications.Subscription>();
   const [isNavigating, setIsNavigating] = useState(false); // Previene navigazione multipla
+  const [errorDialogVisible, setErrorDialogVisible] = useState(false);
 
   // Log per debug
   useEffect(() => {
@@ -287,63 +275,6 @@ function RootLayoutNav() {
     }
   }, [isAuthenticated, user]);
 
-  // Effetto per gestire cambiamenti di stato dell'app
-  useEffect(() => {
-    const handleAppStateChange = (nextAppState: AppStateStatus) => {
-      if (nextAppState === 'active') {
-        // L'app è tornata in primo piano, aggiorna lo stato dell'utente
-        logger.log('App tornata attiva, verifico autenticazione...');
-        refreshUserStatus().catch(err => {
-          logger.error('Errore durante il refresh al ritorno attivo:', err);
-        });
-        
-        // Aggiorna anche le notifiche quando l'app torna attiva
-        if (isAuthenticated) {
-          logger.log('Aggiorno le notifiche al ritorno attivo...');
-          
-          // Usa un piccolo ritardo per dare priorità all'aggiornamento auth
-          setTimeout(() => {
-            // Qui possiamo richiamare il metodo di refresh dal contesto delle notifiche
-            // usando una funzione globale o un event emitter
-            emitEvent(APP_EVENTS.REFRESH_NOTIFICATIONS);
-          }, 1000);
-        }
-      }
-    };
-    
-    // Per il web, aggiungiamo listener per visibilitychange
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        logger.log('Documento tornato visibile, verifico autenticazione...');
-        refreshUserStatus().catch(err => {
-          logger.error('Errore durante il refresh dopo visibilitychange:', err);
-        });
-      }
-    };
-    
-    // Aggiungi listener per i cambiamenti di stato dell'app
-    const subscription = AppState.addEventListener('change', handleAppStateChange);
-    
-    // Per il web, aggiungi listener per visibility change
-    if (!Platform.isTV && typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', handleVisibilityChange);
-    }
-    
-    // Pulizia al dismount
-    return () => {
-      subscription.remove();
-      if (!Platform.isTV && typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-      }
-    };
-  }, [refreshUserStatus]);
-
-  // Gestione dei tentativi di refresh in caso di problemi
-  const handleManualRefresh = () => {
-    setRefreshAttempts(prev => prev + 1);
-    refreshUserStatus();
-  };
-
   // Quando l'utente tocca una notifica
   const onNotificationResponseReceived = (response: Notifications.NotificationResponse) => {
     if (isNavigating) return; // Previene navigazioni multiple
@@ -386,12 +317,22 @@ function RootLayoutNav() {
     }
   };
 
-  // Mostra un loader mentre l'app verifica lo stato di autenticazione
+  // Gestione dei tentativi di refresh in caso di problemi
+  const handleManualRefresh = () => {
+    setRefreshAttempts(prev => prev + 1);
+    setErrorDialogVisible(false);
+    refreshUserStatus();
+  };
+
+  // Mostra un loader migliorato mentre l'app verifica lo stato di autenticazione
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
-        <Text style={styles.loadingText}>Caricamento in corso...</Text>
+        <View style={styles.loadingContent}>
+          <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+          <Text style={styles.loadingTitle}>Refood</Text>
+          <Text style={styles.loadingText}>Caricamento in corso...</Text>
+        </View>
       </View>
     );
   }
@@ -400,18 +341,35 @@ function RootLayoutNav() {
   if (error && refreshAttempts > 2) {
     return (
       <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>Si è verificato un errore: {error}</Text>
+        <MaterialCommunityIcons name="alert-circle-outline" size={80} color={ERROR_COLOR} />
+        <Text style={styles.errorTitle}>Oops!</Text>
+        <Text style={styles.errorText}>Si è verificato un errore durante il caricamento</Text>
         <Text style={styles.errorMessage}>
-          L'applicazione ha riscontrato un problema durante il caricamento. 
-          Prova a ricaricare o a controllare la tua connessione.
+          L'applicazione ha riscontrato un problema. Prova a ricaricare o a controllare la tua connessione.
         </Text>
+        
         <Button 
           mode="contained" 
-          onPress={handleManualRefresh}
-          style={styles.refreshButton}
+          onPress={() => setErrorDialogVisible(true)}
+          style={styles.errorButton}
+          icon="refresh"
         >
           Riprova
         </Button>
+        
+        <Portal>
+          <Dialog visible={errorDialogVisible} onDismiss={() => setErrorDialogVisible(false)}>
+            <Dialog.Icon icon="alert" />
+            <Dialog.Title style={styles.dialogTitle}>Dettagli errore</Dialog.Title>
+            <Dialog.Content>
+              <Text style={styles.dialogContent}>{error}</Text>
+            </Dialog.Content>
+            <Dialog.Actions>
+              <Button onPress={() => setErrorDialogVisible(false)}>Annulla</Button>
+              <Button onPress={handleManualRefresh} mode="contained">Riprova</Button>
+            </Dialog.Actions>
+          </Dialog>
+        </Portal>
       </View>
     );
   }
@@ -479,6 +437,7 @@ function RootLayoutNav() {
   );
 }
 
+// Stili migliorati con design moderno
 const styles = StyleSheet.create({
   loadingContainer: {
     flex: 1,
@@ -486,8 +445,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#fff',
   },
+  loadingContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: PRIMARY_COLOR,
+    marginTop: 20,
+  },
   loadingText: {
-    marginTop: 16,
+    marginTop: 12,
     fontSize: 16,
     color: '#666',
   },
@@ -496,11 +465,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#fff',
-    padding: 20,
+    padding: 30,
+  },
+  errorTitle: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: ERROR_COLOR,
+    marginTop: 20,
+    marginBottom: 12,
   },
   errorText: {
     fontSize: 18,
-    color: '#d32f2f',
+    fontWeight: '600',
+    color: '#333',
     marginBottom: 12,
     textAlign: 'center',
   },
@@ -508,10 +485,26 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
     textAlign: 'center',
-    marginBottom: 24,
+    marginBottom: 30,
+    lineHeight: 24,
   },
-  refreshButton: {
-    marginTop: 16,
+  errorButton: {
     paddingHorizontal: 24,
+    borderRadius: 30,
+    marginTop: 16,
+    backgroundColor: PRIMARY_COLOR,
+    elevation: 4,
+  },
+  dialogTitle: {
+    color: '#333',
+  },
+  dialogContent: {
+    color: '#555',
+    lineHeight: 22,
+  },
+  snackbar: {
+    marginBottom: 80,
+    borderRadius: 8,
+    backgroundColor: 'rgba(50, 50, 50, 0.9)',
   },
 });

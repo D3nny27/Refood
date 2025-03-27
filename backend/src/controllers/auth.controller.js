@@ -482,8 +482,8 @@ const register = async (req, res, next) => {
     const jwtAccessTokenDurata = await getParametroSistema('jwt_access_token_durata', 3600);
     const jwtRefreshTokenDurata = await getParametroSistema('jwt_refresh_token_durata', 604800);
     
-    const accessToken = jwt.sign(tokenPayload, config.jwt.secret, { expiresIn: jwtAccessTokenDurata });
-    const refreshToken = jwt.sign(tokenPayload, config.jwt.refreshSecret, { expiresIn: jwtRefreshTokenDurata });
+    const accessToken = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: jwtAccessTokenDurata });
+    const refreshToken = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: jwtRefreshTokenDurata });
     
     const accessTokenScadenza = new Date();
     accessTokenScadenza.setSeconds(accessTokenScadenza.getSeconds() + parseInt(jwtAccessTokenDurata));

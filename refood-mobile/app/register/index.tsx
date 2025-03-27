@@ -453,41 +453,6 @@ const RegisterScreen = () => {
                 <Title style={styles.registerTitle}>Registrazione</Title>
                 <Divider style={styles.divider} />
                 
-                {/* Pulsanti per la selezione diretta */}
-                <View style={styles.selectionButtonsContainer}>
-                  <Text style={styles.selectionInstructions}>È necessario selezionare la tipologia di utente per completare la registrazione:</Text>
-                  <Button
-                    mode="contained"
-                    onPress={mostraSelezioneTipologia}
-                    style={[styles.selectionButton, { backgroundColor: '#ff9800' }]}
-                    icon="account-question"
-                  >
-                    Seleziona Tipologia ({form.tipologia || 'Non selezionato'})
-                  </Button>
-                  
-                  {form.tipologia === 'organizzazione' && (
-                    <Button
-                      mode="contained"
-                      onPress={mostraSelezionRuoloOrg}
-                      style={[styles.selectionButton, { backgroundColor: '#2196f3' }]}
-                      icon="account-cog"
-                    >
-                      Seleziona Ruolo ({form.ruoloOrganizzazione || 'Non selezionato'})
-                    </Button>
-                  )}
-                  
-                  {form.tipologia === 'utente' && (
-                    <Button
-                      mode="contained"
-                      onPress={mostraSelezioneTipoUtente}
-                      style={[styles.selectionButton, { backgroundColor: '#2196f3' }]}
-                      icon="account-details"
-                    >
-                      Seleziona Tipo Utente ({form.tipoUtente || 'Non selezionato'})
-                    </Button>
-                  )}
-                </View>
-                
                 {/* Email */}
                 <View style={styles.inputWrapper}>
                   <TextInput
