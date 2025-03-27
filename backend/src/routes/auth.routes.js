@@ -235,7 +235,11 @@ router.delete('/revoke-session/:id', authenticate, authController.revokeSession)
  * @swagger
  * /auth/register:
  *   post:
- *     summary: Registra un nuovo attore
+ *     summary: Registra un nuovo attore nel sistema
+ *     description: |
+ *       Registra un nuovo attore nel sistema con diversi flussi:
+ *       1. Organizzazione (ruolo = Operatore o Amministratore)
+ *       2. Utente con associazione a un tipo (Privato, Canale sociale, Centro riciclo)
  *     tags: [Autenticazione]
  *     requestBody:
  *       required: true
@@ -244,67 +248,55 @@ router.delete('/revoke-session/:id', authenticate, authController.revokeSession)
  *           schema:
  *             type: object
  *             required:
- *               - nome
- *               - cognome
  *               - email
  *               - password
+ *               - nome
+ *               - cognome
+ *               - ruolo
  *             properties:
- *               nome:
- *                 type: string
- *               cognome:
- *                 type: string
  *               email:
  *                 type: string
  *                 format: email
  *               password:
  *                 type: string
- *                 format: password
- *                 minLength: 6
+ *                 minLength: 8
+ *               nome:
+ *                 type: string
+ *               cognome:
+ *                 type: string
  *               ruolo:
  *                 type: string
- *                 enum: [UTENTE, CENTRO_SOCIALE, CENTRO_RICICLAGGIO]
- *                 default: UTENTE
+ *                 enum: [Operatore, Amministratore, Utente]
+ *               tipoUtente:
+ *                 type: object
+ *                 description: Richiesto se ruolo = Utente
+ *                 properties:
+ *                   tipo:
+ *                     type: string
+ *                     enum: [Privato, Canale sociale, centro riciclo]
+ *                   indirizzo:
+ *                     type: string
+ *                   telefono:
+ *                     type: string
+ *                   email:
+ *                     type: string
+ *                     format: email
  *     responses:
  *       201:
- *         description: Utente registrato con successo
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: Utente registrato con successo
- *                 data:
- *                   type: object
- *                   properties:
- *                     user:
- *                       type: object
- *                       properties:
- *                         id:
- *                           type: integer
- *                         nome:
- *                           type: string
- *                         cognome:
- *                           type: string
- *                         email:
- *                           type: string
- *                         ruolo:
- *                           type: string
+ *         description: Attore registrato con successo
  *       400:
- *         description: Dati di registrazione non validi
+ *         description: Dati non validi
  *       409:
  *         description: Email già registrata
  */
 router.post('/register', [
-  body('nome').notEmpty().withMessage('Nome richiesto'),
-  body('cognome').notEmpty().withMessage('Cognome richiesto'),
   body('email').isEmail().withMessage('Email non valida'),
-  body('password').isLength({ min: 6 }).withMessage('La password deve contenere almeno 6 caratteri'),
-  body('ruolo').optional().isIn(['UTENTE', 'CENTRO_SOCIALE', 'CENTRO_RICICLAGGIO']).withMessage('Ruolo non valido'),
+  body('password').isLength({ min: 8 }).withMessage('La password deve essere di almeno 8 caratteri'),
+  body('nome').notEmpty().withMessage('Il nome è obbligatorio'),
+  body('cognome').notEmpty().withMessage('Il cognome è obbligatorio'),
+  body('ruolo').isIn(['Operatore', 'Amministratore', 'Utente']).withMessage('Ruolo non valido'),
+  body('tipoUtente.tipo').optional().isIn(['Privato', 'Canale sociale', 'centro riciclo']).withMessage('Tipo utente non valido'),
+  body('tipoUtente.indirizzo').optional().notEmpty().withMessage('Indirizzo obbligatorio per tipi utente'),
   validator.validate
 ], authController.register);
 

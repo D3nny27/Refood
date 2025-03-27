@@ -301,6 +301,12 @@ export const registerUser = async (userData: {
   nome: string;
   cognome: string;
   ruolo: string;
+  tipoUtente?: {
+    tipo: string;
+    indirizzo: string;
+    telefono: string;
+    email: string;
+  };
 }) => {
   try {
     console.log(`Invio richiesta di registrazione al backend (${API_URL}/auth/register):`, userData);

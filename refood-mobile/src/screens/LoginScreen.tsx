@@ -6,13 +6,12 @@ import { useAuth } from '../context/AuthContext';
 import { PRIMARY_COLOR } from '../config/constants';
 import Toast from 'react-native-toast-message';
 import logger from '../utils/logger';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, Link } from 'expo-router';
 
 const LoginScreen = () => {
   // Stato generale
-  const [isLoginMode, setIsLoginMode] = useState(true);
   const [passwordVisible, setPasswordVisible] = useState(false);
-  const { login, register, error, clearError, isLoading, isAuthenticated } = useAuth();
+  const { login, error, clearError, isLoading, isAuthenticated } = useAuth();
   const [fadeAnim] = useState(new Animated.Value(0));
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -25,26 +24,6 @@ const LoginScreen = () => {
   const [password, setPassword] = useState('');
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
-
-  // Campi aggiuntivi per la registrazione
-  const [nome, setNome] = useState('');
-  const [cognome, setCognome] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [nomeError, setNomeError] = useState('');
-  const [cognomeError, setCognomeError] = useState('');
-  const [confirmPasswordError, setConfirmPasswordError] = useState('');
-
-  // Toggle tra login e registrazione
-  const toggleAuthMode = () => {
-    clearError();
-    setIsLoginMode(!isLoginMode);
-    // Resetta gli errori quando si cambia modalità
-    setEmailError('');
-    setPasswordError('');
-    setNomeError('');
-    setCognomeError('');
-    setConfirmPasswordError('');
-  };
 
   useEffect(() => {
     logger.log('LoginScreen - isAuthenticated cambiato:', isAuthenticated);
@@ -65,7 +44,7 @@ const LoginScreen = () => {
       Toast.show({
         type: "error",
         position: "bottom",
-        text1: isLoginMode ? "Accesso non riuscito" : "Registrazione non riuscita",
+        text1: "Accesso non riuscito",
         text2: error,
         visibilityTime: 4000,
         autoHide: true,
@@ -78,7 +57,7 @@ const LoginScreen = () => {
     } else {
       fadeAnim.setValue(0);
     }
-  }, [error, fadeAnim, isLoginMode]);
+  }, [error, fadeAnim]);
 
   // Effetto per controllare i parametri di navigazione e mostrare banner di registrazione completata
   useEffect(() => {
@@ -130,39 +109,6 @@ const LoginScreen = () => {
     }
   };
 
-  const validateNome = () => {
-    if (!nome) {
-      setNomeError('Il nome è obbligatorio');
-      return false;
-    } else {
-      setNomeError('');
-      return true;
-    }
-  };
-
-  const validateCognome = () => {
-    if (!cognome) {
-      setCognomeError('Il cognome è obbligatorio');
-      return false;
-    } else {
-      setCognomeError('');
-      return true;
-    }
-  };
-
-  const validateConfirmPassword = () => {
-    if (!confirmPassword) {
-      setConfirmPasswordError('La conferma password è obbligatoria');
-      return false;
-    } else if (confirmPassword !== password) {
-      setConfirmPasswordError('Le password non coincidono');
-      return false;
-    } else {
-      setConfirmPasswordError('');
-      return true;
-    }
-  };
-
   // Gestione login
   const handleLogin = async () => {
     // Valida i campi di input
@@ -173,36 +119,6 @@ const LoginScreen = () => {
       logger.log('LoginScreen - Tentativo di login con:', email);
       const success = await login(email, password);
       logger.log('LoginScreen - Risultato login:', success ? 'successo' : 'fallito');
-    }
-  };
-
-  // Gestione registrazione
-  const handleRegistration = async () => {
-    // Valida i campi di input
-    const isNomeValid = validateNome();
-    const isCognomeValid = validateCognome();
-    const isEmailValid = validateEmail();
-    const isPasswordValid = validatePassword();
-    const isConfirmPasswordValid = validateConfirmPassword();
-
-    if (isNomeValid && isCognomeValid && isEmailValid && isPasswordValid && isConfirmPasswordValid) {
-      logger.log('LoginScreen - Tentativo di registrazione con:', email);
-      const success = await register(nome, cognome, email, password);
-      logger.log('LoginScreen - Risultato registrazione:', success ? 'successo' : 'fallito');
-      
-      if (success) {
-        Toast.show({
-          type: "success",
-          position: "bottom",
-          text1: "Registrazione completata",
-          text2: "Puoi accedere con le tue credenziali",
-          visibilityTime: 4000,
-          autoHide: true,
-        });
-        
-        // Switcha alla modalità login per permettere l'accesso
-        setIsLoginMode(true);
-      }
     }
   };
 
@@ -250,45 +166,8 @@ const LoginScreen = () => {
 
             <Card style={styles.formCard} elevation={5}>
               <Card.Content style={styles.formContainer}>
-                <Text style={styles.loginTitle}>{isLoginMode ? 'Accedi' : 'Registrati'}</Text>
+                <Text style={styles.loginTitle}>Accedi</Text>
                 <Divider style={styles.divider} />
-                
-                {/* Campi nome e cognome solo per la registrazione */}
-                {!isLoginMode && (
-                  <>
-                    <View style={styles.inputWrapper}>
-                      <TextInput
-                        label="Nome"
-                        value={nome}
-                        onChangeText={setNome}
-                        onBlur={validateNome}
-                        error={!!nomeError}
-                        style={styles.input}
-                        mode="outlined"
-                        outlineColor={PRIMARY_COLOR}
-                        activeOutlineColor={PRIMARY_COLOR}
-                        left={<TextInput.Icon icon="account" />}
-                      />
-                      {nomeError ? <HelperText type="error">{nomeError}</HelperText> : null}
-                    </View>
-
-                    <View style={styles.inputWrapper}>
-                      <TextInput
-                        label="Cognome"
-                        value={cognome}
-                        onChangeText={setCognome}
-                        onBlur={validateCognome}
-                        error={!!cognomeError}
-                        style={styles.input}
-                        mode="outlined"
-                        outlineColor={PRIMARY_COLOR}
-                        activeOutlineColor={PRIMARY_COLOR}
-                        left={<TextInput.Icon icon="account" />}
-                      />
-                      {cognomeError ? <HelperText type="error">{cognomeError}</HelperText> : null}
-                    </View>
-                  </>
-                )}
                 
                 {/* Campo email comune per entrambi */}
                 <View style={styles.inputWrapper}>
@@ -333,58 +212,37 @@ const LoginScreen = () => {
                   {passwordError ? <HelperText type="error">{passwordError}</HelperText> : null}
                 </View>
 
-                {/* Conferma password solo per la registrazione */}
-                {!isLoginMode && (
-                  <View style={styles.inputWrapper}>
-                    <TextInput
-                      label="Conferma Password"
-                      value={confirmPassword}
-                      onChangeText={setConfirmPassword}
-                      onBlur={validateConfirmPassword}
-                      secureTextEntry={!passwordVisible}
-                      error={!!confirmPasswordError}
-                      style={styles.input}
-                      mode="outlined"
-                      outlineColor={PRIMARY_COLOR}
-                      activeOutlineColor={PRIMARY_COLOR}
-                      left={<TextInput.Icon icon="lock-check" />}
-                    />
-                    {confirmPasswordError ? <HelperText type="error">{confirmPasswordError}</HelperText> : null}
-                  </View>
-                )}
-
                 {/* Pulsante di azione */}
                 <Button
                   mode="contained"
-                  onPress={isLoginMode ? handleLogin : handleRegistration}
+                  onPress={handleLogin}
                   loading={isLoading}
                   disabled={isLoading}
                   style={styles.actionButton}
                   buttonColor={PRIMARY_COLOR}
-                  icon={isLoginMode ? "login" : "account-plus"}
+                  icon="login"
                 >
-                  {isLoginMode ? 'Accedi' : 'Registrati'}
+                  Accedi
                 </Button>
                 
                 {/* Link per password dimenticata solo per login */}
-                {isLoginMode && (
-                  <Button
-                    mode="text"
-                    onPress={() => logger.log('Password dimenticata')}
-                    style={styles.forgotPasswordButton}
-                  >
-                    Password dimenticata?
-                  </Button>
-                )}
-                
-                {/* Toggle tra login e registrazione */}
                 <Button
                   mode="text"
-                  onPress={toggleAuthMode}
-                  style={styles.toggleModeButton}
+                  onPress={() => logger.log('Password dimenticata')}
+                  style={styles.forgotPasswordButton}
                 >
-                  {isLoginMode ? "Non hai un account? Registrati" : "Hai già un account? Accedi"}
+                  Password dimenticata?
                 </Button>
+                
+                {/* Toggle tra login e registrazione */}
+                <Link href="/register" asChild>
+                  <Button
+                    mode="text"
+                    style={styles.toggleModeButton}
+                  >
+                    Non hai un account? Registrati
+                  </Button>
+                </Link>
               </Card.Content>
             </Card>
             

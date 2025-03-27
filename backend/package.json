@@ -7,7 +7,8 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "test": "jest",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "migrate:utenti-to-attori": "node src/scripts/migrate_utenti_to_attori.js"
   },
   "dependencies": {
     "@react-native-community/datetimepicker": "^8.3.0",

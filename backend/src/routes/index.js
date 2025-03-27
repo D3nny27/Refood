@@ -112,6 +112,19 @@ router.get('/debug/database', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /healthcheck:
+ *   get:
+ *     summary: Controlla lo stato dell'API
+ *     responses:
+ *       200:
+ *         description: API funzionante
+ */
+router.get('/healthcheck', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date() });
+});
+
 // Rotte autenticazione
 router.use('/auth', authRoutes);
 

@@ -10,6 +10,51 @@ import { API_CONFIG } from '../config/config';
 import Toast from 'react-native-toast-message';
 import { emitEvent, APP_EVENTS } from '../utils/events';
 
+// Helper per verificare se siamo in ambiente SSR
+const isSSR = () => typeof window === 'undefined';
+
+// Wrapper sicuro per AsyncStorage che gestisce l'ambiente SSR
+const safeAsyncStorage = {
+  getItem: async (key: string): Promise<string | null> => {
+    if (isSSR()) {
+      logger.log('Ambiente SSR: AsyncStorage.getItem non disponibile');
+      return null;
+    }
+    try {
+      return await AsyncStorage.getItem(key);
+    } catch (error) {
+      logger.error(`Errore in AsyncStorage.getItem(${key}):`, error);
+      return null;
+    }
+  },
+  setItem: async (key: string, value: string): Promise<boolean> => {
+    if (isSSR()) {
+      logger.log('Ambiente SSR: AsyncStorage.setItem non disponibile');
+      return false;
+    }
+    try {
+      await AsyncStorage.setItem(key, value);
+      return true;
+    } catch (error) {
+      logger.error(`Errore in AsyncStorage.setItem(${key}):`, error);
+      return false;
+    }
+  },
+  removeItem: async (key: string): Promise<boolean> => {
+    if (isSSR()) {
+      logger.log('Ambiente SSR: AsyncStorage.removeItem non disponibile');
+      return false;
+    }
+    try {
+      await AsyncStorage.removeItem(key);
+      return true;
+    } catch (error) {
+      logger.error(`Errore in AsyncStorage.removeItem(${key}):`, error);
+      return false;
+    }
+  }
+};
+
 // Adattamento del tipo di paginazione per supportare il nuovo formato
 interface PaginationData {
   total: number;
@@ -64,7 +109,8 @@ class NotificheService {
    */
   private async loadLocalNotifications(): Promise<void> {
     try {
-      const savedNotificationsString = await AsyncStorage.getItem(LOCAL_NOTIFICATIONS_STORAGE_KEY);
+      // Utilizziamo il nostro wrapper sicuro per AsyncStorage
+      const savedNotificationsString = await safeAsyncStorage.getItem(LOCAL_NOTIFICATIONS_STORAGE_KEY);
       
       if (savedNotificationsString) {
         const savedNotifications = JSON.parse(savedNotificationsString) as Notifica[];
@@ -114,14 +160,14 @@ class NotificheService {
       const localNotifications = this.lastFetchedNotifiche.data.filter(n => n.id < 0);
       
       if (localNotifications.length > 0) {
-        await AsyncStorage.setItem(
+        await safeAsyncStorage.setItem(
           LOCAL_NOTIFICATIONS_STORAGE_KEY, 
           JSON.stringify(localNotifications)
         );
         logger.log(`Salvate ${localNotifications.length} notifiche locali in AsyncStorage`);
       } else {
         // Se non ci sono notifiche locali, rimuovi la voce da AsyncStorage
-        await AsyncStorage.removeItem(LOCAL_NOTIFICATIONS_STORAGE_KEY);
+        await safeAsyncStorage.removeItem(LOCAL_NOTIFICATIONS_STORAGE_KEY);
         logger.log('Nessuna notifica locale da salvare, rimossa chiave da AsyncStorage');
       }
     } catch (error) {
@@ -748,96 +794,72 @@ class NotificheService {
   }
 
   /**
-   * Invia una notifica locale al server per salvarla nel database
-   * @param notifica La notifica locale da sincronizzare con il server
-   * @returns L'ID della notifica sul server
+   * Sincronizza una notifica locale con il server
    */
-  async syncLocalNotificaToServer(notifica: Notifica): Promise<number | null> {
+  private async syncLocalNotificaToServer(notifica: Notifica): Promise<number | null> {
     try {
-      // Prepara i dati da inviare al server
-      const notificaData = {
-        titolo: notifica.titolo,
-        messaggio: notifica.messaggio,
-        tipo: notifica.tipo,
-        priorita: notifica.priorita,
-        letta: notifica.letta,
-        // Mandiamo la data originale di creazione
-        dataCreazione: notifica.dataCreazione
-      };
-      
-      logger.log(`Invio notifica locale al server: ${JSON.stringify(notificaData)}`);
-      
-      // Ottieni il token di autenticazione
-      const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
-      if (!token) {
-        logger.error('Token di autenticazione mancante. Impossibile sincronizzare la notifica.');
-        throw new Error('Token di autenticazione mancante');
-      }
-      
-      // Utilizziamo il nuovo endpoint di sincronizzazione
-      logger.log(`URL endpoint sincronizzazione: ${API_CONFIG.NOTIFICATIONS_API_URL}/sync`);
-      
-      // Effettua la chiamata al server con token esplicito
-      const response = await api.post(
-        `${API_CONFIG.NOTIFICATIONS_API_URL}/sync`, 
-        notificaData,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      
-      if (response.data && response.data.success && response.data.data && response.data.data.id) {
-        const serverNotificaId = response.data.data.id;
-        logger.log(`Notifica sincronizzata con successo. ID server: ${serverNotificaId}`);
-        
-        // Trova l'indice della notifica locale
-        const localIndex = this.lastFetchedNotifiche.data.findIndex(n => n.id === notifica.id);
-        
-        if (localIndex !== -1) {
-          // Aggiorna l'ID e i dati della notifica con quelli del server
-          const updatedNotifica = {
-            ...this.lastFetchedNotifiche.data[localIndex],
-            id: serverNotificaId,
-            dataCreazione: response.data.data.dataCreazione || notifica.dataCreazione
-          };
-          
-          // Rimuovi la vecchia notifica locale e aggiungi quella aggiornata
-          this.lastFetchedNotifiche.data.splice(localIndex, 1);
-          this.lastFetchedNotifiche.data.push(updatedNotifica);
-          
-          // Aggiorna la cache locale
-          await this.saveLocalNotifications();
-          
-          // Mostra toast di conferma
-          Toast.show({
-            type: 'success',
-            text1: 'Notifica sincronizzata',
-            text2: `ID: ${serverNotificaId}`,
-            visibilityTime: 2000,
-          });
-          
-          return serverNotificaId;
-        }
-        
-        return serverNotificaId;
-      } else {
-        logger.warn('Risposta server non valida durante la sincronizzazione della notifica');
-        logger.warn(`Risposta: ${JSON.stringify(response.data)}`);
+      // Verifica se la sincronizzazione è già in corso (per evitare richieste duplicate)
+      if (this.isSyncing) {
+        logger.warn('Sincronizzazione già in corso. Saltando richiesta.');
         return null;
       }
+      
+      this.isSyncing = true;
+      logger.log(`Sincronizzazione notifica locale ${notifica.id} con il server`);
+      
+      // Ottieni token di autenticazione
+      const token = await safeAsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      
+      // Se non c'è token, non possiamo sincronizzare
+      if (!token) {
+        logger.warn('Token di autenticazione non disponibile per la sincronizzazione notifica');
+        this.isSyncing = false;
+        return null;
+      }
+      
+      // Crea payload per il server
+      const payload = {
+        titolo: notifica.titolo,
+        messaggio: notifica.messaggio,
+        tipo: notifica.tipo || 'Alert',
+        priorita: notifica.priorita || 'Media',
+        letta: notifica.letta
+      };
+      
+      // Effettua la richiesta al server
+      const response = await api.post(API_CONFIG.NOTIFICATIONS_API_URL, payload, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      
+      // Verifica se la risposta contiene l'ID della notifica creata
+      if (response.data && response.data.id) {
+        const serverId = response.data.id;
+        
+        // Aggiorna l'ID della notifica nella cache locale
+        const notificaIndex = this.lastFetchedNotifiche.data.findIndex(n => n.id === notifica.id);
+        
+        if (notificaIndex !== -1) {
+          // Sostituisci l'ID negativo con quello del server
+          this.lastFetchedNotifiche.data[notificaIndex].id = serverId;
+          
+          // Aggiorna l'array delle notifiche locali
+          await this.saveLocalNotifications();
+          
+          logger.log(`Notifica sincronizzata con successo. ID server: ${serverId}`);
+          this.isSyncing = false;
+          return serverId;
+        }
+      }
+      
+      // Se siamo qui, qualcosa è andato storto
+      logger.warn('Risposta dal server non valida durante la sincronizzazione', response.data);
+      this.isSyncing = false;
+      return null;
     } catch (error) {
-      logger.error('Errore durante la sincronizzazione della notifica con il server:');
-      if (error instanceof Error) {
-        logger.error(`- Messaggio: ${error.message}`);
-      }
-      if (axios.isAxiosError(error)) {
-        logger.error(`- Codice stato: ${error.response?.status}`);
-        logger.error(`- Risposta: ${JSON.stringify(error.response?.data)}`);
-        logger.error(`- URL richiesta: ${error.config?.url}`);
-      }
+      logger.error('Errore durante la sincronizzazione della notifica con il server:', error);
+      this.isSyncing = false;
       return null;
     }
   }
@@ -1264,6 +1286,148 @@ class NotificheService {
       }
       
       throw error;
+    }
+  }
+
+  /**
+   * Recupera il token del dispositivo per le notifiche push
+   */
+  async getPushToken(): Promise<string | null> {
+    try {
+      const token = await safeAsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      
+      // Se non c'è token, non possiamo procedere
+      if (!token) {
+        return null;
+      }
+      
+      const response = await api.get(`${API_CONFIG.NOTIFICATIONS_API_URL}/push-token`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      
+      if (response.data && response.data.token) {
+        return response.data.token;
+      }
+      
+      return null;
+    } catch (error) {
+      logger.error('Errore durante il recupero del token push:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Registra il token del dispositivo per le notifiche push
+   */
+  async registraPushToken(pushToken: string): Promise<boolean> {
+    try {
+      // Recupera il token di autenticazione
+      const token = await safeAsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      
+      // Se non c'è token di autenticazione, non possiamo procedere
+      if (!token) {
+        logger.warn('Token di autenticazione non disponibile per la registrazione push token');
+        return false;
+      }
+      
+      // Prepara il payload con informazioni sul dispositivo
+      const deviceInfo = {
+        platform: Platform.OS,
+        token: pushToken,
+        device: `${Platform.OS} ${Platform.Version}`,
+        app: 'ReFood Mobile'
+      };
+      
+      // Invia la richiesta al server
+      const response = await api.post(`${API_CONFIG.NOTIFICATIONS_API_URL}/register-push`, deviceInfo, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      
+      // Verifica la risposta
+      if (response.data && response.data.success) {
+        logger.log('Push token registrato con successo');
+        return true;
+      } else {
+        logger.warn('Risposta non valida durante la registrazione del push token', response.data);
+        return false;
+      }
+    } catch (error) {
+      logger.error('Errore durante la registrazione del push token:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Aggiorna le impostazioni delle notifiche dell'utente
+   */
+  async aggiornaImpostazioniNotifiche(settings: any): Promise<boolean> {
+    try {
+      // Recupera il token di autenticazione
+      const token = await safeAsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      
+      // Se non c'è token di autenticazione, non possiamo procedere
+      if (!token) {
+        logger.warn('Token di autenticazione non disponibile per aggiornare impostazioni notifiche');
+        return false;
+      }
+      
+      // Invia la richiesta al server
+      const response = await api.post(`${API_CONFIG.NOTIFICATIONS_API_URL}/settings`, settings, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      
+      // Verifica la risposta
+      if (response.data && response.data.success) {
+        logger.log('Impostazioni notifiche aggiornate con successo');
+        return true;
+      } else {
+        logger.warn('Risposta non valida durante l\'aggiornamento delle impostazioni notifiche', response.data);
+        return false;
+      }
+    } catch (error) {
+      logger.error('Errore durante l\'aggiornamento delle impostazioni notifiche:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Ottiene le impostazioni delle notifiche dell'utente
+   */
+  async getImpostazioniNotifiche(): Promise<any> {
+    try {
+      // Recupera il token di autenticazione
+      const token = await safeAsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+      
+      // Se non c'è token di autenticazione, non possiamo procedere
+      if (!token) {
+        logger.warn('Token di autenticazione non disponibile per ottenere impostazioni notifiche');
+        return null;
+      }
+      
+      // Invia la richiesta al server
+      const response = await api.get(`${API_CONFIG.NOTIFICATIONS_API_URL}/settings`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      
+      // Verifica la risposta
+      if (response.data) {
+        logger.log('Impostazioni notifiche recuperate con successo');
+        return response.data;
+      } else {
+        logger.warn('Risposta non valida durante il recupero delle impostazioni notifiche');
+        return null;
+      }
+    } catch (error) {
+      logger.error('Errore durante il recupero delle impostazioni notifiche:', error);
+      return null;
     }
   }
 }

@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, KeyboardAvoidingView, ScrollView, Platform, ImageBackground } from 'react-native';
-import { TextInput, Button, Text, HelperText, Appbar, Card, Divider, Dialog, Portal, Paragraph } from 'react-native-paper';
-import { router } from 'expo-router';
+import React, { useState, useEffect } from 'react';
+import { View, StyleSheet, KeyboardAvoidingView, ScrollView, Platform, ImageBackground, Alert } from 'react-native';
+import { TextInput, Button, Text, HelperText, Card, Divider, RadioButton, Dialog, Portal, Paragraph, Title, Subheading } from 'react-native-paper';
+import { router, Link } from 'expo-router';
 import { registerUser } from '../../src/services/authService';
 import { PRIMARY_COLOR } from '../../src/config/constants';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -9,129 +9,362 @@ import Toast from 'react-native-toast-message';
 import logger from '../../src/utils/logger';
 import { useAuth } from '../../src/context/AuthContext';
 
+// Tipi per il form di registrazione
+interface FormDati {
+  email: string;
+  password: string;
+  confermaPassword: string;
+  nome: string;
+  cognome: string;
+  tipologia: 'organizzazione' | 'utente' | null;
+  ruoloOrganizzazione: 'Operatore' | 'Amministratore' | null;
+  tipoUtente: 'Privato' | 'Canale sociale' | 'centro riciclo' | null;
+  indirizzo: string;
+  telefono: string;
+}
+
+// Stato errori form
+interface ErroriForm {
+  email: string;
+  password: string;
+  confermaPassword: string;
+  nome: string;
+  cognome: string;
+  tipologia: string;
+  ruoloOrganizzazione: string;
+  tipoUtente: string;
+  indirizzo: string;
+  telefono: string;
+}
+
 const RegisterScreen = () => {
-  const [nome, setNome] = useState('');
-  const [cognome, setCognome] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [passwordVisible, setPasswordVisible] = useState(false);
+  const { login, register } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
-  const { loginWithCredentials, login } = useAuth();
   
   // Stato per i dialoghi di feedback
   const [successDialogVisible, setSuccessDialogVisible] = useState(false);
   const [errorDialogVisible, setErrorDialogVisible] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   
-  // Errori di validazione
-  const [nomeError, setNomeError] = useState('');
-  const [cognomeError, setCognomeError] = useState('');
-  const [emailError, setEmailError] = useState('');
-  const [passwordError, setPasswordError] = useState('');
-  const [confirmPasswordError, setConfirmPasswordError] = useState('');
-
-  const validateNome = () => {
-    if (!nome.trim()) {
-      setNomeError('Il nome è obbligatorio');
-      return false;
-    }
-    setNomeError('');
-    return true;
+  // Stato del form
+  const [form, setForm] = useState<FormDati>({
+    email: '',
+    password: '',
+    confermaPassword: '',
+    nome: '',
+    cognome: '',
+    tipologia: null, // Modificato: inizializzato a null invece di 'organizzazione'
+    ruoloOrganizzazione: null,
+    tipoUtente: null,
+    indirizzo: '',
+    telefono: '',
+  });
+  
+  // Traccia i cambiamenti nel form per debugging
+  useEffect(() => {
+    console.log('Form aggiornato:', { 
+      tipologia: form.tipologia,
+      ruoloOrganizzazione: form.ruoloOrganizzazione,
+      tipoUtente: form.tipoUtente 
+    });
+  }, [form.tipologia, form.ruoloOrganizzazione, form.tipoUtente]);
+  
+  // Metodo per mostrare la selezione in un alert per sceglierne uno direttamente
+  const mostraSelezioneTipologia = () => {
+    Alert.alert(
+      "Seleziona Tipologia",
+      "Scegli la tipologia di utente che sei:",
+      [
+        {
+          text: "Organizzazione",
+          onPress: () => {
+            setForm(prev => ({
+              ...prev,
+              tipologia: 'organizzazione',
+              ruoloOrganizzazione: null,
+              tipoUtente: null
+            }));
+          }
+        },
+        {
+          text: "Utente",
+          onPress: () => {
+            setForm(prev => ({
+              ...prev,
+              tipologia: 'utente',
+              ruoloOrganizzazione: null,
+              tipoUtente: null
+            }));
+          }
+        }
+      ],
+      { cancelable: true }
+    );
   };
 
-  const validateCognome = () => {
-    if (!cognome.trim()) {
-      setCognomeError('Il cognome è obbligatorio');
-      return false;
-    }
-    setCognomeError('');
-    return true;
+  // Metodo per mostrare la selezione del ruolo organizzazione
+  const mostraSelezionRuoloOrg = () => {
+    if (form.tipologia !== 'organizzazione') return;
+    
+    Alert.alert(
+      "Seleziona Ruolo",
+      "Scegli il tuo ruolo nell'organizzazione:",
+      [
+        {
+          text: "Operatore",
+          onPress: () => {
+            setForm(prev => ({
+              ...prev,
+              ruoloOrganizzazione: 'Operatore'
+            }));
+          }
+        },
+        {
+          text: "Amministratore",
+          onPress: () => {
+            setForm(prev => ({
+              ...prev,
+              ruoloOrganizzazione: 'Amministratore'
+            }));
+          }
+        }
+      ],
+      { cancelable: true }
+    );
   };
 
+  // Metodo per mostrare la selezione del tipo utente
+  const mostraSelezioneTipoUtente = () => {
+    if (form.tipologia !== 'utente') return;
+    
+    Alert.alert(
+      "Seleziona Tipo Utente",
+      "Scegli la tipologia di utente:",
+      [
+        {
+          text: "Privato",
+          onPress: () => {
+            setForm(prev => ({
+              ...prev,
+              tipoUtente: 'Privato'
+            }));
+          }
+        },
+        {
+          text: "Canale sociale",
+          onPress: () => {
+            setForm(prev => ({
+              ...prev,
+              tipoUtente: 'Canale sociale'
+            }));
+          }
+        },
+        {
+          text: "Centro riciclo",
+          onPress: () => {
+            setForm(prev => ({
+              ...prev,
+              tipoUtente: 'centro riciclo'
+            }));
+          }
+        }
+      ],
+      { cancelable: true }
+    );
+  };
+  
+  // Stato errori
+  const [errori, setErrori] = useState<ErroriForm>({
+    email: '',
+    password: '',
+    confermaPassword: '',
+    nome: '',
+    cognome: '',
+    tipologia: '',
+    ruoloOrganizzazione: '',
+    tipoUtente: '',
+    indirizzo: '',
+    telefono: '',
+  });
+
+  // Validazione email
   const validateEmail = () => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!email) {
-      setEmailError('L\'email è obbligatoria');
+    if (!form.email) {
+      setErrori(prev => ({ ...prev, email: 'Email obbligatoria' }));
       return false;
-    } else if (!emailRegex.test(email)) {
-      setEmailError('Inserisci un indirizzo email valido');
+    } else if (!emailRegex.test(form.email)) {
+      setErrori(prev => ({ ...prev, email: 'Email non valida' }));
       return false;
     }
-    setEmailError('');
+    setErrori(prev => ({ ...prev, email: '' }));
     return true;
   };
 
+  // Validazione password
   const validatePassword = () => {
-    if (!password) {
-      setPasswordError('La password è obbligatoria');
+    if (!form.password) {
+      setErrori(prev => ({ ...prev, password: 'Password obbligatoria' }));
       return false;
-    } else if (password.length < 6) {
-      setPasswordError('La password deve contenere almeno 6 caratteri');
+    } else if (form.password.length < 6) {
+      setErrori(prev => ({ ...prev, password: 'Password troppo corta (min 6 caratteri)' }));
       return false;
     }
-    setPasswordError('');
+    setErrori(prev => ({ ...prev, password: '' }));
     return true;
   };
 
-  const validateConfirmPassword = () => {
-    if (!confirmPassword) {
-      setConfirmPasswordError('Conferma la password');
+  // Validazione conferma password
+  const validateConfermaPassword = () => {
+    if (!form.confermaPassword) {
+      setErrori(prev => ({ ...prev, confermaPassword: 'Conferma password obbligatoria' }));
       return false;
-    } else if (confirmPassword !== password) {
-      setConfirmPasswordError('Le password non coincidono');
+    } else if (form.password !== form.confermaPassword) {
+      setErrori(prev => ({ ...prev, confermaPassword: 'Le password non coincidono' }));
       return false;
     }
-    setConfirmPasswordError('');
+    setErrori(prev => ({ ...prev, confermaPassword: '' }));
     return true;
   };
 
-  const handleRegister = async () => {
-    // Valida tutti i campi
-    const isNomeValid = validateNome();
-    const isCognomeValid = validateCognome();
+  // Validazione nome
+  const validateNome = () => {
+    if (!form.nome) {
+      setErrori(prev => ({ ...prev, nome: 'Nome obbligatorio' }));
+      return false;
+    }
+    setErrori(prev => ({ ...prev, nome: '' }));
+    return true;
+  };
+
+  // Validazione cognome
+  const validateCognome = () => {
+    if (!form.cognome) {
+      setErrori(prev => ({ ...prev, cognome: 'Cognome obbligatorio' }));
+      return false;
+    }
+    setErrori(prev => ({ ...prev, cognome: '' }));
+    return true;
+  };
+
+  // Validazione tipologia
+  const validateTipologia = () => {
+    if (!form.tipologia) {
+      setErrori(prev => ({ ...prev, tipologia: 'Seleziona una tipologia' }));
+      return false;
+    }
+    setErrori(prev => ({ ...prev, tipologia: '' }));
+    return true;
+  };
+
+  // Validazione ruolo organizzazione
+  const validateRuoloOrganizzazione = () => {
+    if (form.tipologia === 'organizzazione' && !form.ruoloOrganizzazione) {
+      setErrori(prev => ({ ...prev, ruoloOrganizzazione: 'Seleziona un ruolo' }));
+      return false;
+    }
+    setErrori(prev => ({ ...prev, ruoloOrganizzazione: '' }));
+    return true;
+  };
+
+  // Validazione tipo utente
+  const validateTipoUtente = () => {
+    if (form.tipologia === 'utente' && !form.tipoUtente) {
+      setErrori(prev => ({ ...prev, tipoUtente: 'Seleziona un tipo utente' }));
+      return false;
+    }
+    setErrori(prev => ({ ...prev, tipoUtente: '' }));
+    return true;
+  };
+
+  // Validazione indirizzo (solo per utenti)
+  const validateIndirizzo = () => {
+    if (form.tipologia === 'utente' && !form.indirizzo) {
+      setErrori(prev => ({ ...prev, indirizzo: 'Indirizzo obbligatorio' }));
+      return false;
+    }
+    setErrori(prev => ({ ...prev, indirizzo: '' }));
+    return true;
+  };
+
+  // Validazione telefono (solo per utenti)
+  const validateTelefono = () => {
+    if (form.tipologia === 'utente' && !form.telefono) {
+      setErrori(prev => ({ ...prev, telefono: 'Telefono obbligatorio' }));
+      return false;
+    }
+    setErrori(prev => ({ ...prev, telefono: '' }));
+    return true;
+  };
+
+  // Validazione completa del form
+  const validateForm = () => {
     const isEmailValid = validateEmail();
     const isPasswordValid = validatePassword();
-    const isConfirmPasswordValid = validateConfirmPassword();
+    const isConfermaPasswordValid = validateConfermaPassword();
+    const isNomeValid = validateNome();
+    const isCognomeValid = validateCognome();
+    const isTipologiaValid = validateTipologia();
+    const isRuoloOrganizzazioneValid = validateRuoloOrganizzazione();
+    const isTipoUtenteValid = validateTipoUtente();
+    const isIndirizzoValid = validateIndirizzo();
+    const isTelefonoValid = validateTelefono();
 
-    if (isNomeValid && isCognomeValid && isEmailValid && isPasswordValid && isConfirmPasswordValid) {
+    return (
+      isEmailValid &&
+      isPasswordValid &&
+      isConfermaPasswordValid &&
+      isNomeValid &&
+      isCognomeValid &&
+      isTipologiaValid &&
+      isRuoloOrganizzazioneValid &&
+      isTipoUtenteValid &&
+      isIndirizzoValid &&
+      isTelefonoValid
+    );
+  };
+
+  // Gestione della registrazione
+  const handleRegister = async () => {
+    // Controlla che tutti i campi necessari siano validi
+    const isValid = validateForm();
+    
+    if (!isValid) {
+      console.log('Form non valido, impossibile procedere');
+      Alert.alert('Attenzione', 'Verifica tutti i campi e riprova.');
+      return;
+    }
+
+    try {
       setIsLoading(true);
       
-      try {
-        // Per impostazione predefinita, registriamo gli utenti come "Operatore"
-        const userData = {
-          nome,
-          cognome,
-          email,
-          password,
-          ruolo: 'Operatore' // Ruolo predefinito
-        };
-        
-        // Step 1: Registra l'utente
-        logger.log('Avvio registrazione utente con email:', email);
-        const response = await registerUser(userData);
-        logger.log('Registrazione completata con successo:', response);
-        
-        // Step 2: Mostra un dialog che blocca l'interfaccia finché l'utente non lo conferma
+      // Aggiorno: passo tutti i parametri richiesti alla funzione register
+      const success = await register(
+        form.nome,
+        form.cognome,
+        form.email,
+        form.password,
+        form.tipologia,
+        form.ruoloOrganizzazione,
+        form.tipoUtente,
+        form.indirizzo,
+        form.telefono
+      );
+
+      console.log('Risultato registrazione:', success ? 'successo' : 'fallimento');
+      
+      if (success) {
+        // Mostra il dialogo di successo
         setSuccessDialogVisible(true);
-        
-      } catch (error: any) {
-        logger.error('Errore durante la registrazione:', error);
-        
-        // Mostra errore all'utente con un toast
-        Toast.show({
-          type: 'error',
-          text1: 'Registrazione fallita',
-          text2: error.message || 'Si è verificato un errore durante la registrazione',
-          visibilityTime: 6000,
-        });
-        
-        // Mostra anche un dialog di errore
-        setErrorMessage(error.message || 'Si è verificato un problema. Riprova più tardi.');
-        setErrorDialogVisible(true);
-      } finally {
-        setIsLoading(false);
       }
+    } catch (error) {
+      console.error('Errore durante la registrazione:', error);
+      
+      // Mostra messaggio di errore
+      setErrorMessage(typeof error === 'string' ? error : 'Si è verificato un errore durante la registrazione');
+      setErrorDialogVisible(true);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -147,8 +380,8 @@ const RegisterScreen = () => {
         visibilityTime: 3000,
       });
       
-      logger.log('Tentativo di login diretto dopo registrazione per:', email);
-      const loginSuccess = await login(email, password);
+      logger.log('Tentativo di login diretto dopo registrazione per:', form.email);
+      const loginSuccess = await login(form.email, form.password);
       
       if (loginSuccess) {
         logger.log('Login automatico riuscito, redirezione alla home');
@@ -161,7 +394,7 @@ const RegisterScreen = () => {
           visibilityTime: 4000,
         });
         
-        // Forza la navigazione alla home
+        // Forza la navigazione alla home con un ritardo per garantire che tutto sia pronto
         setTimeout(() => {
           router.replace('/');
         }, 500);
@@ -176,17 +409,21 @@ const RegisterScreen = () => {
       setErrorDialogVisible(true);
     }
   };
-  
+
   // Handler per reindirizzare alla pagina di login manuale
   const redirectToLogin = () => {
     setErrorDialogVisible(false);
-    router.replace({
-      pathname: "/",
-      params: { 
-        registrationSuccess: "true",
-        email: email
-      }
-    });
+    setSuccessDialogVisible(false);
+    // Utilizziamo setTimeout per assicurarci che i dialoghi siano chiusi prima della navigazione
+    setTimeout(() => {
+      router.replace({
+        pathname: "/",
+        params: { 
+          registrationSuccess: "true",
+          email: form.email
+        }
+      });
+    }, 300);
   };
   
   const goBack = () => {
@@ -213,153 +450,310 @@ const RegisterScreen = () => {
 
             <Card style={styles.formCard} elevation={5}>
               <Card.Content style={styles.formContainer}>
-                <Text style={styles.registerTitle}>Crea il tuo account</Text>
+                <Title style={styles.registerTitle}>Registrazione</Title>
                 <Divider style={styles.divider} />
                 
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    label="Nome"
-                    value={nome}
-                    onChangeText={setNome}
-                    onBlur={validateNome}
-                    error={!!nomeError}
-                    style={styles.input}
-                    mode="outlined"
-                    outlineColor={PRIMARY_COLOR}
-                    activeOutlineColor={PRIMARY_COLOR}
-                    left={<TextInput.Icon icon="account" />}
-                  />
-                  {nomeError ? <HelperText type="error">{nomeError}</HelperText> : null}
-                </View>
-
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    label="Cognome"
-                    value={cognome}
-                    onChangeText={setCognome}
-                    onBlur={validateCognome}
-                    error={!!cognomeError}
-                    style={styles.input}
-                    mode="outlined"
-                    outlineColor={PRIMARY_COLOR}
-                    activeOutlineColor={PRIMARY_COLOR}
-                    left={<TextInput.Icon icon="account" />}
-                  />
-                  {cognomeError ? <HelperText type="error">{cognomeError}</HelperText> : null}
+                {/* Pulsanti per la selezione diretta */}
+                <View style={styles.selectionButtonsContainer}>
+                  <Text style={styles.selectionInstructions}>È necessario selezionare la tipologia di utente per completare la registrazione:</Text>
+                  <Button
+                    mode="contained"
+                    onPress={mostraSelezioneTipologia}
+                    style={[styles.selectionButton, { backgroundColor: '#ff9800' }]}
+                    icon="account-question"
+                  >
+                    Seleziona Tipologia ({form.tipologia || 'Non selezionato'})
+                  </Button>
+                  
+                  {form.tipologia === 'organizzazione' && (
+                    <Button
+                      mode="contained"
+                      onPress={mostraSelezionRuoloOrg}
+                      style={[styles.selectionButton, { backgroundColor: '#2196f3' }]}
+                      icon="account-cog"
+                    >
+                      Seleziona Ruolo ({form.ruoloOrganizzazione || 'Non selezionato'})
+                    </Button>
+                  )}
+                  
+                  {form.tipologia === 'utente' && (
+                    <Button
+                      mode="contained"
+                      onPress={mostraSelezioneTipoUtente}
+                      style={[styles.selectionButton, { backgroundColor: '#2196f3' }]}
+                      icon="account-details"
+                    >
+                      Seleziona Tipo Utente ({form.tipoUtente || 'Non selezionato'})
+                    </Button>
+                  )}
                 </View>
                 
+                {/* Email */}
                 <View style={styles.inputWrapper}>
                   <TextInput
                     label="Email"
-                    value={email}
-                    onChangeText={setEmail}
+                    value={form.email}
+                    onChangeText={(text) => setForm(prev => ({ ...prev, email: text }))}
                     onBlur={validateEmail}
-                    error={!!emailError}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
+                    error={!!errori.email}
                     style={styles.input}
                     mode="outlined"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
                     outlineColor={PRIMARY_COLOR}
                     activeOutlineColor={PRIMARY_COLOR}
                     left={<TextInput.Icon icon="email" />}
                   />
-                  {emailError ? <HelperText type="error">{emailError}</HelperText> : null}
+                  {!!errori.email && <HelperText type="error">{errori.email}</HelperText>}
                 </View>
-
+                
+                {/* Password */}
                 <View style={styles.inputWrapper}>
                   <TextInput
                     label="Password"
-                    value={password}
-                    onChangeText={setPassword}
+                    value={form.password}
+                    onChangeText={(text) => setForm(prev => ({ ...prev, password: text }))}
                     onBlur={validatePassword}
-                    secureTextEntry={!passwordVisible}
-                    error={!!passwordError}
-                    style={styles.input}
+                    error={!!errori.password}
                     mode="outlined"
+                    secureTextEntry
+                    style={styles.input}
                     outlineColor={PRIMARY_COLOR}
                     activeOutlineColor={PRIMARY_COLOR}
                     left={<TextInput.Icon icon="lock" />}
-                    right={
-                      <TextInput.Icon
-                        icon={passwordVisible ? 'eye-off' : 'eye'}
-                        onPress={() => setPasswordVisible(!passwordVisible)}
-                      />
-                    }
                   />
-                  {passwordError ? <HelperText type="error">{passwordError}</HelperText> : null}
+                  {!!errori.password && <HelperText type="error">{errori.password}</HelperText>}
                 </View>
                 
+                {/* Conferma Password */}
                 <View style={styles.inputWrapper}>
                   <TextInput
                     label="Conferma Password"
-                    value={confirmPassword}
-                    onChangeText={setConfirmPassword}
-                    onBlur={validateConfirmPassword}
-                    secureTextEntry={!passwordVisible}
-                    error={!!confirmPasswordError}
-                    style={styles.input}
+                    value={form.confermaPassword}
+                    onChangeText={(text) => setForm(prev => ({ ...prev, confermaPassword: text }))}
+                    onBlur={validateConfermaPassword}
+                    error={!!errori.confermaPassword}
                     mode="outlined"
+                    secureTextEntry
+                    style={styles.input}
                     outlineColor={PRIMARY_COLOR}
                     activeOutlineColor={PRIMARY_COLOR}
                     left={<TextInput.Icon icon="lock-check" />}
                   />
-                  {confirmPasswordError ? <HelperText type="error">{confirmPasswordError}</HelperText> : null}
+                  {!!errori.confermaPassword && <HelperText type="error">{errori.confermaPassword}</HelperText>}
                 </View>
-
-                <Button
-                  mode="contained"
-                  onPress={handleRegister}
-                  loading={isLoading}
+                
+                {/* Nome */}
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    label="Nome"
+                    value={form.nome}
+                    onChangeText={(text) => setForm(prev => ({ ...prev, nome: text }))}
+                    onBlur={validateNome}
+                    error={!!errori.nome}
+                    mode="outlined"
+                    style={styles.input}
+                    outlineColor={PRIMARY_COLOR}
+                    activeOutlineColor={PRIMARY_COLOR}
+                    left={<TextInput.Icon icon="account" />}
+                  />
+                  {!!errori.nome && <HelperText type="error">{errori.nome}</HelperText>}
+                </View>
+                
+                {/* Cognome */}
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    label="Cognome"
+                    value={form.cognome}
+                    onChangeText={(text) => setForm(prev => ({ ...prev, cognome: text }))}
+                    onBlur={validateCognome}
+                    error={!!errori.cognome}
+                    mode="outlined"
+                    style={styles.input}
+                    outlineColor={PRIMARY_COLOR}
+                    activeOutlineColor={PRIMARY_COLOR}
+                    left={<TextInput.Icon icon="account" />}
+                  />
+                  {!!errori.cognome && <HelperText type="error">{errori.cognome}</HelperText>}
+                </View>
+                
+                {/* Selezione tipologia - Migliorata UI */}
+                <Subheading style={styles.sectionTitle}>Seleziona Tipologia</Subheading>
+                
+                <View style={styles.radioContainer}>
+                  <RadioButton.Group
+                    onValueChange={(value) => {
+                      setForm(prev => ({
+                        ...prev,
+                        tipologia: value as 'organizzazione' | 'utente',
+                        // Reset dei campi quando cambia la tipologia
+                        ruoloOrganizzazione: null,
+                        tipoUtente: null,
+                        indirizzo: '',
+                        telefono: ''
+                      }));
+                      validateTipologia();
+                    }}
+                    value={form.tipologia || ''}
+                  >
+                    <View style={styles.radioOption}>
+                      <RadioButton value="organizzazione" color={PRIMARY_COLOR} />
+                      <Text style={styles.radioLabel}>Organizzazione</Text>
+                    </View>
+                    <View style={styles.radioOption}>
+                      <RadioButton value="utente" color={PRIMARY_COLOR} />
+                      <Text style={styles.radioLabel}>Utente</Text>
+                    </View>
+                  </RadioButton.Group>
+                </View>
+                {!!errori.tipologia && <HelperText type="error">{errori.tipologia}</HelperText>}
+                
+                {/* Opzioni specifiche per Organizzazione - Migliorata UI */}
+                {form.tipologia === 'organizzazione' && (
+                  <View style={styles.subSelectionContainer}>
+                    <Subheading style={styles.sectionTitle}>Seleziona Ruolo nell'Organizzazione</Subheading>
+                    
+                    <View style={styles.radioContainer}>
+                      <RadioButton.Group
+                        onValueChange={(value) => {
+                          setForm(prev => ({
+                            ...prev,
+                            ruoloOrganizzazione: value as 'Operatore' | 'Amministratore'
+                          }));
+                          validateRuoloOrganizzazione();
+                        }}
+                        value={form.ruoloOrganizzazione || ''}
+                      >
+                        <View style={styles.radioOption}>
+                          <RadioButton value="Operatore" color={PRIMARY_COLOR} />
+                          <Text style={styles.radioLabel}>Operatore</Text>
+                        </View>
+                        <View style={styles.radioOption}>
+                          <RadioButton value="Amministratore" color={PRIMARY_COLOR} />
+                          <Text style={styles.radioLabel}>Amministratore</Text>
+                        </View>
+                      </RadioButton.Group>
+                    </View>
+                    {!!errori.ruoloOrganizzazione && <HelperText type="error">{errori.ruoloOrganizzazione}</HelperText>}
+                  </View>
+                )}
+                
+                {/* Opzioni specifiche per Utente - Migliorata UI */}
+                {form.tipologia === 'utente' && (
+                  <View style={styles.subSelectionContainer}>
+                    <Subheading style={styles.sectionTitle}>Seleziona Tipo Utente</Subheading>
+                    
+                    <View style={styles.radioContainer}>
+                      <RadioButton.Group
+                        onValueChange={(value) => {
+                          setForm(prev => ({
+                            ...prev,
+                            tipoUtente: value as 'Privato' | 'Canale sociale' | 'centro riciclo'
+                          }));
+                          validateTipoUtente();
+                        }}
+                        value={form.tipoUtente || ''}
+                      >
+                        <View style={styles.radioOption}>
+                          <RadioButton value="Privato" color={PRIMARY_COLOR} />
+                          <Text style={styles.radioLabel}>Privato</Text>
+                        </View>
+                        <View style={styles.radioOption}>
+                          <RadioButton value="Canale sociale" color={PRIMARY_COLOR} />
+                          <Text style={styles.radioLabel}>Canale sociale</Text>
+                        </View>
+                        <View style={styles.radioOption}>
+                          <RadioButton value="centro riciclo" color={PRIMARY_COLOR} />
+                          <Text style={styles.radioLabel}>Centro riciclo</Text>
+                        </View>
+                      </RadioButton.Group>
+                    </View>
+                    {!!errori.tipoUtente && <HelperText type="error">{errori.tipoUtente}</HelperText>}
+                    
+                    <Subheading style={styles.sectionTitle}>Dati Aggiuntivi</Subheading>
+                    
+                    <TextInput
+                      label="Indirizzo"
+                      value={form.indirizzo}
+                      onChangeText={(text) => setForm(prev => ({ ...prev, indirizzo: text }))}
+                      onBlur={validateIndirizzo}
+                      error={!!errori.indirizzo}
+                      mode="outlined"
+                      style={styles.input}
+                      outlineColor={PRIMARY_COLOR}
+                      activeOutlineColor={PRIMARY_COLOR}
+                      left={<TextInput.Icon icon="map-marker" />}
+                    />
+                    {!!errori.indirizzo && <HelperText type="error">{errori.indirizzo}</HelperText>}
+                    
+                    <TextInput
+                      label="Telefono"
+                      value={form.telefono}
+                      onChangeText={(text) => setForm(prev => ({ ...prev, telefono: text }))}
+                      onBlur={validateTelefono}
+                      error={!!errori.telefono}
+                      mode="outlined"
+                      keyboardType="phone-pad"
+                      style={styles.input}
+                      outlineColor={PRIMARY_COLOR}
+                      activeOutlineColor={PRIMARY_COLOR}
+                      left={<TextInput.Icon icon="phone" />}
+                    />
+                    {!!errori.telefono && <HelperText type="error">{errori.telefono}</HelperText>}
+                  </View>
+                )}
+                
+                <Button 
+                  mode="contained" 
+                  onPress={handleRegister} 
+                  loading={isLoading} 
                   disabled={isLoading}
-                  style={styles.registerButton}
-                  buttonColor={PRIMARY_COLOR}
-                  icon="account-plus"
+                  style={styles.button}
                 >
                   Registrati
                 </Button>
                 
-                <Button
-                  mode="text"
-                  onPress={goBack}
-                  style={styles.loginButton}
-                >
-                  Hai già un account? Accedi
-                </Button>
+                <Link href="/" asChild>
+                  <Button 
+                    mode="text" 
+                    style={styles.linkButton}
+                  >
+                    Hai già un account? Accedi
+                  </Button>
+                </Link>
               </Card.Content>
             </Card>
-            
-            <View style={styles.footer}>
-              <Text style={styles.footerText}>© 2025 Refood App - Tutti i diritti riservati</Text>
-            </View>
           </ScrollView>
         </KeyboardAvoidingView>
-        
-        {/* Dialog di successo */}
-        <Portal>
-          <Dialog visible={successDialogVisible} dismissable={false}>
-            <Dialog.Title>Registrazione completata</Dialog.Title>
-            <Dialog.Content>
-              <Paragraph>Registrazione completata con successo! Vuoi accedere automaticamente?</Paragraph>
-            </Dialog.Content>
-            <Dialog.Actions>
-              <Button onPress={handleAutoLogin}>Accedi</Button>
-            </Dialog.Actions>
-          </Dialog>
-        </Portal>
-        
-        {/* Dialog di errore */}
-        <Portal>
-          <Dialog visible={errorDialogVisible} dismissable={false}>
-            <Dialog.Title>Errore</Dialog.Title>
-            <Dialog.Content>
-              <Paragraph>{errorMessage}</Paragraph>
-            </Dialog.Content>
-            <Dialog.Actions>
-              <Button onPress={redirectToLogin}>OK</Button>
-            </Dialog.Actions>
-          </Dialog>
-        </Portal>
       </ImageBackground>
+      
+      {/* Success Dialog */}
+      <Portal>
+        <Dialog visible={successDialogVisible} dismissable={false}>
+          <Dialog.Title>Registrazione Completata</Dialog.Title>
+          <Dialog.Content>
+            <Paragraph>Il tuo account è stato creato con successo!</Paragraph>
+            <Paragraph>Vuoi effettuare l'accesso automaticamente?</Paragraph>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={redirectToLogin}>No, vai al login</Button>
+            <Button onPress={handleAutoLogin} mode="contained">Si, accedi ora</Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+      
+      {/* Error Dialog */}
+      <Portal>
+        <Dialog visible={errorDialogVisible} dismissable={true} onDismiss={() => setErrorDialogVisible(false)}>
+          <Dialog.Title>Si è verificato un errore</Dialog.Title>
+          <Dialog.Content>
+            <Paragraph>{errorMessage}</Paragraph>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={redirectToLogin}>Vai al login</Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
     </View>
   );
 };
@@ -370,13 +764,14 @@ const styles = StyleSheet.create({
   },
   backgroundImage: {
     flex: 1,
+    justifyContent: 'center',
   },
   container: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   scrollView: {
     flexGrow: 1,
+    justifyContent: 'center',
     padding: 20,
   },
   logoContainer: {
@@ -387,58 +782,105 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: 'bold',
     color: '#fff',
-    marginTop: 5,
+    marginVertical: 8,
   },
   tagline: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#fff',
     textAlign: 'center',
-    opacity: 0.8,
-    marginTop: 5,
+    marginBottom: 10,
   },
   formCard: {
-    borderRadius: 12,
+    borderRadius: 10,
     overflow: 'hidden',
-    backgroundColor: '#fff',
   },
   formContainer: {
-    padding: 16,
+    padding: 10,
   },
   registerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: PRIMARY_COLOR,
     textAlign: 'center',
-    marginBottom: 8,
+    marginBottom: 5,
+    color: PRIMARY_COLOR,
   },
   divider: {
+    marginBottom: 15,
     height: 1,
-    marginBottom: 16,
-    backgroundColor: '#e0e0e0',
+    backgroundColor: PRIMARY_COLOR,
   },
   inputWrapper: {
-    marginBottom: 10,
+    marginBottom: 12,
   },
   input: {
-    backgroundColor: '#fff',
+    marginBottom: 4,
+    backgroundColor: 'white',
   },
-  registerButton: {
-    marginTop: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  loginButton: {
-    marginTop: 10,
-  },
-  footer: {
+  button: {
     marginTop: 20,
-    alignItems: 'center',
+    paddingVertical: 8,
+    backgroundColor: PRIMARY_COLOR,
   },
-  footerText: {
-    color: '#fff',
-    fontSize: 12,
-    opacity: 0.7,
+  linkButton: {
+    marginTop: 15,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginTop: 16,
+    marginBottom: 12,
+    color: PRIMARY_COLOR,
+    textAlign: 'center',
+    backgroundColor: '#f0f8f0',
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  radioContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    elevation: 3,
+  },
+  radioOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#f5f5f5',
+    marginBottom: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  radioLabel: {
+    marginLeft: 8,
+    fontSize: 16,
+    flex: 1,
+  },
+  subSelectionContainer: {
+    backgroundColor: '#f5f5f5',
+    padding: 16,
+    borderRadius: 8,
+    marginTop: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  selectionButtonsContainer: {
+    marginBottom: 20,
+  },
+  selectionButton: {
+    marginBottom: 8,
+    padding: 5,
+  },
+  selectionInstructions: {
+    marginBottom: 8,
+    fontWeight: 'bold',
+    color: PRIMARY_COLOR,
+    fontSize: 16,
   },
 });
 
-export default RegisterScreen; 
+export default RegisterScreen;

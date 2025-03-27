@@ -15,6 +15,8 @@ import Toast from 'react-native-toast-message';
 import logger from '../src/utils/logger';
 import { listenEvent, APP_EVENTS } from '../src/utils/events';
 import { emitEvent } from '../src/utils/events';
+import { useFonts } from 'expo-font';
+import { useColorScheme } from 'react-native';
 
 // Definizione del tema personalizzato per react-native-paper
 const theme = {
@@ -26,19 +28,82 @@ const theme = {
   },
 };
 
+// Aggiungo una utility per verificare se siamo in ambiente SSR e gestire AsyncStorage in modo sicuro
+const isSSR = () => typeof window === 'undefined';
+
+// Wrapper sicuro per AsyncStorage che gestisce l'ambiente SSR
+const safeAsyncStorage = {
+  getItem: async (key: string): Promise<string | null> => {
+    if (isSSR()) {
+      console.log('Ambiente SSR: AsyncStorage.getItem non disponibile');
+      return null;
+    }
+    try {
+      return await AsyncStorage.getItem(key);
+    } catch (error) {
+      console.error(`Errore in AsyncStorage.getItem(${key}):`, error);
+      return null;
+    }
+  }
+};
+
 // Componente RootLayout che definisce la struttura principale dell'app
 export default function RootLayout() {
   return (
     <PaperProvider theme={theme}>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <AuthProvider>
-          {/* Utilizziamo un wrapper View per isolare l'AuthProvider */}
-          <AuthProviderInitializer>
-            <Toast />
-          </AuthProviderInitializer>  
+          <NavigationStructure />
         </AuthProvider>
       </GestureHandlerRootView>
     </PaperProvider>
+  );
+}
+
+// Componente per gestire la navigazione dopo che AuthProvider è inizializzato
+function NavigationStructure() {
+  const { isAuthenticated } = useAuth();
+
+  return (
+    <NotificheProvider>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="home/index" />
+        <Stack.Screen name="dashboard/index" />
+        <Stack.Screen name="prenotazioni/index" />
+        <Stack.Screen name="prenotazioni/dettaglio/[id]" />
+        <Stack.Screen name="prenotazioni/conferma/[id]" />
+        <Stack.Screen name="prenotazioni/termini" />
+        <Stack.Screen name="lotti/index" />
+        <Stack.Screen name="lotti/visualizza/[id]" />
+        <Stack.Screen name="lotti/aggiungi" />
+        <Stack.Screen name="lotti/modifica/[id]" />
+        <Stack.Screen name="statistiche/index" />
+        <Stack.Screen name="notifiche/index" />
+        <Stack.Screen name="notifiche/[id]" />
+        <Stack.Screen name="utenti/profilo" />
+        <Stack.Screen name="utenti/impostazioni" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen
+          name="login/index"
+          options={{
+            animationTypeForReplace: isAuthenticated ? 'pop' : 'push',
+          }}
+        />
+        <Stack.Screen 
+          name="registrazione/index" 
+          options={{ 
+            animation: 'slide_from_right'
+          }} 
+        />
+        <Stack.Screen 
+          name="recupero-password/index" 
+          options={{ 
+            animation: 'slide_from_right' 
+          }} 
+        />
+      </Stack>
+      <Toast />
+    </NotificheProvider>
   );
 }
 
@@ -360,8 +425,8 @@ function RootLayoutNav() {
       (async () => {
         try {
           // Controlla se abbiamo dati utente locali
-          const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-          const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+          const userData = await safeAsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+          const token = await safeAsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
           
           // Se abbiamo dati utente e token, ma lo stato è non autenticato, prova a forzare un refresh
           if (userData && token && !isAuthenticated) {
@@ -385,18 +450,31 @@ function RootLayoutNav() {
   // Se l'utente è autenticato, mostra il contenuto principale dell'app
   logger.log('RootLayoutNav - Utente autenticato, mostrando (tabs)');
   return (
-    <Stack 
-      screenOptions={{ 
-        headerShown: false,
-        // Disabilita le animazioni tra le schermate per ridurre le possibilità di errori di navigazione
-        animation: 'none'
-      }}
-    >
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="admin" options={{ headerShown: false }} />
-      <Stack.Screen name="lotti/nuovo" options={{ headerShown: false }} />
-      <Stack.Screen name="notifiche/index" options={{ headerShown: false }} />
-      <Stack.Screen name="notifiche/[id]" options={{ headerShown: false }} />
+    <Stack>
+      <Stack.Screen 
+        name="index"
+        options={{
+          headerShown: false
+        }}
+      />
+      <Stack.Screen 
+        name="home/index"
+        options={{
+          headerShown: false
+        }}
+      />
+      <Stack.Screen 
+        name="dashboard/index"
+        options={{
+          headerShown: false
+        }}
+      />
+      <Stack.Screen 
+        name="(tabs)"
+        options={{
+          headerShown: false
+        }}
+      />
     </Stack>
   );
 }

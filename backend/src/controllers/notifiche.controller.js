@@ -12,8 +12,8 @@ async function trovaTipoUtenteConAmministratori() {
   try {
     // Prima troviamo tutti i centri
     const centri = await db.all(`
-      SELECT c.id, c.nome, c.tipo,
-        (SELECT COUNT(*) FROM AttoriTipo_Utente uc 
+      SELECT c.id, c.tipo, c.indirizzo,
+        (SELECT COUNT(*) FROM AttoriTipoUtente uc 
          JOIN Attori u ON uc.attore_id = u.id 
          WHERE uc.tipo_utente_id = c.id AND u.ruolo = 'Amministratore') AS num_amministratori
       FROM Tipo_Utente c
@@ -55,62 +55,34 @@ async function trovaTipoUtenteConAmministratori() {
 exports.getNotifiche = async (req, res, next) => {
   try {
     const userId = req.user.id;
-    const { page = 1, limit = 20, tipo, priorita, letta } = req.query;
+    const { page = 1, limit = 20, tipo, priorita, letta, sort = 'creato_il', order = 'DESC' } = req.query;
     const offset = (page - 1) * limit;
     
     logger.info(`Richiesta notifiche per attore ${userId} con filtri: ${JSON.stringify(req.query)}`);
     
-    // Costruzione della query di base
-    let query = `
-      SELECT 
-        n.*,
-        u.nome AS origine_nome,
-        u.cognome AS origine_cognome,
-        c.nome AS centro_nome
+    // Prima conteggio il totale per la paginazione
+    const totale = await db.get(`
+      SELECT COUNT(*) as total
       FROM Notifiche n
       LEFT JOIN Attori u ON n.origine_id = u.id
       LEFT JOIN Tipo_Utente c ON n.tipo_utente_id = c.id
       WHERE n.destinatario_id = ? AND n.eliminato = 0
-    `;
+    `, [userId]);
     
-    // Array per i parametri della query
-    const params = [userId];
-    
-    // Aggiunta dei filtri
-    if (tipo) {
-      query += ` AND n.tipo = ?`;
-      params.push(tipo);
-    }
-    
-    if (priorita) {
-      query += ` AND n.priorita = ?`;
-      params.push(priorita);
-    }
-    
-    if (letta !== undefined) {
-      query += ` AND n.letto = ?`;
-      params.push(letta === 'true' ? 1 : 0);
-    }
-    
-    // Query per il conteggio totale
-    const countQuery = query.replace(
-      'SELECT \n        n.*,\n        u.nome AS origine_nome,\n        u.cognome AS origine_cognome,\n        c.nome AS centro_nome', 
-      'SELECT COUNT(*) as total'
+    // Recupero le notifiche
+    const notifiche = await db.all(`
+      SELECT 
+        n.*,
+        u.nome AS origine_nome,
+        u.cognome AS origine_cognome,
+        c.tipo AS centro_nome
+      FROM Notifiche n
+      LEFT JOIN Attori u ON n.origine_id = u.id
+      LEFT JOIN Tipo_Utente c ON n.tipo_utente_id = c.id
+      WHERE n.destinatario_id = ? AND n.eliminato = 0
+     ORDER BY n.${sort} ${order} LIMIT ? OFFSET ?`, 
+      [userId, limit, offset]
     );
-    
-    // Esecuzione della query di conteggio
-    const countResult = await db.get(countQuery, params);
-    const total = countResult ? countResult.total : 0;
-    
-    // Calcolo della paginazione
-    const totalPages = Math.ceil(total / limit);
-    
-    // Aggiunta dell'ordinamento e della paginazione
-    query += ` ORDER BY n.creato_il DESC LIMIT ? OFFSET ?`;
-    params.push(parseInt(limit), offset);
-    
-    // Esecuzione della query principale
-    const notifiche = await db.all(query, params);
     
     // Formattazione della risposta
     const formattedNotifiche = notifiche.map(n => ({
@@ -142,9 +114,9 @@ exports.getNotifiche = async (req, res, next) => {
     res.json({
       data: formattedNotifiche,
       pagination: {
-        total,
+        total: totale.total,
         currentPage: parseInt(page),
-        totalPages
+        totalPages: Math.ceil(totale.total / limit)
       }
     });
   } catch (error) {
@@ -169,7 +141,7 @@ exports.getNotificaById = async (req, res, next) => {
         n.*,
         u.nome AS origine_nome,
         u.cognome AS origine_cognome,
-        c.nome AS centro_nome
+        c.tipo AS centro_nome
       FROM Notifiche n
       LEFT JOIN Attori u ON n.origine_id = u.id
       LEFT JOIN Tipo_Utente c ON n.tipo_utente_id = c.id

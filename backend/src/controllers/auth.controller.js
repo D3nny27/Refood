@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const db = require('../config/database');
 const { ApiError } = require('../middlewares/errorHandler');
 const logger = require('../utils/logger');
+const config = require('../config/config');
 
 // Verifica moduli
 logger.info('Moduli caricati:', {
@@ -390,85 +391,191 @@ const revokeSession = async (req, res, next) => {
 };
 
 /**
- * Registra un nuovo attore
- * @route POST /api/v1/auth/register
+ * Registra un nuovo attore nel sistema
+ * Supporta due flussi:
+ * 1. Registrazione come Organizzazione (ruolo = Operatore o Amministratore)
+ * 2. Registrazione come Utente con associazione a un specifico Tipo_Utente
  */
 const register = async (req, res, next) => {
-  const { nome, cognome, email, password, ruolo = 'Operatore' } = req.body;
+  const { email, password, nome, cognome, ruolo, tipoUtente } = req.body;
+  
+  // Verifica campi obbligatori
+  if (!email || !password || !nome || !cognome || !ruolo) {
+    return next(new ApiError(400, 'Tutti i campi sono obbligatori'));
+  }
+  
+  // Verifica che il ruolo sia valido
+  const ruoliValidi = ['Operatore', 'Amministratore', 'Utente'];
+  if (!ruoliValidi.includes(ruolo)) {
+    return next(new ApiError(400, `Ruolo non valido. Valori consentiti: ${ruoliValidi.join(', ')}`));
+  }
+  
+  // Validazioni aggiuntive per ruolo Utente
+  if (ruolo === 'Utente' && !tipoUtente) {
+    return next(new ApiError(400, 'È necessario specificare il tipo utente'));
+  }
+  
+  if (ruolo === 'Utente' && !tipoUtente.tipo) {
+    return next(new ApiError(400, 'È necessario specificare il tipo di utente (Privato, Canale sociale, centro riciclo)'));
+  }
+  
+  if (ruolo === 'Utente' && !tipoUtente.indirizzo) {
+    return next(new ApiError(400, 'È necessario specificare l\'indirizzo'));
+  }
 
   try {
-    // Verifica se l'email è già registrata
-    const [existingUser] = await db.all(
-      'SELECT * FROM Attori WHERE email = ?',
-      [email]
-    );
-
-    if (existingUser) {
-      throw new ApiError(409, 'Email già registrata');
+    // Verifica che l'email non sia già registrata
+    const esistenteEmail = await db.get('SELECT id FROM Attori WHERE email = ?', [email]);
+    if (esistenteEmail) {
+      return next(new ApiError(409, 'Email già registrata'));
     }
-
-    // Codifica la password
+    
+    // Encrypt password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
     
-    // Trova l'amministratore di sistema per impostarlo come creatore dell'attore
-    const [admin] = await db.all(
-      'SELECT id FROM Attori WHERE ruolo = ? LIMIT 1',
-      ['Amministratore']
+    // Inizia transazione
+    await db.run('BEGIN TRANSACTION');
+    
+    // Inserisci il nuovo attore
+    const resultAttore = await db.run(
+      `INSERT INTO Attori (email, password, nome, cognome, ruolo, creato_il) 
+       VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+      [email, hashedPassword, nome, cognome, ruolo]
     );
     
-    const creato_da = admin ? admin.id : null;
-
-    // Determina il ruolo effettivo - limita i ruoli disponibili per la registrazione normale
-    let ruoloEffettivo = 'Operatore';
-    if (ruolo) {
-      // Mappa i ruoli dal formato API al formato database
-      const ruoloMap = {
-        'UTENTE': 'Operatore',
-        'CENTRO_SOCIALE': 'CentroSociale',
-        'CENTRO_RICICLAGGIO': 'CentroRiciclaggio',
-        'Operatore': 'Operatore',
-        'CentroSociale': 'CentroSociale',
-        'CentroRiciclaggio': 'CentroRiciclaggio'
-      };
+    const nuovoAttoreId = resultAttore.lastID;
+    
+    // Se il ruolo è Utente, crea anche il tipo utente associato
+    if (ruolo === 'Utente') {
+      const { tipo, indirizzo, telefono } = tipoUtente;
       
-      if (ruoloMap[ruolo]) {
-        ruoloEffettivo = ruoloMap[ruolo];
+      // Valida il tipo
+      const tipiValidi = ['Privato', 'Canale sociale', 'centro riciclo'];
+      if (!tipiValidi.includes(tipo)) {
+        await db.run('ROLLBACK');
+        return next(new ApiError(400, `Tipo non valido. Valori consentiti: ${tipiValidi.join(', ')}`));
       }
+      
+      // Inserisci il nuovo Tipo_Utente
+      const resultTipoUtente = await db.run(
+        `INSERT INTO Tipo_Utente (tipo, indirizzo, telefono, email, creato_il) 
+         VALUES (?, ?, ?, ?, datetime('now'))`,
+        [tipo, indirizzo, telefono || null, tipoUtente.email || email]
+      );
+      
+      const nuovoTipoUtenteId = resultTipoUtente.lastID;
+      
+      // Crea associazione nella tabella AttoriTipoUtente
+      await db.run(
+        `INSERT INTO AttoriTipoUtente (attore_id, tipo_utente_id, data_inizio) 
+         VALUES (?, ?, datetime('now'))`,
+        [nuovoAttoreId, nuovoTipoUtenteId]
+      );
     }
-
-    // Inserisci l'attore nel database
-    const result = await db.run(
-      `INSERT INTO Attori (nome, cognome, email, password, ruolo, creato_da, creato_il, ultimo_accesso) 
-       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), NULL)`,
-      [nome, cognome, email, hashedPassword, ruoloEffettivo, creato_da]
+    
+    // Commit della transazione
+    await db.run('COMMIT');
+    
+    // Genera token per login immediato
+    const tokenPayload = { id: nuovoAttoreId, email: email, ruolo: ruolo };
+    const jwtAccessTokenDurata = await getParametroSistema('jwt_access_token_durata', 3600);
+    const jwtRefreshTokenDurata = await getParametroSistema('jwt_refresh_token_durata', 604800);
+    
+    const accessToken = jwt.sign(tokenPayload, config.jwt.secret, { expiresIn: jwtAccessTokenDurata });
+    const refreshToken = jwt.sign(tokenPayload, config.jwt.refreshSecret, { expiresIn: jwtRefreshTokenDurata });
+    
+    const accessTokenScadenza = new Date();
+    accessTokenScadenza.setSeconds(accessTokenScadenza.getSeconds() + parseInt(jwtAccessTokenDurata));
+    
+    const refreshTokenScadenza = new Date();
+    refreshTokenScadenza.setSeconds(refreshTokenScadenza.getSeconds() + parseInt(jwtRefreshTokenDurata));
+    
+    // Registra i token nel DB
+    await db.run(
+      `INSERT INTO TokenAutenticazione (
+        attore_id, 
+        access_token, 
+        refresh_token, 
+        access_token_scadenza, 
+        refresh_token_scadenza,
+        device_info,
+        ip_address,
+        creato_il
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      [
+        nuovoAttoreId,
+        crypto.createHash('sha256').update(accessToken).digest('hex'),
+        crypto.createHash('sha256').update(refreshToken).digest('hex'),
+        accessTokenScadenza.toISOString(),
+        refreshTokenScadenza.toISOString(),
+        req.headers['user-agent'] || 'Unknown',
+        req.ip || 'Unknown'
+      ]
     );
-
-    if (!result.lastID) {
-      throw new ApiError(500, 'Errore durante la registrazione');
+    
+    // Prepara risposta con dati basilari dell'attore
+    const attore = {
+      id: nuovoAttoreId,
+      email,
+      nome,
+      cognome,
+      ruolo
+    };
+    
+    // Aggiungi informazioni sul tipo utente se applicabile
+    if (ruolo === 'Utente') {
+      attore.tipoUtente = {
+        tipo: tipoUtente.tipo,
+        indirizzo: tipoUtente.indirizzo
+      };
     }
-
-    // Leggi l'attore appena creato per includerlo nella risposta (senza la password)
-    const [newUser] = await db.all(
-      'SELECT id, nome, cognome, email, ruolo FROM Attori WHERE id = ?',
-      [result.lastID]
-    );
-
-    logger.info(`Nuovo attore registrato: ${email} (ID: ${result.lastID})`);
-
-    // Restituisci la risposta di successo
-    return res.status(201).json({
-      status: 'success',
-      message: 'Utente registrato con successo',
+    
+    res.status(201).json({
       success: true,
+      message: 'Registrazione completata con successo',
       data: {
-        user: newUser
+        attore,
+        tokens: {
+          accessToken,
+          refreshToken,
+          expiresIn: jwtAccessTokenDurata
+        }
       }
     });
-  } catch (error) {
-    next(error);
+    
+  } catch (err) {
+    // Rollback in caso di errore
+    try {
+      await db.run('ROLLBACK');
+    } catch (rollbackErr) {
+      logger.error(`Errore durante il rollback: ${rollbackErr.message}`);
+    }
+    
+    logger.error(`Errore durante la registrazione: ${err.message}`);
+    next(new ApiError(500, 'Errore durante la registrazione'));
   }
 };
+
+/**
+ * Ottiene un parametro di sistema dal database
+ * @param {string} chiave - Chiave del parametro
+ * @param {*} defaultValue - Valore di default se il parametro non esiste
+ * @returns {Promise<string>} - Valore del parametro
+ */
+async function getParametroSistema(chiave, defaultValue) {
+  try {
+    const parametro = await db.get(
+      'SELECT valore FROM ParametriSistema WHERE chiave = ?',
+      [chiave]
+    );
+    
+    return parametro ? parametro.valore : defaultValue.toString();
+  } catch (err) {
+    logger.error(`Errore nel recupero del parametro ${chiave}: ${err.message}`);
+    return defaultValue.toString();
+  }
+}
 
 module.exports = {
   login,

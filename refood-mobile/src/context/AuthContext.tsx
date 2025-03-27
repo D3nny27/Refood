@@ -27,7 +27,17 @@ interface AuthContextType {
   isLoading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<boolean>;
-  register: (nome: string, cognome: string, email: string, password: string) => Promise<boolean>;
+  register: (
+    nome: string, 
+    cognome: string, 
+    email: string, 
+    password: string, 
+    tipologia: 'organizzazione' | 'utente' | null,
+    ruoloOrganizzazione: string | null,
+    tipoUtente: string | null,
+    indirizzo?: string,
+    telefono?: string
+  ) => Promise<boolean>;
   logout: () => Promise<void>;
   clearError: () => void;
   refreshUserStatus: () => Promise<void>;
@@ -488,19 +498,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Funzione per registrare un nuovo utente
-  const register = async (nome: string, cognome: string, email: string, password: string): Promise<boolean> => {
+  const register = async (
+    nome: string, 
+    cognome: string, 
+    email: string, 
+    password: string,
+    tipologia: 'organizzazione' | 'utente' | null,
+    ruoloOrganizzazione: string | null,
+    tipoUtente: string | null,
+    indirizzo?: string,
+    telefono?: string
+  ): Promise<boolean> => {
     try {
       setIsLoading(true);
       clearError();
       
       // Chiama il servizio di registrazione con i dati correttamente formattati
-      const userData = {
+      const userData: any = {
         nome,
         cognome,
         email,
         password,
-        ruolo: 'UTENTE' // Impostiamo un ruolo di default per i nuovi utenti
+        ruolo: tipologia === 'organizzazione' ? ruoloOrganizzazione : 'UTENTE'
       };
+      
+      // Aggiungi i dati specifici del tipo utente se sono disponibili
+      if (tipologia === 'utente' && tipoUtente) {
+        userData.tipoUtente = {
+          tipo: tipoUtente,
+          indirizzo: indirizzo || '',
+          telefono: telefono || '',
+          email: email
+        };
+      }
+      
+      logger.log('Invio dati registrazione:', userData);
       
       // Passa l'oggetto userData alla funzione registerUser
       const response = await registerUser(userData);

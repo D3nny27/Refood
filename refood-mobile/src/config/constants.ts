@@ -56,12 +56,80 @@ export const STORAGE_KEYS = {
   LOCAL_NOTIFICATIONS: 'local_notifications', // Per salvare le notifiche locali
 };
 
+// Definizione dei colori principali dell'applicazione
+export const COLORI = {
+  primario: '#4CAF50',        // Verde principale
+  primarioScuro: '#388E3C',   // Verde scuro
+  primarioChiaro: '#A5D6A7',  // Verde chiaro
+  secondario: '#FFC107',      // Ambra
+  secondarioScuro: '#FFA000', // Ambra scuro
+  secondarioChiaro: '#FFECB3', // Ambra chiaro
+  sfondo: '#F5F5F5',          // Grigio chiaro per sfondo
+  testoPrimario: '#212121',   // Nero per testo primario
+  testoSecondario: '#757575', // Grigio per testo secondario
+  divider: '#BDBDBD',         // Grigio per divisori
+  error: '#D32F2F',           // Rosso per errori
+  success: '#388E3C',         // Verde per successi
+  warning: '#FFA000',         // Ambra per avvisi
+  info: '#1976D2',            // Blu per informazioni
+};
+
 // Ruoli utente
 export const RUOLI = {
   AMMINISTRATORE: 'Amministratore',
   OPERATORE: 'Operatore',
-  CENTRO_SOCIALE: 'CentroSociale',
-  CENTRO_RICICLAGGIO: 'CentroRiciclaggio',
+  UTENTE: 'Utente',
+};
+
+// Tipi utente
+export const TIPI_UTENTE = {
+  PRIVATO: 'Privato',
+  CANALE_SOCIALE: 'Canale sociale',
+  CENTRO_RICICLO: 'centro riciclo',
+};
+
+// Configurazione della navigazione
+export const ROUTES = {
+  HOME: 'Home',
+  LOGIN: 'Login',
+  REGISTRAZIONE: 'Registrazione',
+  PROFILO: 'Profilo',
+  TIPI_UTENTE: 'TipiUtente',
+  TIPI_UTENTE_DETTAGLIO: 'TipiUtenteDettaglio',
+  TIPI_UTENTE_MODIFICA: 'TipiUtenteModifica',
+  TIPI_UTENTE_NUOVO: 'TipiUtenteNuovo',
+  ATTORI: 'Attori',
+  ATTORI_DETTAGLIO: 'AttoriDettaglio',
+};
+
+// Configurazioni per validazioni
+export const VALIDAZIONI = {
+  PASSWORD_MIN_LENGTH: 8,
+  EMAIL_REGEX: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+  TELEFONO_REGEX: /^[0-9]{9,10}$/,
+};
+
+// Altre configurazioni dell'applicazione
+export const CONFIG = {
+  // Configurazioni per la paginazione
+  ITEMS_PER_PAGE: 10,
+  
+  // Tempo di validità delle cache (in millisecondi)
+  CACHE_DURATION: 5 * 60 * 1000, // 5 minuti
+  
+  // Intervallo di aggiornamento automatico dei dati (in millisecondi)
+  REFRESH_INTERVAL: 30 * 1000, // 30 secondi
+  
+  // Configurazioni per upload file
+  MAX_FILE_SIZE: 5 * 1024 * 1024, // 5 MB
+  ALLOWED_FILE_TYPES: ['image/jpeg', 'image/png', 'application/pdf'],
+};
+
+// Impostazioni di animazione
+export const ANIMAZIONI = {
+  DURATA_STANDARD: 300, // millisecondi
+  DURATA_VELOCE: 150,   // millisecondi
+  DURATA_LENTA: 500,    // millisecondi
 };
 
 // Colore primario dell'app
