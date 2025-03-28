@@ -1,20 +1,13 @@
-import { Stack, Slot, router, usePathname, useSegments } from 'expo-router';
-import React, { useEffect, useState, useRef } from 'react';
-import { ActivityIndicator, View, StyleSheet, Text, Platform, AppState, AppStateStatus } from 'react-native';
-import { PaperProvider, MD3LightTheme as DefaultTheme, Button } from 'react-native-paper';
+import { Stack, useRouter, useSegments } from 'expo-router';
+import React, { useEffect } from 'react';
+import { Platform } from 'react-native';
+import { PaperProvider, MD3LightTheme as DefaultTheme } from 'react-native-paper';
 import { PRIMARY_COLOR } from '../src/config/constants';
 import { AuthProvider, useAuth } from '../src/context/AuthContext';
 import { NotificheProvider } from '../src/context/NotificheContext';
-import pushNotificationService from '../src/services/pushNotificationService';
-import * as Notifications from 'expo-notifications';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import LoginScreen from '../src/screens/LoginScreen';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { STORAGE_KEYS } from '../src/config/constants';
 import Toast from 'react-native-toast-message';
 import logger from '../src/utils/logger';
-import { listenEvent, APP_EVENTS } from '../src/utils/events';
-import { emitEvent } from '../src/utils/events';
 
 // Definizione del tema personalizzato per react-native-paper
 const theme = {
@@ -26,51 +19,43 @@ const theme = {
   },
 };
 
-// Componente principale
-function Layout() {
-  const { isAuthenticated, isLoading, user } = useAuth();
-  const pathname = usePathname();
+// Componente per proteggere le route autenticate
+function RootLayoutNav() {
+  const segments = useSegments();
+  const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
   
-  // Log per debugging
   useEffect(() => {
-    logger.log('Layout - isAuthenticated:', isAuthenticated);
-    logger.log('Layout - user:', user ? `${user.email} (${user.ruolo})` : 'null');
-    logger.log('Layout - pathname:', pathname);
-  }, [isAuthenticated, user, pathname]);
-  
-  // Reindirizza gli utenti autenticati che sono sulla pagina iniziale (index)
-  useEffect(() => {
-    if (isAuthenticated && !isLoading && pathname === '/') {
-      logger.log('Layout - Utente autenticato alla home, reindirizzamento a (tabs)');
+    if (isLoading) return; // Non fare nulla mentre carica
+    
+    const inAuthGroup = segments[0] === '(tabs)';
+    const inAuthRequiredPage = inAuthGroup;
+    const inAuthPages = segments[0] === 'login' || segments[0] === 'register';
+    
+    logger.log('RootLayoutNav - Percorso:', segments.join('/'));
+    logger.log('RootLayoutNav - isAuthenticated:', isAuthenticated);
+    logger.log('RootLayoutNav - inAuthGroup:', inAuthGroup);
+    logger.log('RootLayoutNav - inAuthPages:', inAuthPages);
+    
+    if (!isAuthenticated && inAuthRequiredPage) {
+      // Redirect to login if accessing protected pages while not authenticated
+      logger.log('RootLayoutNav - Utente non autenticato, reindirizzamento al login');
+      router.replace('/login');
+    } else if (isAuthenticated && inAuthPages) {
+      // Redirect to home if accessing auth pages while authenticated
+      logger.log('RootLayoutNav - Utente già autenticato, reindirizzamento alla home');
       router.replace('/(tabs)');
     }
-  }, [isAuthenticated, isLoading, pathname]);
-  
-  if (isLoading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
-        <Text style={styles.loadingText}>Caricamento in corso...</Text>
-      </View>
-    );
-  }
-  
-  // Utilizziamo un controllo più preciso sul pathname
-  if (!isAuthenticated || !user) {
-    // Per la pagina di registrazione, mostra il contenuto normale
-    if (pathname === '/register' || pathname.startsWith('/register/')) {
-      logger.log('Layout - Visualizzazione pagina di registrazione');
-      return <Slot />;
-    }
-    
-    // Per tutte le altre pagine quando non autenticato
-    logger.log('Layout - Visualizzazione pagina di login');
-    return <LoginScreen />;
-  }
-  
-  // Utente autenticato, renderizza i contenuti dell'app tramite Slot
-  logger.log('Layout - Utente autenticato, visualizzazione contenuto');
-  return <Slot />;
+  }, [isAuthenticated, segments, isLoading, router]);
+
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="index" />
+      <Stack.Screen name="login" />
+      <Stack.Screen name="register" />
+      <Stack.Screen name="(tabs)" />
+    </Stack>
+  );
 }
 
 // Componente con i provider
@@ -94,7 +79,7 @@ export default function RootLayout() {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <AuthProvider>
           <NotificheProvider>
-            <Layout />
+            <RootLayoutNav />
             <Toast />
           </NotificheProvider>
         </AuthProvider>
@@ -102,40 +87,3 @@ export default function RootLayout() {
     </PaperProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#666',
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 20,
-  },
-  errorText: {
-    fontSize: 18,
-    color: '#d32f2f',
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  errorMessage: {
-    fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-  refreshButton: {
-    marginTop: 16,
-    paddingHorizontal: 24,
-  },
-});

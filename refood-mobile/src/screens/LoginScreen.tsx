@@ -6,14 +6,13 @@ import { useAuth } from '../context/AuthContext';
 import { PRIMARY_COLOR } from '../config/constants';
 import Toast from 'react-native-toast-message';
 import logger from '../utils/logger';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, Link } from 'expo-router';
 
 const LoginScreen = () => {
   // Stato generale
   const [passwordVisible, setPasswordVisible] = useState(false);
   const { login, error, clearError, isLoading, isAuthenticated } = useAuth();
   const [fadeAnim] = useState(new Animated.Value(0));
-  const router = useRouter();
   const params = useLocalSearchParams();
   
   // Banner di registrazione completata
@@ -241,24 +240,21 @@ const LoginScreen = () => {
                 </Button>
                 
                 {/* Toggle tra login e registrazione */}
-                <Button
-                  mode="text"
-                  onPress={() => {
-                    logger.log('LoginScreen - Navigazione alla registrazione');
-                    try {
-                      router.push('/register');
-                    } catch (error) {
-                      logger.log('Errore navigazione:', error);
-                      // Fallback più semplice in caso di errore
-                      setTimeout(() => {
-                        window.location.href = '/register';
-                      }, 100);
-                    }
-                  }}
-                  style={styles.toggleModeButton}
-                >
-                  Non hai un account? Registrati
-                </Button>
+                <Link href="/register" asChild onPress={() => {
+                  logger.log('LoginScreen - Cliccato su "Registrati"');
+                  // Controllo extra che può aiutare in caso di problemi di navigazione
+                  if (Platform.OS === 'web') {
+                    // Su web, le navigazioni dirette al DOM sono sempre sicure
+                    logger.log('LoginScreen - Navigazione web sicura');
+                  }
+                }}>
+                  <Button
+                    mode="text"
+                    style={styles.toggleModeButton}
+                  >
+                    Non hai un account? Registrati
+                  </Button>
+                </Link>
               </Card.Content>
             </Card>
             

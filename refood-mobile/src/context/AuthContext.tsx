@@ -481,15 +481,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Continuiamo con il logout locale anche se il server dà errore
       }
       
+      // Semplicemente impostiamo user a null e isAuthenticated sarà impostato a false
+      setUser(null);
+      
       // Usa la nostra utility per mostrare toast in modo sicuro
-      toastHelper.showSuccessToast(
-        'Logout completato',
-        'Hai effettuato il logout con successo'
-      );
+      try {
+        toastHelper.showSuccessToast(
+          'Logout completato',
+          'Hai effettuato il logout con successo'
+        );
+      } catch (err) {
+        logger.error('Errore durante la visualizzazione del toast:', err);
+      }
       
       logger.log('Logout completato con successo');
-      
-    } catch (err: any) {
+    } catch (err) {
       logger.error('Errore critico durante il logout:', err);
       
       // Forza comunque il reset in caso di errore
@@ -505,6 +511,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (storageErr) {
         logger.error('Errore durante la pulizia di emergenza di AsyncStorage:', storageErr);
       }
+      
+      // Semplicemente impostiamo user a null per assicurarci che isAuthenticated sia false
+      setUser(null);
       
       setError('Si è verificato un errore durante il logout, ma la sessione è stata chiusa correttamente.');
     } finally {
