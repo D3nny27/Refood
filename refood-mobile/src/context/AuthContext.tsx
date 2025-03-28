@@ -15,6 +15,7 @@ import { Utente } from '../types/user';
 import logger from '../utils/logger';
 import Toast from 'react-native-toast-message';
 import { listenEvent, APP_EVENTS } from '../utils/events';
+import toastHelper from '../utils/toastHelper';
 
 // Definisci il tipo di resetAuthState nel global namespace
 declare global {
@@ -480,13 +481,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Continuiamo con il logout locale anche se il server dà errore
       }
       
-      // Mostra una notifica di successo
-      Toast.show({
-        type: 'success',
-        text1: 'Logout completato',
-        text2: 'Hai effettuato il logout con successo',
-        visibilityTime: 3000,
-      });
+      // Usa la nostra utility per mostrare toast in modo sicuro
+      toastHelper.showSuccessToast(
+        'Logout completato',
+        'Hai effettuato il logout con successo'
+      );
       
       logger.log('Logout completato con successo');
       

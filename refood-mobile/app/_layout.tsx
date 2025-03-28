@@ -403,6 +403,8 @@ function RootLayoutNav() {
     logger.log('RootLayoutNav - Mostrando la struttura completa, la navigazione sarà gestita dalle pagine');
     
     // Stack completo che permette il reindirizzamento esplicito
+    // La principale differenza è che ora usiamo lo stesso Stack in entrambi i casi
+    // (utente autenticato e non autenticato) per evitare inconsistenze
     return (
       <Stack>
         <Stack.Screen 
@@ -424,6 +426,12 @@ function RootLayoutNav() {
           }}
         />
         <Stack.Screen 
+          name="register/index"
+          options={{
+            headerShown: false
+          }}
+        />
+        <Stack.Screen 
           name="dashboard/index"
           options={{
             headerShown: false
@@ -433,12 +441,25 @@ function RootLayoutNav() {
     );
   }
 
-  // Se l'utente è autenticato, mostra il contenuto principale dell'app
-  logger.log('RootLayoutNav - Utente autenticato, mostrando (tabs)');
+  // Se l'utente è autenticato, mostra lo stesso Stack con tutte le schermate disponibili
+  // Questo assicura consistenza quando lo stato di autenticazione cambia
+  logger.log('RootLayoutNav - Utente autenticato, mostrando Stack completo');
   return (
     <Stack>
       <Stack.Screen 
         name="index"
+        options={{
+          headerShown: false
+        }}
+      />
+      <Stack.Screen 
+        name="(tabs)"
+        options={{
+          headerShown: false
+        }}
+      />
+      <Stack.Screen 
+        name="register/index"
         options={{
           headerShown: false
         }}
@@ -451,12 +472,6 @@ function RootLayoutNav() {
       />
       <Stack.Screen 
         name="dashboard/index"
-        options={{
-          headerShown: false
-        }}
-      />
-      <Stack.Screen 
-        name="(tabs)"
         options={{
           headerShown: false
         }}

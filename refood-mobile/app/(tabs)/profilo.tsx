@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Platform } from 'react-native';
 import { Button, Card, Avatar, List, Divider, useTheme, Dialog, Portal, Paragraph } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../src/context/AuthContext';
@@ -7,6 +7,9 @@ import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../../src/config/constants';
 import { useState } from 'react';
+import Toast from 'react-native-toast-message';
+import toastHelper from '../../src/utils/toastHelper';
+import logger from '../../src/utils/logger';
 
 export default function ProfiloScreen() {
   const { user, logout, forceAuthUpdate } = useAuth();
@@ -16,64 +19,106 @@ export default function ProfiloScreen() {
 
   // Funzione di logout forzata che pulisce tutto
   const forceLogout = async () => {
-    console.log('ProfiloScreen - forceLogout: INIZIO pulizia manuale di tutti i dati');
-    
-    // Verifica disponibilità delle funzioni prima di chiamarle
-    const logoutFnAvailable = typeof logout === 'function';
-    const forceUpdateAvailable = typeof forceAuthUpdate === 'function';
-    console.log(`ProfiloScreen - forceLogout: funzioni disponibili? logout: ${logoutFnAvailable ? 'SÌ' : 'NO'} forceAuthUpdate: ${forceUpdateAvailable ? 'SÌ' : 'NO'}`);
-    
+    console.log('ProfiloScreen - Inizio processo di logout');
     try {
-      // Pulizia AsyncStorage
-      console.log('ProfiloScreen - forceLogout: pulizia AsyncStorage');
-      await AsyncStorage.multiRemove([
-        STORAGE_KEYS.USER_TOKEN,
-        STORAGE_KEYS.USER_DATA,
-        STORAGE_KEYS.REFRESH_TOKEN
-      ]).then(() => {
-        console.log('ProfiloScreen - forceLogout: AsyncStorage pulito con successo');
-      }).catch(err => {
-        console.error('ProfiloScreen - forceLogout: ERRORE pulizia AsyncStorage', err);
-      });
-      
-      // Chiama logout() se disponibile
-      if (logoutFnAvailable) {
-        console.log('ProfiloScreen - forceLogout: chiamata funzione logout()');
-        await logout().then(() => {
-          console.log('ProfiloScreen - forceLogout: chiamata logout() completata');
-        }).catch(err => {
-          console.error('ProfiloScreen - forceLogout: ERRORE chiamata logout()', err);
-        });
+      // Pulizia dei dati in AsyncStorage
+      try {
+        await AsyncStorage.removeItem('user');
+        console.log('ProfiloScreen - forceLogout: Dati utente rimossi da AsyncStorage');
+        await AsyncStorage.removeItem('token');
+        console.log('ProfiloScreen - forceLogout: Token rimosso da AsyncStorage');
+        await AsyncStorage.multiRemove(['user', 'token']);
+        console.log('ProfiloScreen - forceLogout: Pulizia aggiuntiva dati completata');
+      } catch (storageError) {
+        console.error('ProfiloScreen - forceLogout: Errore durante la pulizia di AsyncStorage:', storageError);
       }
-      
-      // Forza aggiornamento contesto auth se disponibile
-      if (forceUpdateAvailable) {
-        console.log('ProfiloScreen - forceLogout: aggiornamento contesto auth');
-        try {
-          forceAuthUpdate();
-        } catch (err) {
-          console.error('ProfiloScreen - forceLogout: ERRORE aggiornamento contesto auth', err);
-        }
+
+      // Chiama la funzione di logout nel contesto di autenticazione
+      try {
+        logout();
+        console.log('ProfiloScreen - forceLogout: Funzione logout chiamata con successo');
+      } catch (logoutError) {
+        console.error('ProfiloScreen - forceLogout: Errore durante la chiamata a logout():', logoutError);
       }
-      
-      // Reindirizzamento esplicito alla schermata di login
-      console.log('ProfiloScreen - forceLogout: reindirizzamento esplicito alla schermata di login');
-      
-      // Breve timeout per assicurarsi che tutte le operazioni precedenti siano completate
+
+      // Rimuovo completamente l'uso di Toast per evitare errori
+
+      // Utilizziamo un timeout più lungo per assicurarci che tutte le operazioni siano completate
+      console.log('ProfiloScreen - forceLogout: Attesa di 800ms prima del reindirizzamento');
       setTimeout(() => {
-        router.replace('/');
-        console.log('ProfiloScreen - forceLogout: reindirizzamento completato');
-      }, 100);
-      
+        try {
+          console.log('ProfiloScreen - forceLogout: Tentativo di reindirizzamento a /');
+          
+          // Metodo di navigazione ottimizzato per web
+          // Su web, preferiamo sempre router.push con URL assoluto
+          if (Platform.OS === 'web') {
+            // Su web, usiamo un approccio più diretto
+            console.log('ProfiloScreen - forceLogout: Piattaforma web rilevata, usando navigazione web-specifica');
+            
+            // Per web, push è più affidabile
+            router.push('/');
+            
+            // Come fallback in caso di problemi, possiamo provare a manipolare direttamente la location
+            // dopo un breve timeout
+            setTimeout(() => {
+              if (typeof window !== 'undefined' && window.location) {
+                try {
+                  console.log('ProfiloScreen - forceLogout: Fallback, tentativo di reindirizzamento diretto');
+                  // Questo dovrebbe funzionare anche se router.push fallisce
+                  window.location.href = '/';
+                } catch (windowError) {
+                  console.error('ProfiloScreen - forceLogout: Fallback di navigazione fallito:', windowError);
+                }
+              }
+            }, 300);
+          } else {
+            // Per mobile, continuiamo a usare l'approccio esistente
+            router.push('/');
+            console.log('ProfiloScreen - forceLogout: Reindirizzamento avviato con router.push');
+          }
+        } catch (navigationError) {
+          console.error('ProfiloScreen - forceLogout: ERRORE durante il reindirizzamento:', navigationError);
+          
+          // Tentativo di backup con replace in caso di errore
+          try {
+            console.log('ProfiloScreen - forceLogout: Tentativo alternativo con router.replace');
+            router.replace('/');
+          } catch (fallbackError) {
+            console.error('ProfiloScreen - forceLogout: Anche il tentativo alternativo è fallito:', fallbackError);
+            
+            // Ultima risorsa: tentativo con manipolazione diretta della location (solo su web)
+            if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
+              try {
+                console.log('ProfiloScreen - forceLogout: Tentativo finale con window.location');
+                window.location.href = '/';
+              } catch (finalError) {
+                console.error('ProfiloScreen - forceLogout: Tutti i tentativi di navigazione sono falliti');
+              }
+            } else {
+              // Per mobile, tentiamo ancora con push dopo un ritardo
+              setTimeout(() => {
+                try {
+                  console.log('ProfiloScreen - forceLogout: Ultimo tentativo di reindirizzamento');
+                  router.push('/');
+                } catch (lastError) {
+                  console.error('ProfiloScreen - forceLogout: Impossibile reindirizzare dopo tutti i tentativi:', lastError);
+                }
+              }, 500);
+            }
+          }
+        }
+      }, 800);
     } catch (criticalError) {
       console.error('ProfiloScreen - forceLogout: ERRORE CRITICO', criticalError);
-      
-      // In caso di errore critico, tenta comunque la navigazione
+      // Tentativo finale di navigazione in caso di errore grave
       try {
-        router.replace('/');
-        console.log('ProfiloScreen - forceLogout: reindirizzamento di emergenza completato');
-      } catch (navError) {
-        console.error('ProfiloScreen - forceLogout: ERRORE durante il reindirizzamento di emergenza', navError);
+        router.push('/');
+      } catch (e) {
+        console.error('ProfiloScreen - forceLogout: Impossibile reindirizzare anche dopo errore critico');
+        // Se siamo su web, ultimo tentativo con window.location
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.location.href = '/';
+        }
       }
     }
   };
