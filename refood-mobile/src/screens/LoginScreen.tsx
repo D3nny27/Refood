@@ -120,10 +120,10 @@ const LoginScreen = () => {
       const success = await login(email, password);
       logger.log('LoginScreen - Risultato login:', success ? 'successo' : 'fallito');
       
-      // Se il login ha avuto successo, naviga esplicitamente alla struttura di tab
+      // Non navighiamo più esplicitamente qui
+      // Il _layout.tsx si occuperà della navigazione in base allo stato di autenticazione
       if (success) {
-        logger.log('LoginScreen - Navigazione esplicita alla struttura di tab');
-        router.replace('/(tabs)');
+        logger.log('LoginScreen - Login riuscito, _layout gestirà la navigazione automaticamente');
       }
     }
   };
