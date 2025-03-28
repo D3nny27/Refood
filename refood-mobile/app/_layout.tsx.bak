@@ -1,4 +1,4 @@
-import { Stack, Slot, router, usePathname, useSegments } from 'expo-router';
+import { Stack, Slot, router, usePathname } from 'expo-router';
 import React, { useEffect, useState, useRef } from 'react';
 import { ActivityIndicator, View, StyleSheet, Text, Platform, AppState, AppStateStatus } from 'react-native';
 import { PaperProvider, MD3LightTheme as DefaultTheme, Button } from 'react-native-paper';
@@ -26,8 +26,8 @@ const theme = {
   },
 };
 
-// Componente principale
-function Layout() {
+// Componente principale di navigazione
+function NavigationLayout() {
   const { isAuthenticated, isLoading, user } = useAuth();
   const pathname = usePathname();
   
@@ -38,14 +38,25 @@ function Layout() {
     logger.log('Layout - pathname:', pathname);
   }, [isAuthenticated, user, pathname]);
   
-  // Reindirizza gli utenti autenticati che sono sulla pagina iniziale (index)
+  // Effetto per le redirezioni di autenticazione
   useEffect(() => {
-    if (isAuthenticated && !isLoading && pathname === '/') {
-      logger.log('Layout - Utente autenticato alla home, reindirizzamento a (tabs)');
+    if (isLoading) return;
+    
+    if (!isAuthenticated && pathname !== '/register') {
+      // Se non autenticato e non alla pagina di registrazione, 
+      // mostra la home (che sarà sostituita da LoginScreen)
+      if (pathname !== '/') {
+        logger.log('Layout - Utente non autenticato, reindirizzamento a home');
+        router.replace('/');
+      }
+    } else if (isAuthenticated && pathname === '/') {
+      // Se autenticato e alla home, vai ai tabs
+      logger.log('Layout - Utente autenticato alla home, reindirizzamento a tabs');
       router.replace('/(tabs)');
     }
   }, [isAuthenticated, isLoading, pathname]);
   
+  // Mostra schermata di caricamento durante il caricamento iniziale
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -55,46 +66,28 @@ function Layout() {
     );
   }
   
-  // Utilizziamo un controllo più preciso sul pathname
-  if (!isAuthenticated || !user) {
-    // Per la pagina di registrazione, mostra il contenuto normale
-    if (pathname === '/register' || pathname.startsWith('/register/')) {
-      logger.log('Layout - Visualizzazione pagina di registrazione');
-      return <Slot />;
-    }
-    
-    // Per tutte le altre pagine quando non autenticato
-    logger.log('Layout - Visualizzazione pagina di login');
+  // Quando non autenticato e su homepage, mostra LoginScreen invece della pagina index
+  if (!isAuthenticated && pathname === '/') {
     return <LoginScreen />;
   }
   
-  // Utente autenticato, renderizza i contenuti dell'app tramite Slot
-  logger.log('Layout - Utente autenticato, visualizzazione contenuto');
+  // In tutti gli altri casi, mostra il contenuto normale (inclusa la pagina di registrazione)
   return <Slot />;
 }
 
-// Componente con i provider
+// Root layout con i provider
 export default function RootLayout() {
-  // Ignora warning di useLayoutEffect per il web
-  React.useEffect(() => {
-    // Soluzione per l'avviso useLayoutEffect sul SSR
-    if (Platform.OS === 'web') {
-      const originalWarn = console.warn;
-      console.warn = (...args) => {
-        if (args[0] && typeof args[0] === 'string' && args[0].includes('useLayoutEffect does nothing on the server')) {
-          return;
-        }
-        originalWarn(...args);
-      };
-    }
-  }, []);
-
   return (
     <PaperProvider theme={theme}>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <AuthProvider>
           <NotificheProvider>
-            <Layout />
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="index" />
+              <Stack.Screen name="register" />
+              <Stack.Screen name="(tabs)" />
+            </Stack>
+            <NavigationLayout />
             <Toast />
           </NotificheProvider>
         </AuthProvider>

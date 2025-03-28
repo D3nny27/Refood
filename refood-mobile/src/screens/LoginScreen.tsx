@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { PRIMARY_COLOR } from '../config/constants';
 import Toast from 'react-native-toast-message';
 import logger from '../utils/logger';
-import { useRouter, useLocalSearchParams, Link } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 
 const LoginScreen = () => {
   // Stato generale
@@ -241,14 +241,24 @@ const LoginScreen = () => {
                 </Button>
                 
                 {/* Toggle tra login e registrazione */}
-                <Link href="/register" asChild>
-                  <Button
-                    mode="text"
-                    style={styles.toggleModeButton}
-                  >
-                    Non hai un account? Registrati
-                  </Button>
-                </Link>
+                <Button
+                  mode="text"
+                  onPress={() => {
+                    logger.log('LoginScreen - Navigazione alla registrazione');
+                    try {
+                      router.push('/register');
+                    } catch (error) {
+                      logger.log('Errore navigazione:', error);
+                      // Fallback più semplice in caso di errore
+                      setTimeout(() => {
+                        window.location.href = '/register';
+                      }, 100);
+                    }
+                  }}
+                  style={styles.toggleModeButton}
+                >
+                  Non hai un account? Registrati
+                </Button>
               </Card.Content>
             </Card>
             

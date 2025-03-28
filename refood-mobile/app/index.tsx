@@ -1,14 +1,10 @@
 import React from 'react';
-import { useNavigationState } from '@react-navigation/native';
-import { View, Text } from 'react-native';
+import { View } from 'react-native';
+import { Redirect } from 'expo-router';
 
-// Semplice pagina vuota che non fa nulla, poiché 
-// la gestione dell'autenticazione e della redirezione 
-// viene gestita nel layout principale
+// Questo componente reindirizza automaticamente l'utente
+// La logica di reindirizzamento è nel layout principale
 export default function IndexPage() {
-  return (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-      <Text>Reindirizzamento in corso...</Text>
-    </View>
-  );
+  // Utilizziamo Redirect per evitare di mostrare qualsiasi contenuto
+  return <Redirect href="/" />;
 } 
