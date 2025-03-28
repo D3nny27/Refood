@@ -56,13 +56,25 @@ export default function ProfiloScreen() {
         }
       }
       
-      // Non eseguiamo più un reindirizzamento diretto qui
-      // ma lasciamo che sia il sistema di autenticazione a occuparsene
-      console.log('ProfiloScreen - forceLogout: completato, attendo il reindirizzamento automatico');
+      // Reindirizzamento esplicito alla schermata di login
+      console.log('ProfiloScreen - forceLogout: reindirizzamento esplicito alla schermata di login');
+      
+      // Breve timeout per assicurarsi che tutte le operazioni precedenti siano completate
+      setTimeout(() => {
+        router.replace('/');
+        console.log('ProfiloScreen - forceLogout: reindirizzamento completato');
+      }, 100);
       
     } catch (criticalError) {
       console.error('ProfiloScreen - forceLogout: ERRORE CRITICO', criticalError);
-      // Non tentare di navigare in caso di errore critico
+      
+      // In caso di errore critico, tenta comunque la navigazione
+      try {
+        router.replace('/');
+        console.log('ProfiloScreen - forceLogout: reindirizzamento di emergenza completato');
+      } catch (navError) {
+        console.error('ProfiloScreen - forceLogout: ERRORE durante il reindirizzamento di emergenza', navError);
+      }
     }
   };
 
@@ -96,8 +108,6 @@ export default function ProfiloScreen() {
             <Text style={styles.role}>
               {user?.ruolo === RUOLI.AMMINISTRATORE ? 'Amministratore' : 
                user?.ruolo === RUOLI.OPERATORE ? 'Operatore' : 
-               user?.ruolo === RUOLI.CENTRO_SOCIALE ? 'Centro Sociale' : 
-               user?.ruolo === RUOLI.CENTRO_RICICLAGGIO ? 'Centro Riciclaggio' : 
                'Utente'}
             </Text>
           </View>

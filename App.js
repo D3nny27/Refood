@@ -3,8 +3,8 @@ import React from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Provider as PaperProvider, DefaultTheme } from 'react-native-paper';
 import { AuthProvider } from './src/context/AuthContext';
-import AppNavigator from './src/navigation/AppNavigator';
 import { LogBox } from 'react-native';
+import { expo } from './app.json';
 
 // Sopprime il warning su pointerEvents
 LogBox.ignoreLogs(['Warning: props.pointerEvents is deprecated. Use style.pointerEvents']);
@@ -19,12 +19,16 @@ const theme = {
   },
 };
 
+/**
+ * App.js è ora solo un punto di ingresso che carica il provider di autenticazione.
+ * La navigazione è interamente gestita da expo-router nella cartella app/.
+ */
 export default function App() {
   return (
     <SafeAreaProvider>
       <PaperProvider theme={theme}>
         <AuthProvider>
-          <AppNavigator />
+          {/* Expo Router gestisce tutta la navigazione */}
         </AuthProvider>
       </PaperProvider>
     </SafeAreaProvider>

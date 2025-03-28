@@ -119,6 +119,12 @@ const LoginScreen = () => {
       logger.log('LoginScreen - Tentativo di login con:', email);
       const success = await login(email, password);
       logger.log('LoginScreen - Risultato login:', success ? 'successo' : 'fallito');
+      
+      // Se il login ha avuto successo, naviga esplicitamente alla struttura di tab
+      if (success) {
+        logger.log('LoginScreen - Navigazione esplicita alla struttura di tab');
+        router.replace('/(tabs)');
+      }
     }
   };
 

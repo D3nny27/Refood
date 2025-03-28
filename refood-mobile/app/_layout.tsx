@@ -397,11 +397,39 @@ function RootLayoutNav() {
       })();
     }
     
-    // Torniamo ad usare View per evitare errori di tipo con Slot
+    // IMPORTANTE: Non facciamo più un reindirizzamento automatico qui
+    // Il reindirizzamento avviene esplicitamente dalle funzioni di logout
+    // Questo permette di evitare reindirizzamenti indesiderati
+    logger.log('RootLayoutNav - Mostrando la struttura completa, la navigazione sarà gestita dalle pagine');
+    
+    // Stack completo che permette il reindirizzamento esplicito
     return (
-      <View style={{ flex: 1 }}>
-        <LoginScreen />
-      </View>
+      <Stack>
+        <Stack.Screen 
+          name="index"
+          options={{
+            headerShown: false
+          }}
+        />
+        <Stack.Screen 
+          name="(tabs)"
+          options={{
+            headerShown: false
+          }}
+        />
+        <Stack.Screen 
+          name="home/index"
+          options={{
+            headerShown: false
+          }}
+        />
+        <Stack.Screen 
+          name="dashboard/index"
+          options={{
+            headerShown: false
+          }}
+        />
+      </Stack>
     );
   }
 

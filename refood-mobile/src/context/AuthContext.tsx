@@ -354,12 +354,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const response = await loginUser(email, password);
       
       if (response.token && response.utente) {
+        // Salva sia il token che i dati utente in modo sincrono
+        await saveUserSession(response.token, response.utente);
+        
         // Imposta i dati nella sessione e nello stato
         setUser(response.utente);
         setIsAuthenticated(true);
         console.log('Login completato con successo per:', email);
         console.log('Stato autenticazione aggiornato - isAuthenticated:', true);
         console.log('Stato autenticazione aggiornato - user:', JSON.stringify(response.utente));
+        
+        // Notifica il sistema del login completato usando il global object
+        try {
+          // Utilizziamo un approccio alternativo all'emissione di eventi
+          if (typeof global !== 'undefined' && global.setTimeout) {
+            global.setTimeout(() => {
+              logger.log('Notifica del login completato - Tentativo di aggiornamento vista');
+            }, 100);
+          }
+        } catch (eventError) {
+          console.error('Errore durante la notifica di login completato:', eventError);
+        }
+        
         return true;
       } else {
         throw new Error('Credenziali non valide');
