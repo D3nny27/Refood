@@ -10,7 +10,22 @@ const notificheController = require('./notifiche.controller');
 exports.getLotti = async (req, res, next) => {
   try {
     logger.info(`Richiesta GET /lotti ricevuta con query: ${JSON.stringify(req.query)}`);
-    const { stato, scadenza_entro } = req.query;
+    const { stato, scadenza_entro, mostraTutti } = req.query;
+    
+    // Utente autenticato
+    const userId = req.user.id;
+    const userRuolo = req.user.ruolo;
+    const userTipoUtente = req.user.tipo_utente; // Leggiamo direttamente dal token JWT
+    
+    logger.debug(`Utente ${userId} con ruolo ${userRuolo}, tipo ${userTipoUtente} richiede lotti. mostraTutti=${mostraTutti}`);
+    
+    // Parametro mostraTutti per sovrascrivere i filtri per tipo utente
+    const bypassFiltriTipoUtente = mostraTutti === 'true' || userRuolo === 'Amministratore' || userRuolo === 'Operatore';
+    if (bypassFiltriTipoUtente) {
+      logger.debug(`Filtri per tipo utente disabilitati - mostrando tutti i lotti (mostraTutti=${mostraTutti}, ruolo=${userRuolo})`);
+    } else {
+      logger.debug(`Filtri per tipo utente abilitati - mostrando solo i lotti per ${userTipoUtente}`);
+    }
     
     // Verifica se la tabella Categorie esiste
     let hasCategorieTable = false;
@@ -38,14 +53,39 @@ exports.getLotti = async (req, res, next) => {
     // Aggiunta dei filtri
     const whereConditions = [];
     
+    // Filtri standard basati sui parametri di query
     if (stato) {
-      whereConditions.push('l.stato = ?');
+      whereConditions.push('UPPER(l.stato) = UPPER(?)');
       params.push(stato);
     }
     
     if (scadenza_entro) {
       whereConditions.push('l.data_scadenza <= ?');
       params.push(scadenza_entro);
+    }
+    
+    // Filtro per ruolo utente e tipo utente (come in getLottiDisponibili)
+    if (userRuolo === 'Utente' && !bypassFiltriTipoUtente) {
+      const tipoUtenteUpper = userTipoUtente ? userTipoUtente.toUpperCase() : '';
+      
+      logger.debug(`Tipo utente normalizzato per filtro: "${tipoUtenteUpper}"`);
+      
+      if (tipoUtenteUpper === 'PRIVATO') {
+        // Gli utenti privati vedono solo i lotti verdi
+        whereConditions.push(`UPPER(l.stato) = 'VERDE'`);
+        logger.debug('Utente privato: filtrando solo lotti verdi');
+      } else if (tipoUtenteUpper === 'CANALE SOCIALE') {
+        // I canali sociali vedono solo i lotti arancioni
+        whereConditions.push(`UPPER(l.stato) = 'ARANCIONE'`);
+        logger.debug('Canale sociale: filtrando solo lotti arancioni');
+      } else if (tipoUtenteUpper === 'CENTRO RICICLO') {
+        // I centri di riciclo vedono solo i lotti rossi
+        whereConditions.push(`UPPER(l.stato) = 'ROSSO'`);
+        logger.debug('Centro riciclo: filtrando solo lotti rossi');
+      } else {
+        logger.warn(`Tipo utente non riconosciuto o mancante: "${userTipoUtente}". Nessun lotto verrà mostrato.`);
+        whereConditions.push(`1 = 0`); // nessun risultato
+      }
     }
     
     // Aggiunta delle condizioni WHERE se presenti
@@ -91,7 +131,8 @@ exports.getLotti = async (req, res, next) => {
       total: total
     };
     
-    logger.info(`Risposta inviata con ${formattedLotti.length} lotti (tutti i lotti)`);
+    const filtroMsg = bypassFiltriTipoUtente ? 'tutti i lotti' : `lotti filtrati per tipo utente: ${userTipoUtente}`;
+    logger.info(`Risposta inviata con ${formattedLotti.length} lotti (${filtroMsg})`);
     res.json(response);
   } catch (err) {
     logger.error(`Errore nel recupero dei lotti: ${err.message}`);
@@ -910,20 +951,8 @@ exports.getLottiDisponibili = async (req, res, next) => {
       logger.debug(`Filtri per tipo utente abilitati - mostrando solo i lotti per ${userTipoUtente}`);
     }
     
-    // Ottieni il tipo utente dell'utente corrente se ha ruolo 'Utente'
-    let tipoUtente = userTipoUtente; // Usiamo quello dal token
-    if (!tipoUtente && userRuolo === 'Utente') {
-      // Se non è presente nel token, facciamo fallback alla query al DB
-      const tipoUtenteQuery = `
-        SELECT tu.tipo 
-        FROM Tipo_Utente tu
-        JOIN AttoriTipoUtente atu ON tu.id = atu.tipo_utente_id
-        WHERE atu.attore_id = ?
-      `;
-      const tipoUtenteResult = await db.get(tipoUtenteQuery, [userId]);
-      tipoUtente = tipoUtenteResult ? tipoUtenteResult.tipo : null;
-      logger.debug(`Tipo utente ottenuto dal DB: ${tipoUtente}`);
-    }
+    // Usa direttamente il tipo utente dal token JWT, non facciamo più una query addizionale
+    let tipoUtente = userTipoUtente;
     
     // Verifica se la tabella Categorie esiste
     let hasCategorieTable = false;
@@ -987,7 +1016,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
     } else {
       // Amministratori e Operatori possono filtrare per stato se lo specificano
       if (stato) {
-        whereConditions.push('l.stato = ?');
+        whereConditions.push('UPPER(l.stato) = UPPER(?)');
         params.push(stato);
       }
     }
@@ -1005,10 +1034,10 @@ exports.getLottiDisponibili = async (req, res, next) => {
       // Ordinamento standard per amministratori e operatori
       query += ` 
         ORDER BY l.data_scadenza ASC, 
-                 CASE l.stato 
-                   WHEN 'Verde' THEN 1 
-                   WHEN 'Arancione' THEN 2 
-                   WHEN 'Rosso' THEN 3 
+                 CASE UPPER(l.stato) 
+                   WHEN 'VERDE' THEN 1 
+                   WHEN 'ARANCIONE' THEN 2 
+                   WHEN 'ROSSO' THEN 3 
                    ELSE 4 
                  END
       `;

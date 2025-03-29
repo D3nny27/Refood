@@ -226,9 +226,25 @@ const refreshToken = async (req, res, next) => {
           logger.info(`Tipo utente rilevato per ${tokenEntry.email} durante refresh: ${tokenEntry.tipo_utente}`);
         } else {
           logger.warn(`Nessun tipo utente trovato per l'utente ${tokenEntry.email} con ID ${tokenEntry.id} durante refresh`);
+          // Se non troviamo un tipo_utente, manteniamo quello eventualmente presente nel token precedente
+          const oldToken = jwt.decode(tokenEntry.access_token);
+          if (oldToken && oldToken.tipo_utente) {
+            tokenEntry.tipo_utente = oldToken.tipo_utente;
+            logger.info(`Recuperato tipo_utente dal token precedente: ${tokenEntry.tipo_utente}`);
+          }
         }
       } catch (err) {
         logger.error(`Errore durante il recupero del tipo utente nel refresh: ${err.message}`);
+        // Se c'è un errore, recuperiamo il tipo_utente dal vecchio token
+        try {
+          const oldToken = jwt.decode(tokenEntry.access_token);
+          if (oldToken && oldToken.tipo_utente) {
+            tokenEntry.tipo_utente = oldToken.tipo_utente;
+            logger.info(`Recuperato tipo_utente dal token precedente dopo errore: ${tokenEntry.tipo_utente}`);
+          }
+        } catch (decodeErr) {
+          logger.error(`Errore durante il recupero del tipo_utente dal token precedente: ${decodeErr.message}`);
+        }
       }
     }
     
