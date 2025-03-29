@@ -153,10 +153,18 @@ export const prenotaLotto = async (
       
       const prenotazioniEsistenti = prenotazioniResponse.data.data || prenotazioniResponse.data.prenotazioni || [];
       // Consideriamo attive solo le prenotazioni in stati che indicano che il lotto è effettivamente impegnato
+      // E soprattutto verifichiamo che siano effettivamente associate al lotto richiesto
       const prenotazioniAttive = prenotazioniEsistenti.filter((p: any) => {
         // Stati che indicano che il lotto è attivamente impegnato
         const statiAttivi = ['Prenotato', 'InAttesa', 'Confermato', 'InTransito'];
-        return statiAttivi.includes(p.stato);
+        // Verifica cruciale: la prenotazione deve avere lo stesso lotto_id
+        const lottoCorretto = p.lotto_id === lotto_id;
+        
+        if (!lottoCorretto && statiAttivi.includes(p.stato)) {
+          console.warn(`⚠️ Trovata prenotazione ID=${p.id} in stato ${p.stato} ma associata al lotto ${p.lotto_id} anziché ${lotto_id}`);
+        }
+        
+        return statiAttivi.includes(p.stato) && lottoCorretto;
       });
       
       if (prenotazioniAttive.length > 0) {
@@ -164,19 +172,20 @@ export const prenotaLotto = async (
         
         // Log dettagliato delle prenotazioni trovate
         prenotazioniAttive.forEach((p: any, index: number) => {
-          console.error(`Prenotazione #${index+1}: ID=${p.id}, Stato=${p.stato}`);
+          console.error(`Prenotazione #${index+1}: ID=${p.id}, Stato=${p.stato}, Lotto=${p.lotto_id}, Centro=${p.centro_ricevente_nome || `#${p.tipo_utente_ricevente_id || 'N/A'}`}`);
         });
         
         return {
           success: false,
-          message: `Questo lotto risulta già prenotato da un altro centro.`,
+          message: `Questo lotto risulta già prenotato.`,
           error: { 
             status: 400, 
             message: 'Lotto già prenotato',
             prenotazioniEsistenti: prenotazioniAttive.map((p: any) => ({ 
               id: p.id, 
               stato: p.stato,
-              centro: p.centro_ricevente_nome || `Centro #${p.centro_ricevente_id || 'N/A'}`
+              lotto_id: p.lotto_id,
+              centro: p.centro_ricevente_nome || `Centro #${p.tipo_utente_ricevente_id || 'N/A'}`
             }))
           }
         };
@@ -211,7 +220,7 @@ export const prenotaLotto = async (
     const payload = {
       lotto_id,
       data_ritiro: data_ritiro_prevista,
-      note
+      note: note || '' // Garantisce che note sia sempre una stringa, anche quando è vuoto o null
     };
     
     console.log('Invio richiesta di prenotazione con payload:', payload);
@@ -263,6 +272,27 @@ export const prenotaLotto = async (
     if (error.response) {
       console.error('Error ' + error.response.status + ' - ' + error.response.statusText);
       console.error('Dettagli risposta:', error.response.data);
+      
+      // Gestione specifica dell'errore "lotto già prenotato"
+      if (error.response.status === 400 && 
+          error.response.data?.message?.includes('già prenotato')) {
+        console.log('Errore di prenotazione: il lotto è già prenotato', error.response.data);
+        
+        // Formatta un messaggio di errore più chiaro
+        const errorMessage = 'Questo lotto è già stato prenotato' + 
+          (error.response.data.message.includes('altro centro') ? 
+            ' da un altro centro' : '');
+        
+        return {
+          success: false,
+          message: errorMessage,
+          error: {
+            status: 400,
+            message: 'Lotto già prenotato',
+            details: error.response.data
+          }
+        };
+      }
       
       // Log dei dati utente in caso di 403
       if (error.response.status === 403) {

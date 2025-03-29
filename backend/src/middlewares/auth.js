@@ -163,7 +163,8 @@ const authorize = (roles = []) => {
     // Mappatura tra tipi utente e ruoli autorizzati
     const tipoUtenteToRoles = {
       'CANALE SOCIALE': ['TipoUtenteSociale', 'CentroSociale'],
-      'CENTRO RICICLO': ['TipoUtenteRiciclaggio', 'CentroRiciclaggio']
+      'CENTRO RICICLO': ['TipoUtenteRiciclaggio', 'CentroRiciclaggio'],
+      'PRIVATO': ['Utente'] // Aggiungo supporto per utenti privati
     };
     
     console.log(`AUTH: Verifica autorizzazione per ruolo=${req.user.ruolo}, tipo_utente=${req.user.tipo_utente || 'non definito'}`);

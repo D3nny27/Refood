@@ -58,8 +58,7 @@ const LottoCard: React.FC<LottoCardProps> = ({ lotto, onPress, onPrenota }) => {
   const { user } = useAuth();
   
   // Controlla se l'utente può prenotare il lotto
-  const canPrenotareLotto = user?.tipo_utente?.toUpperCase() === 'CANALE SOCIALE' || 
-                        user?.tipo_utente?.toUpperCase() === 'CENTRO RICICLO';
+  const canPrenotareLotto = user?.ruolo === 'Utente'; // Solo gli utenti normali possono prenotare
   
   // Gestione valori sicuri per evitare errori di rendering
   const nome = lotto.nome || 'Lotto senza nome';

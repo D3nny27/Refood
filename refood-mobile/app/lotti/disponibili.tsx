@@ -642,8 +642,12 @@ export default function LottiDisponibiliScreen() {
             onPress={() => handlePrenotazione(item)}
             style={styles.prenotaButton}
             icon="shopping"
-            disabled={!user || !(user.tipo_utente?.toUpperCase() === 'CANALE SOCIALE' || 
-                               user.tipo_utente?.toUpperCase() === 'CENTRO RICICLO')}
+            disabled={!user || !(
+              // Permessi basati sul tipo di utente e stato del lotto
+              (user.tipo_utente?.toUpperCase() === 'PRIVATO' && item.stato?.toUpperCase() === 'VERDE') ||
+              (user.tipo_utente?.toUpperCase() === 'CANALE SOCIALE' && item.stato?.toUpperCase() === 'ARANCIONE') ||
+              (user.tipo_utente?.toUpperCase() === 'CENTRO RICICLO' && item.stato?.toUpperCase() === 'ROSSO')
+            )}
           >
             Prenota
           </Button>

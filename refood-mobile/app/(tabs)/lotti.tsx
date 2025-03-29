@@ -265,12 +265,22 @@ export default function LottiScreen() {
   
   // Gestisce la prenotazione di un lotto
   const handlePrenotazioneLotto = (lotto: Lotto) => {
-    // Verifica se l'utente ha i permessi necessari
-    if (!(user?.tipo_utente?.toUpperCase() === 'CANALE SOCIALE' || user?.tipo_utente?.toUpperCase() === 'CENTRO RICICLO')) {
+    // Verifica se l'utente ha i permessi necessari in base allo stato del lotto
+    const tipoUtente = user?.tipo_utente?.toUpperCase();
+    const statoLotto = lotto.stato?.toUpperCase();
+    
+    // Ogni tipo di utente può prenotare solo i lotti del suo "colore"
+    const permessoValido = (
+      (tipoUtente === 'PRIVATO' && statoLotto === 'VERDE') ||
+      (tipoUtente === 'CANALE SOCIALE' && statoLotto === 'ARANCIONE') ||
+      (tipoUtente === 'CENTRO RICICLO' && statoLotto === 'ROSSO')
+    );
+    
+    if (!permessoValido) {
       Toast.show({
         type: 'error',
         text1: 'Permessi insufficienti',
-        text2: 'Non hai i permessi per prenotare questo lotto',
+        text2: `Non hai i permessi per prenotare un lotto con stato ${lotto.stato}`,
       });
       return;
     }

@@ -139,10 +139,13 @@ const DettaglioLottoScreen = () => {
   const [notePrenotazione, setNotePrenotazione] = useState('');
   const [prenotazioneInCorso, setPrenotazioneInCorso] = useState(false);
   
-  // Determina se l'utente può prenotare il lotto (solo utenti del tipo centro di riciclo o canale sociale)
+  // Determina se l'utente può prenotare il lotto (solo utenti normali, non amministratori/operatori)
   const canPrenotareLotto = useMemo(() => {
-    return user?.tipo_utente?.toUpperCase() === 'CANALE SOCIALE' || 
-           user?.tipo_utente?.toUpperCase() === 'CENTRO RICICLO';
+    // Solo gli utenti con ruolo 'Utente' possono prenotare
+    return user?.ruolo === 'Utente';
+    
+    // Vecchia condizione che includeva anche gli amministratori:
+    // return user?.ruolo === 'Utente' || user?.ruolo === 'Amministratore';
   }, [user]);
   
   // Verifica i permessi di modifica all'avvio
@@ -512,7 +515,27 @@ const DettaglioLottoScreen = () => {
       Toast.show({
         type: 'error',
         text1: 'Permessi insufficienti',
-        text2: 'Non hai i permessi per prenotare questo lotto',
+        text2: 'Non hai i permessi per prenotare lotti',
+      });
+      return;
+    }
+    
+    // Verifica se l'utente ha i permessi necessari in base allo stato del lotto
+    const tipoUtente = user?.tipo_utente?.toUpperCase();
+    const statoLotto = lotto?.stato?.toUpperCase();
+    
+    // Ogni tipo di utente può prenotare solo i lotti del suo "colore"
+    const permessoValido = (
+      (tipoUtente === 'PRIVATO' && statoLotto === 'VERDE') ||
+      (tipoUtente === 'CANALE SOCIALE' && statoLotto === 'ARANCIONE') ||
+      (tipoUtente === 'CENTRO RICICLO' && statoLotto === 'ROSSO')
+    );
+    
+    if (!permessoValido) {
+      Toast.show({
+        type: 'error',
+        text1: 'Permessi insufficienti',
+        text2: `Non hai i permessi per prenotare un lotto con stato ${lotto?.stato}`,
       });
       return;
     }

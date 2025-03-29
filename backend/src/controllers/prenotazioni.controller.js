@@ -168,66 +168,110 @@ const getPrenotazioneById = async (req, res, next) => {
  */
 async function notificaAmministratori(prenotazioneId, lotto, centro, data_ritiro, note) {
   try {
-    // Recupera gli utenti amministratori e operatori del sistema centralizzato
-    const utentiQuery = `
+    console.log('=== INIZIO PROCESSO DI NOTIFICA ===');
+    console.log(`Prenotazione ID: ${prenotazioneId}`);
+    console.log(`Lotto: ${JSON.stringify(lotto)}`);
+    console.log(`Centro: ${JSON.stringify(centro)}`);
+    console.log(`Data ritiro: ${data_ritiro}`);
+    
+    // Prepara data formattata per la notifica
+    const dataRitiroFormatted = data_ritiro ? new Date(data_ritiro).toLocaleDateString('it-IT') : 'non specificata';
+    
+    // Prepara il titolo della notifica
+    const titolo = `Nuova prenotazione: ${lotto.prodotto} (${lotto.quantita} ${lotto.unita_misura})`;
+    
+    // Prepara il contenuto della notifica
+    const contenuto = `Il centro "${centro.tipo}" ha prenotato ${lotto.quantita} ${lotto.unita_misura} di ${lotto.prodotto}. 
+    Data di ritiro prevista: ${dataRitiroFormatted}.
+    ${note ? `Note: ${note}` : ''}`;
+    
+    // Cerca amministratori e operatori per inviare notifiche
+    console.log('Esecuzione query per trovare amministratori...');
+    
+    // MODIFICA: Rimuovo completamente il riferimento a token_notifiche
+    const query = `
       SELECT 
         u.id, 
         u.nome, 
-        u.cognome, 
-        u.token_notifiche
+        u.cognome
       FROM Attori u
       WHERE (u.ruolo = 'Amministratore' OR u.ruolo = 'Operatore')
-      AND u.token_notifiche IS NOT NULL
     `;
     
-    const utenti = await db.all(utentiQuery);
-    if (utenti.length === 0) {
-      console.log('Nessun amministratore o operatore con token notifiche trovato nel sistema');
+    const utenti = await db.all(query);
+    
+    // Se non ci sono utenti, registriamo e usciamo
+    if (!utenti || utenti.length === 0) {
+      console.log('❌ Nessun amministratore trovato per le notifiche');
       return;
     }
     
-    // Costruisci il messaggio dettagliato
-    const titolo = 'Nuova prenotazione ricevuta';
-    const messaggio = `Il lotto "${lotto.prodotto}" (${lotto.quantita} ${lotto.unita_misura}) è stato prenotato dal centro "${centro.tipo}". ${data_ritiro ? `Ritiro previsto: ${data_ritiro}` : 'Data ritiro non specificata'}.`;
+    console.log(`✅ Trovati ${utenti.length} utenti per le notifiche`);
     
-    // Log per debug
-    console.log(`Invio notifiche push a ${utenti.length} utenti per la prenotazione ${prenotazioneId}`);
-    
-    // Imposta le notifiche nel sistema (usato poi per le notifiche push)
-    for (const utente of utenti) {
+    // Crea notifiche per ogni utente
+    const notifichePendenti = utenti.map(async (utente) => {
       try {
-        await notificheController.creaNotifica(
+        // Verifico che il controller delle notifiche sia accessibile
+        if (!notificheController || typeof notificheController.creaNotifica !== 'function') {
+          console.error('❌ Controller notifiche non disponibile o metodo creaNotifica mancante');
+          return false;
+        }
+        
+        const notificaCreata = await notificheController.creaNotifica(
           utente.id,
           'Prenotazione',
           titolo,
-          messaggio,
+          contenuto,
           `/prenotazioni/${prenotazioneId}`,
-          {
-            prenotazioneId,
-            lottoId: lotto.id,
-            centroId: centro.id
-          }
+          { prenotazioneId, lottoId: lotto.id }
         );
-      } catch (err) {
-        console.error(`Errore nell'invio della notifica all'utente ${utente.id}: ${err.message}`);
+        
+        if (notificaCreata) {
+          console.log(`✅ Notifica creata per ${utente.nome} ${utente.cognome || ''} (ID: ${utente.id})`);
+          return true;
+        } else {
+          console.error(`❌ Impossibile creare notifica per utente ID: ${utente.id}`);
+          return false;
+        }
+      } catch (errNotifica) {
+        console.error(`❌ Errore durante la creazione notifica per utente ${utente.id}:`);
+        console.error(errNotifica);
+        return false;
       }
-    }
-    
-    // Usa anche il WebSocket per notifiche real-time
-    websocket.notificaNuovaPrenotazione({
-      id: prenotazioneId,
-      lotto_id: lotto.id,
-      lotto_nome: lotto.prodotto,
-      centro_id: centro.id,
-      centro_nome: centro.tipo,
-      data_ritiro: data_ritiro,
-      data_prenotazione: new Date().toISOString()
     });
     
-    return true;
+    const risultatiNotifiche = await Promise.allSettled(notifichePendenti);
+    const notificheInviate = risultatiNotifiche.filter(r => r.status === 'fulfilled' && r.value === true).length;
+    
+    console.log(`✅ Inviate ${notificheInviate} notifiche su ${utenti.length} utenti`);
+    
+    // Invia notifica tramite WebSocket se disponibile
+    try {
+      console.log('Tentativo di inviare notifica tramite WebSocket...');
+      
+      // Importo esplicitamente il modulo websocket
+      const webSocketService = require('../utils/websocket');
+      
+      if (webSocketService && typeof webSocketService.notificaNuovaPrenotazione === 'function') {
+        await webSocketService.notificaNuovaPrenotazione(prenotazioneId);
+        console.log('✅ Notifica WebSocket inviata');
+      } else {
+        console.log('⚠️ Servizio WebSocket non disponibile o metodo mancante');
+        console.log(`WebSocket Service: ${typeof webSocketService}`);
+        if (webSocketService) {
+          console.log(`Metodi disponibili: ${Object.keys(webSocketService).join(', ')}`);
+        }
+      }
+    } catch (wsError) {
+      console.error('❌ Errore durante l\'invio della notifica WebSocket:');
+      console.error(wsError);
+    }
+    
+    console.log('=== FINE PROCESSO DI NOTIFICA ===');
+    
   } catch (error) {
-    console.error(`Errore nella notifica amministratori: ${error.message}`);
-    return false;
+    console.error(`❌ Errore generale nella notifica amministratori: ${error.message}`);
+    console.error(`Stack trace: ${error.stack}`);
   }
 }
 
@@ -236,165 +280,255 @@ async function notificaAmministratori(prenotazioneId, lotto, centro, data_ritiro
  */
 const createPrenotazione = async (req, res, next) => {
   try {
-    console.log("Creazione prenotazione richiesta", req.body);
-
-    // Verifica che lotto_id sia presente e valido
-    const { lotto_id, note, data_ritiro } = req.body;
-    
-    if (!lotto_id) {
-      return next(new ApiError(400, 'ID lotto mancante o non valido'));
-    }
-    
-    if (isNaN(Number(lotto_id)) || Number(lotto_id) <= 0) {
-      return next(new ApiError(400, 'ID lotto deve essere un numero positivo'));
-    }
-    
-    // Log dell'utente corrente per debug
-    console.log('Utente che effettua la prenotazione:', {
+    // Aggiungo log dettagliati per debug
+    console.log(`🔍 DEBUG PRENOTAZIONE - Utente: ${JSON.stringify({
       id: req.user.id,
-      email: req.user.email,
       ruolo: req.user.ruolo,
       tipo_utente: req.user.tipo_utente
-    });
-
-    // Ottiene il tipo_utente_id dell'utente autenticato
-    const userTipoUtenteQuery = `
-      SELECT tipo_utente_id 
-      FROM AttoriTipoUtente 
-      WHERE attore_id = ?
-    `;
+    })}`);
+    console.log(`🔍 DEBUG PRENOTAZIONE - Body request: ${JSON.stringify(req.body)}`);
     
-    console.log(`Cerco tipo_utente per l'attore ID: ${req.user.id}`);
-    const userTipoUtente = await db.get(userTipoUtenteQuery, [req.user.id]);
+    const { lotto_id, data_ritiro, note } = req.body;
+    const utente_id = req.user.id;
     
-    console.log('Risultato query tipo utente:', userTipoUtente);
+    // PROBLEMA IDENTIFICATO: req.user.centro_id è undefined
+    // SOLUZIONE: Recuperiamo il tipo_utente_id direttamente dalla tabella AttoriTipoUtente
+    console.log(`⭐ CREAZIONE PRENOTAZIONE - Dati ricevuti: lotto_id=${lotto_id}, utente_id=${utente_id}`);
     
-    if (!userTipoUtente || !userTipoUtente.tipo_utente_id) {
-      return next(new ApiError(400, `L'utente con ID ${req.user.id} non è associato a nessun tipo utente`));
-    }
+    // Ottieni il tipo_utente_id dalla tabella AttoriTipoUtente
+    let centro_id = null;
     
-    const tipo_utente_ricevente_id = userTipoUtente.tipo_utente_id;
-    console.log(`Tipo utente trovato: ${tipo_utente_ricevente_id}`);
-    
-    // Verifica dell'esistenza del lotto
-    const lottoQuery = `
-      SELECT * FROM Lotti 
-      WHERE id = ?
-    `;
-    
-    console.log(`Cerco il lotto con ID: ${lotto_id}`);
-    const lotto = await db.get(lottoQuery, [lotto_id]);
-    
-    if (!lotto) {
-      return next(new ApiError(404, `Lotto con ID ${lotto_id} non trovato`));
-    }
-    
-    console.log('Lotto trovato:', { id: lotto.id, prodotto: lotto.prodotto });
-
-    // Verifica che il lotto non sia già prenotato
-    const esistePrenotazioneQuery = `
-      SELECT 1 FROM Prenotazioni
-      WHERE lotto_id = ? AND stato NOT IN ('Annullato', 'Eliminato')
-    `;
-    
-    const esistePrenotazione = await db.get(esistePrenotazioneQuery, [lotto_id]);
-
-    if (esistePrenotazione) {
-      return next(new ApiError(400, 'Questo lotto è già stato prenotato'));
-    }
-
-    // Manteniamo i log per tracciamento
-    console.log(`Stato lotto: ${lotto.stato}, Ruolo utente: ${req.user.ruolo}, Tipo utente: ${req.user.tipo_utente || 'non specificato'}`);
-    
-    // Creazione della prenotazione
-    const dataPrenotazione = new Date().toISOString();
-    
-    // Validazione della data di ritiro se presente
-    let dataRitiroValidata = null;
-    if (data_ritiro) {
-      try {
-        // Verifica che sia una data valida
-        const dataRitiroObj = new Date(data_ritiro);
-        dataRitiroValidata = dataRitiroObj.toISOString();
-      } catch (err) {
-        return next(new ApiError(400, 'Data di ritiro non valida. Usa il formato ISO 8601'));
-      }
-    }
-    
-    const insertQuery = `
-      INSERT INTO Prenotazioni (
-        lotto_id,
-        tipo_utente_ricevente_id,
-        data_prenotazione,
-        data_ritiro,
-        note,
-        stato
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `;
-    
-    console.log('Inserimento prenotazione con parametri:', {
-      lotto_id,
-      tipo_utente_ricevente_id,
-      data_prenotazione: dataPrenotazione,
-      data_ritiro: dataRitiroValidata,
-      note: note || null
-    });
-    
-    const result = await db.run(
-      insertQuery, 
-      [
-        lotto_id,
-        tipo_utente_ricevente_id,
-        dataPrenotazione,
-        dataRitiroValidata,
-        note || null,
-        'Prenotato'
-      ]
-    );
-    
-    const prenotazioneId = result.lastID;
-    console.log(`Prenotazione creata con ID: ${prenotazioneId}`);
-
-    // Ottieni il tipo_utente
-    const tipoUtenteQuery = `SELECT * FROM Tipo_Utente WHERE id = ?`;
-    const tipoUtente = await db.get(tipoUtenteQuery, [tipo_utente_ricevente_id]);
-    
-    // Invia notifiche push agli amministratori (asincrono, dopo la risposta)
     try {
-      await notificaAmministratori(
-        prenotazioneId, 
-        lotto, 
-        tipoUtente, 
-        dataRitiroValidata, 
-        note
-      );
-    } catch (notificaErr) {
-      console.error(`Errore nell'invio delle notifiche: ${notificaErr.message}`);
-      // Continuiamo comunque, la prenotazione è stata creata
+      console.log(`🔍 Recupero il tipo_utente_id per l'utente ${utente_id}...`);
+      
+      const tipoUtenteQuery = `
+        SELECT tipo_utente_id FROM AttoriTipoUtente 
+        WHERE attore_id = ?
+      `;
+      
+      const tipoUtenteResult = await db.get(tipoUtenteQuery, [utente_id]);
+      
+      if (tipoUtenteResult && tipoUtenteResult.tipo_utente_id) {
+        centro_id = tipoUtenteResult.tipo_utente_id;
+        console.log(`✅ Tipo_utente_id recuperato: ${centro_id}`);
+      } else {
+        console.error(`❌ Nessun tipo_utente_id trovato per l'utente ${utente_id}`);
+      }
+    } catch (error) {
+      console.error(`❌ Errore durante il recupero del tipo_utente_id: ${error.message}`);
     }
     
-    // Ottieni i dettagli completi della prenotazione
-    const prenotazioneQuery = `
-      SELECT 
-        p.*,
-        l.prodotto, l.quantita, l.unita_misura, l.data_scadenza,
-        tu.tipo AS tipo_utente_ricevente_nome
-      FROM Prenotazioni p
-      JOIN Lotti l ON p.lotto_id = l.id
-      JOIN Tipo_Utente tu ON p.tipo_utente_ricevente_id = tu.id
-      WHERE p.id = ?
-    `;
+    if (!lotto_id) {
+      console.error('ID lotto mancante nella richiesta di prenotazione');
+      return res.status(400).json({
+        status: 'error',
+        message: 'L\'ID del lotto è obbligatorio'
+      });
+    }
     
-    const prenotazioneAggiornata = await db.get(prenotazioneQuery, [prenotazioneId]);
+    if (!centro_id) {
+      console.error(`ID centro non trovato per l'utente ${utente_id}`);
+      return res.status(400).json({
+        status: 'error',
+        message: 'Non è stato possibile identificare il tuo centro. Impossibile procedere con la prenotazione.',
+        details: 'Contatta l\'amministratore del sistema.'
+      });
+    }
     
-    // Invia la risposta
-    res.status(201).json({
-      status: 'success',
-      message: 'Prenotazione creata con successo',
-      data: prenotazioneAggiornata
-    });
+    try {
+      // IMPORTANTE: rimuoviamo qualsiasi limite implicito al numero di prenotazioni
+      console.log(`✅ Il sistema consente prenotazioni multiple, verifico solo lo stato individuale del lotto ${lotto_id}`);
+      
+      // Verifica l'esistenza del lotto
+      console.log(`Verifica esistenza del lotto ${lotto_id}...`);
+      const lotto = await db.get(
+        'SELECT id, stato, prodotto, quantita, unita_misura, data_scadenza, inserito_da FROM Lotti WHERE id = ?',
+        [lotto_id]
+      );
+      
+      if (!lotto) {
+        console.error(`Lotto ID ${lotto_id} non trovato nel database`);
+        return res.status(404).json({
+          status: 'error',
+          message: 'Lotto non trovato'
+        });
+      }
+      
+      console.log(`Lotto ID ${lotto_id} trovato: ${JSON.stringify(lotto)}`);
+      
+      // Sistema centralizzato: non verifichiamo più il centro di origine
+      // Verifichiamo solo che il lotto non sia già prenotato
+      if (lotto.stato !== 'Verde' && lotto.stato !== 'Arancione') {
+        console.error(`Il lotto ${lotto_id} non è disponibile per la prenotazione, stato attuale: ${lotto.stato}`);
+        return res.status(400).json({
+          status: 'error',
+          message: `Il lotto non è disponibile per la prenotazione (stato: ${lotto.stato})`
+        });
+      }
+      
+      // Debug speciale per lotto 4 (Pere)
+      if (lotto_id == 4) {
+        console.log(`⚠️ DEBUG SPECIALE: Lotto 4 (Pere) ID=${lotto.id}, Stato=${lotto.stato}, Centro richiedente=${centro_id}`);
+        
+        // Verifichiamo se il lotto è effettivamente disponibile controllando il suo stato
+        if (lotto.stato === 'Prenotato') {
+          console.log(`⚠️ PROBLEMA IDENTIFICATO: Il lotto 4 (Pere) ha stato="Prenotato" nel DB ma non dovrebbe essere prenotabile!`);
+          return res.status(400).json({
+            status: 'error',
+            message: 'Questo lotto risulta già prenotato e non è disponibile'
+          });
+        }
+      }
+
+      // Verifica se esiste già una prenotazione per questo lotto specifico
+      console.log(`Verifica prenotazioni esistenti per il lotto ${lotto_id}...`);
+
+      const esistePrenotazioneQuery = `
+        SELECT id, lotto_id, tipo_utente_ricevente_id, stato 
+        FROM Prenotazioni
+        WHERE lotto_id = ? AND stato NOT IN ('Annullato', 'Eliminato')
+      `;
+
+      console.log(`Esecuzione query: ${esistePrenotazioneQuery.replace(/\n/g, ' ')} con lotto_id=${lotto_id}`);
+
+      const prenotazioniEsistenti = await db.all(esistePrenotazioneQuery, [lotto_id]);
+
+      console.log(`Risultato verifica prenotazioni per lotto_id=${lotto_id}: ${prenotazioniEsistenti.length} prenotazioni trovate`);
+
+      if (prenotazioniEsistenti.length > 0) {
+        console.log(`Dettagli prenotazioni trovate per lotto_id=${lotto_id}:`);
+        prenotazioniEsistenti.forEach((p, i) => {
+          console.log(`[${i+1}] Prenotazione ID=${p.id}, Lotto_ID=${p.lotto_id}, Centro=${p.tipo_utente_ricevente_id}, Stato=${p.stato}`);
+          // Verifica di sicurezza che il lotto_id corrisponda esattamente
+          if (p.lotto_id !== parseInt(lotto_id)) {
+            console.error(`⚠️ ATTENZIONE: ID lotto non corrispondente nella prenotazione ${p.id}: ${p.lotto_id} vs ${lotto_id}`);
+          }
+        });
+        
+        // Se ci sono prenotazioni esistenti, il lotto non è disponibile
+        console.error(`Il lotto ${lotto_id} risulta già prenotato. Dettagli: ${JSON.stringify(prenotazioniEsistenti)}`);
+        return res.status(400).json({
+          status: 'error',
+          message: 'Il lotto risulta già prenotato',
+          prenotazioni: prenotazioniEsistenti.map(p => ({ id: p.id, stato: p.stato }))
+        });
+      } else {
+        // Se siamo qui, non ci sono prenotazioni esistenti, ma facciamo un'ultima verifica sullo stato del lotto
+        console.log(`Verifica aggiuntiva dello stato attuale del lotto ${lotto_id}...`);
+        const lottoStatusQuery = `SELECT stato FROM Lotti WHERE id = ?`;
+        const lottoStatus = await db.get(lottoStatusQuery, [lotto_id]);
+        
+        console.log(`Stato attuale del lotto ${lotto_id}: ${lottoStatus ? lottoStatus.stato : 'Sconosciuto'}`);
+        
+        // Se il lotto è marcato come Prenotato ma non ci sono prenotazioni, correggiamo lo stato
+        if (lottoStatus && lottoStatus.stato === 'Prenotato') {
+          console.log(`⚠️ Lotto ${lotto_id} marcato come "Prenotato" ma nessuna prenotazione trovata. Correggo lo stato...`);
+          await db.run('UPDATE Lotti SET stato = ? WHERE id = ?', ['Verde', lotto_id]);
+          console.log(`✅ Stato del lotto ${lotto_id} corretto a "Verde"`);
+        }
+      }
+
+      console.log(`Nessuna prenotazione esistente per il lotto ${lotto_id}, procedo con la creazione`);
+      
+      // Crea la prenotazione con i dati ricevuti
+      let query = `
+        INSERT INTO Prenotazioni (
+          lotto_id, 
+          tipo_utente_ricevente_id, 
+          stato,
+          data_ritiro,
+          note
+        ) VALUES (?, ?, ?, ?, ?)
+      `;
+      
+      let params = [
+        lotto_id, 
+        centro_id, 
+        'Prenotato',  // Lo stato iniziale è "Prenotato"
+        data_ritiro || null,
+        note || null
+      ];
+      
+      console.log(`Creazione nuova prenotazione con parametri: ${JSON.stringify(params)}`);
+      
+      const result = await db.run(query, params);
+      
+      if (!result || !result.lastID) {
+        console.error('Errore nella creazione della prenotazione, nessun ID restituito');
+        return res.status(500).json({
+          status: 'error',
+          message: 'Errore interno durante la creazione della prenotazione'
+        });
+      }
+      
+      const prenotazioneId = result.lastID;
+      console.log(`Prenotazione creata con ID: ${prenotazioneId}`);
+      
+      // Ottieni i dettagli completi della prenotazione appena creata
+      const prenotazione = await db.get(
+        `SELECT 
+          p.id, p.lotto_id, p.tipo_utente_ricevente_id, p.stato, 
+          p.data_prenotazione, p.data_ritiro, p.note,
+          l.prodotto, l.quantita, l.unita_misura, l.data_scadenza
+         FROM Prenotazioni p
+         JOIN Lotti l ON p.lotto_id = l.id
+         WHERE p.id = ?`,
+        [prenotazioneId]
+      );
+      
+      // Nel sistema centralizzato, non abbiamo più bisogno di recuperare info sul centro origine
+      // Aggiungiamo il campo centro_origine_id come null per mantenere compatibilità
+      prenotazione.centro_origine_id = null;
+      
+      if (!prenotazione) {
+        console.error(`Prenotazione creata (ID: ${prenotazioneId}) ma impossibile recuperare i dettagli`);
+        return res.status(500).json({
+          status: 'error',
+          message: 'Prenotazione creata ma impossibile recuperare i dettagli'
+        });
+      }
+      
+      console.log(`Dettagli prenotazione creata: ${JSON.stringify(prenotazione)}`);
+      
+      // Aggiorna lo stato del lotto (opzionale, a seconda della logica di business)
+      try {
+        await db.run(
+          'UPDATE Lotti SET stato = ? WHERE id = ?',
+          ['Prenotato', lotto_id]
+        );
+        console.log(`Stato del lotto ${lotto_id} aggiornato a "Prenotato"`);
+      } catch (updateError) {
+        console.error(`Errore nell'aggiornamento dello stato del lotto:`, updateError);
+        // Non blocchiamo la risposta per questo errore
+      }
+      
+      // Chiama la funzione per notificare gli amministratori dopo aver creato la prenotazione
+      try {
+        await notificaAmministratori(prenotazioneId, lotto, centro_id, data_ritiro, note);
+        console.log(`Notifiche inviate per la prenotazione ${prenotazioneId}`);
+      } catch (notifyError) {
+        console.error(`Errore nell'invio delle notifiche:`, notifyError);
+        // Non blocchiamo la risposta per questo errore
+      }
+      
+      // Aggiungi dettagli al log per future verifiche
+      console.log(`✅ Prenotazione ${prenotazioneId} completata con successo per lotto ${lotto_id} da centro ${centro_id}`);
+      
+      return res.status(201).json({
+        status: 'success',
+        message: 'Prenotazione creata con successo',
+        data: prenotazione
+      });
+      
+    } catch (error) {
+      console.error('Errore durante la creazione della prenotazione:', error);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Errore interno del server durante la creazione della prenotazione',
+        error: error.message
+      });
+    }
   } catch (error) {
-    console.error('Errore nella creazione della prenotazione:', error);
     next(error);
   }
 };

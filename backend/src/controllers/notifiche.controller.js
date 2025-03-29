@@ -200,20 +200,25 @@ exports.getNotificaById = async (req, res, next) => {
  */
 exports.creaNotifica = async function(destinatario_id, tipo, titolo, messaggio, link = null, datiExtra = null) {
   try {
-    logger.info(`Creazione notifica per attore ${destinatario_id}: ${titolo}`);
+    logger.info(`[NOTIFICA] Creazione notifica per attore ${destinatario_id}: ${titolo}`);
+    console.log(`[NOTIFICA] Dettagli: tipo=${tipo}, destinatario=${destinatario_id}, titolo=${titolo}`);
     
     if (!destinatario_id || !tipo || !titolo || !messaggio) {
-      logger.error('Parametri mancanti nella creazione della notifica');
+      logger.error('[NOTIFICA] ❌ Parametri mancanti nella creazione della notifica');
+      console.error(`[NOTIFICA] ❌ Parametri ricevuti: destinatario=${destinatario_id}, tipo=${tipo}, titolo=${Boolean(titolo)}, messaggio=${Boolean(messaggio)}`);
       return null;
     }
     
     // Verifica che l'attore esista
+    console.log(`[NOTIFICA] Verifica esistenza attore ID ${destinatario_id}...`);
     const userResult = await db.get(`SELECT id FROM Attori WHERE id = ?`, [destinatario_id]);
     
     if (!userResult) {
-      logger.error(`Impossibile creare notifica: destinatario con ID ${destinatario_id} non trovato`);
+      logger.error(`[NOTIFICA] ❌ Impossibile creare notifica: destinatario con ID ${destinatario_id} non trovato`);
       return null;
     }
+    
+    console.log(`[NOTIFICA] ✅ Attore ID ${destinatario_id} trovato`);
     
     // Mappa il tipo a un valore consentito per il vincolo CHECK
     let tipoEffettivo = tipo;
@@ -221,7 +226,7 @@ exports.creaNotifica = async function(destinatario_id, tipo, titolo, messaggio, 
     // Verifica se il tipo è tra quelli consentiti
     const tipiConsentiti = ['CambioStato', 'Prenotazione', 'Alert'];
     if (!tipiConsentiti.includes(tipo)) {
-      logger.warn(`Tipo di notifica '${tipo}' non valido. Utilizzando 'Alert' come fallback.`);
+      logger.warn(`[NOTIFICA] ⚠️ Tipo di notifica '${tipo}' non valido. Utilizzando 'Alert' come fallback.`);
       // Mappa i nuovi tipi a 'Alert' per compatibilità
       if (tipo === 'LottoCreato' || tipo === 'LottoModificato' || tipo === 'info' || tipo === 'warning' || tipo === 'success' || tipo === 'error') {
         tipoEffettivo = 'Alert';
@@ -237,54 +242,93 @@ exports.creaNotifica = async function(destinatario_id, tipo, titolo, messaggio, 
     const datiExtraJson = datiExtra ? JSON.stringify(datiExtra) : null;
     
     try {
+      console.log(`[NOTIFICA] Inserimento notifica nel database: destinatario=${destinatario_id}, tipo=${tipoEffettivo}`);
+      
+      // Verifico l'esistenza della tabella Notifiche
+      try {
+        const tableCheck = await db.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='Notifiche'`);
+        console.log(`[NOTIFICA] Controllo tabella Notifiche: ${tableCheck ? 'Esiste' : '❌ NON ESISTE'}`);
+        
+        if (!tableCheck) {
+          logger.error('[NOTIFICA] ❌ La tabella Notifiche non esiste nel database!');
+          console.error('[NOTIFICA] ❌ È necessario inizializzare correttamente il database');
+          return null;
+        }
+      } catch (tableErr) {
+        console.error(`[NOTIFICA] ❌ Errore nel controllo della tabella: ${tableErr.message}`);
+      }
+      
+      // Provo a stampare la struttura della tabella
+      try {
+        const cols = await db.all(`PRAGMA table_info(Notifiche)`);
+        console.log(`[NOTIFICA] Colonne della tabella Notifiche: ${JSON.stringify(cols.map(col => col.name))}`);
+      } catch (colErr) {
+        console.error(`[NOTIFICA] ❌ Errore nell'ottenere la struttura della tabella: ${colErr.message}`);
+      }
+      
+      const insertQuery = `
+        INSERT INTO Notifiche (destinatario_id, tipo, titolo, messaggio, riferimento_id, creato_il, letto)
+        VALUES (?, ?, ?, ?, ?, ?, 0)
+      `;
+      
       const result = await db.run(
-        `INSERT INTO Notifiche (destinatario_id, tipo, titolo, messaggio, riferimento_id, creato_il, letto)
-         VALUES (?, ?, ?, ?, ?, ?, 0)`,
+        insertQuery, 
         [destinatario_id, tipoEffettivo, titolo, messaggio, datiExtraJson, timestamp]
       );
       
       if (!result || !result.lastID) {
-        logger.error(`Errore nell'inserimento della notifica nel database per l'attore ${destinatario_id}`);
+        logger.error(`[NOTIFICA] ❌ Errore nell'inserimento della notifica nel database per l'attore ${destinatario_id}`);
+        console.error(`[NOTIFICA] ❌ Risultato query: ${JSON.stringify(result)}`);
         return null;
       }
       
-      logger.info(`Notifica creata nel DB per attore ${destinatario_id}, ID: ${result.lastID}`);
+      logger.info(`[NOTIFICA] ✅ Notifica creata nel DB per attore ${destinatario_id}, ID: ${result.lastID}`);
       
       // Recupera la notifica appena creata
+      console.log(`[NOTIFICA] Recupero la notifica appena creata (ID: ${result.lastID})...`);
+      
       const notifica = await db.get(
         `SELECT * FROM Notifiche WHERE id = ?`,
         [result.lastID]
       );
       
       if (!notifica) {
-        logger.error(`Notifica creata ma non recuperata dal DB, ID: ${result.lastID}`);
+        logger.error(`[NOTIFICA] ❌ Notifica creata ma non recuperata dal DB, ID: ${result.lastID}`);
         return null;
       }
       
+      console.log(`[NOTIFICA] ✅ Notifica recuperata dal DB: ID=${notifica.id}`);
+      
       // Invia la notifica tramite WebSocket se disponibile
       try {
+        console.log(`[NOTIFICA] Tentativo di invio WebSocket per notifica ID: ${notifica.id}`);
         const webSocketService = require('../utils/websocket');
-        logger.info(`Tentativo di invio WebSocket per notifica ID: ${notifica.id}`);
         
         if (webSocketService && typeof webSocketService.inviaNotifica === 'function') {
           await webSocketService.inviaNotifica(destinatario_id, notifica);
-          logger.info(`Notifica inviata via WebSocket all'attore ${destinatario_id}`);
+          logger.info(`[NOTIFICA] ✅ Notifica inviata via WebSocket all'attore ${destinatario_id}`);
         } else {
-          logger.warn(`Servizio WebSocket non disponibile per l'invio della notifica ID: ${notifica.id}`);
+          logger.warn(`[NOTIFICA] ⚠️ Servizio WebSocket non disponibile per l'invio della notifica ID: ${notifica.id}`);
+          console.warn(`[NOTIFICA] ⚠️ WebSocket Service: ${typeof webSocketService}`);
+          if (webSocketService) {
+            console.warn(`[NOTIFICA] ⚠️ Metodi disponibili: ${Object.keys(webSocketService).join(', ')}`);
+          }
         }
       } catch (wsError) {
-        logger.error(`Errore nell'invio della notifica via WebSocket: ${wsError.message}`);
+        logger.error(`[NOTIFICA] ❌ Errore nell'invio della notifica via WebSocket: ${wsError.message}`);
+        console.error(`[NOTIFICA] ❌ WebSocket error stack: ${wsError.stack}`);
         // Continuiamo comunque dato che la notifica è stata salvata nel DB
       }
       
       return notifica;
     } catch (queryError) {
-      logger.error(`Errore SQL nella creazione della notifica: ${queryError.message}`);
+      logger.error(`[NOTIFICA] ❌ Errore SQL nella creazione della notifica: ${queryError.message}`);
+      console.error(`[NOTIFICA] ❌ SQL error stack: ${queryError.stack}`);
       return null;
     }
   } catch (error) {
-    logger.error(`Errore generale nella creazione della notifica: ${error.message}`);
-    logger.error(`Stack trace: ${error.stack}`);
+    logger.error(`[NOTIFICA] ❌ Errore generale nella creazione della notifica: ${error.message}`);
+    logger.error(`[NOTIFICA] ❌ Stack trace: ${error.stack}`);
     return null;
   }
 };
