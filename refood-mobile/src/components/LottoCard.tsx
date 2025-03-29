@@ -58,11 +58,11 @@ const LottoCard: React.FC<LottoCardProps> = ({ lotto, onPress, onPrenota }) => {
   const { user } = useAuth();
   
   // Controlla se l'utente può prenotare il lotto
-  const canPrenotareLotto = user?.ruolo === RUOLI.CENTRO_SOCIALE || user?.ruolo === RUOLI.CENTRO_RICICLAGGIO;
+  const canPrenotareLotto = user?.tipo_utente?.toUpperCase() === 'CANALE SOCIALE' || 
+                        user?.tipo_utente?.toUpperCase() === 'CENTRO RICICLO';
   
   // Gestione valori sicuri per evitare errori di rendering
   const nome = lotto.nome || 'Lotto senza nome';
-  const centroNome = lotto.centro_nome || `Centro #${lotto.centro_id || 'N/D'}`;
   const quantita = isNaN(Number(lotto.quantita)) ? '0' : lotto.quantita.toString();
   const unitaMisura = lotto.unita_misura || 'pz';
   const descrizione = lotto.descrizione || 'Nessuna descrizione disponibile';
@@ -90,7 +90,6 @@ const LottoCard: React.FC<LottoCardProps> = ({ lotto, onPress, onPrenota }) => {
           <View style={styles.header}>
             <View style={styles.titleContainer}>
               <Title style={styles.title}>{nome}</Title>
-              <Paragraph style={styles.subtitle}>{centroNome}</Paragraph>
             </View>
             <View style={styles.quantityContainer}>
               <Text style={styles.quantity}>{quantita}</Text>

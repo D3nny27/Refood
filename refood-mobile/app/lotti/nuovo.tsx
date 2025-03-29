@@ -38,7 +38,7 @@ import pushNotificationService from '../../src/services/pushNotificationService'
 import notificheService from '../../src/services/notificheService';
 import logger from '../../src/utils/logger';
 import { emitEvent, APP_EVENTS } from '../../src/utils/events';
-import { format } from 'date-fns';
+import { format, addDays } from 'date-fns';
 
 // Definizione delle unità di misura disponibili, raggruppate per tipo
 const UNITA_MISURA_GROUPS = {
@@ -65,74 +65,33 @@ const NuovoLottoScreen = () => {
   const { refreshNotifiche } = useNotifiche();
   const [loading, setLoading] = useState(false);
   
-  // Stato del form
+  // Stati per gestire il form
   const [nome, setNome] = useState('');
   const [descrizione, setDescrizione] = useState('');
   const [quantita, setQuantita] = useState('');
   const [unitaMisura, setUnitaMisura] = useState('kg');
-  const [dataScadenza, setDataScadenza] = useState<Date | null>(new Date());
-  const [centri, setCentri] = useState<any[]>([]);
-  const [centroSelezionato, setCentroSelezionato] = useState<any>(null);
-  const [loadingCentri, setLoadingCentri] = useState(false);
+  const [dataScadenza, setDataScadenza] = useState<Date | null>(addDays(new Date(), 7));
+  const [giorniPermanenza, setGiorniPermanenza] = useState('7');
+  const [categorieSelezionate, setCategorieSelezionate] = useState<string[]>([]);
   
-  // Stati dei modali
+  // Stati per gestire i modal
   const [showUnitaPicker, setShowUnitaPicker] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showCentriPicker, setShowCentriPicker] = useState(false);
+  const [showCategorieSelector, setShowCategorieSelector] = useState(false);
   
-  // Validazione
+  // Stati per gestire gli errori e il caricamento
   const [errors, setErrors] = useState({
     nome: false,
     quantita: false,
     dataScadenza: false,
-    centro: false,
   });
-
-  // Carica i centri disponibili all'avvio
+  
+  const [saving, setSaving] = useState(false);
+  
+  // Carica l'elenco delle categorie all'avvio
   useEffect(() => {
-    const caricaCentri = async () => {
-      try {
-        setLoadingCentri(true);
-        const response = await fetch(`${API_URL}/lotti/centri`, {
-          headers: {
-            'Authorization': `Bearer ${await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN)}`
-          }
-        });
-        
-        if (!response.ok) {
-          throw new Error('Errore nel caricamento dei centri');
-        }
-        
-        const data = await response.json();
-        // Verifico la struttura della risposta e imposto l'array di centri
-        if (data && data.centri && Array.isArray(data.centri)) {
-          setCentri(data.centri);
-          console.log(`Caricati ${data.centri.length} centri`);
-          
-          // Se c'è un solo centro, selezionalo automaticamente
-          if (data.centri.length === 1) {
-            setCentroSelezionato(data.centri[0]);
-            validateField('centro', data.centri[0]);
-          }
-        } else {
-          // Se la risposta non ha la struttura attesa, imposto un array vuoto
-          console.warn('Struttura risposta API centri non valida:', data);
-          setCentri([]);
-        }
-      } catch (error) {
-        console.error('Errore nel caricamento dei centri:', error);
-        Toast.show({
-          type: 'error',
-          text1: 'Errore',
-          text2: 'Impossibile caricare l\'elenco dei centri',
-        });
-        setCentri([]);
-      } finally {
-        setLoadingCentri(false);
-      }
-    };
-    
-    caricaCentri();
+    // TODO: La funzione loadCategorie non è definita, implementarla o rimuovere questo useEffect
+    // loadCategorie();
   }, []);
 
   // Verifica se l'utente ha i permessi necessari
@@ -226,9 +185,6 @@ const NuovoLottoScreen = () => {
           });
         }
         break;
-      case 'centro':
-        isValid = value !== null;
-        break;
     }
 
     setErrors(prev => ({ ...prev, [field]: !isValid }));
@@ -240,9 +196,8 @@ const NuovoLottoScreen = () => {
     const nomeValid = validateField('nome', nome);
     const quantitaValid = validateField('quantita', quantita);
     const dataValid = validateField('dataScadenza', dataScadenza);
-    const centroValid = validateField('centro', centroSelezionato);
     
-    return nomeValid && quantitaValid && dataValid && centroValid;
+    return nomeValid && quantitaValid && dataValid;
   };
 
   // Invia il form per creare un nuovo lotto
@@ -268,7 +223,7 @@ const NuovoLottoScreen = () => {
         quantita: parseFloat(quantita),
         unita_misura: unitaMisura,
         data_scadenza: dataScadenza.toISOString().split('T')[0] as string,
-        centro_id: centroSelezionato?.id || 1, // Usa l'ID del centro selezionato
+        centro_id: 1, // ID predefinito dato che il sistema non è più centralizzato
       };
       
       console.log('Dati lotto preparati:', JSON.stringify(lottoData, null, 2));
@@ -297,17 +252,17 @@ const NuovoLottoScreen = () => {
         const userNomeCompleto = user ? `${user.nome} ${user.cognome}` : 'Operatore';
         
         // Invia notifica agli amministratori del centro e crea notifica locale per l'operatore
-        if (centroSelezionato?.id) {
+        if (result.lotto?.id) {
           await notificheService.addNotificaToAmministratori(
-            centroSelezionato.id,
+            result.lotto.id,
             'Nuovo lotto creato',
             `Hai creato un nuovo lotto: ${nome} (${quantita} ${unitaMisura}), con scadenza: ${formatDate(dataScadenza)}`,
             userNomeCompleto
           );
           
-          logger.log(`Notifica inviata agli amministratori del centro ${centroSelezionato.id}`);
+          logger.log(`Notifica inviata agli amministratori del lotto ${result.lotto.id}`);
         } else {
-          logger.warn('Impossibile inviare notifica agli amministratori: centro_id mancante');
+          logger.warn('Impossibile inviare notifica agli amministratori: lotto_id mancante');
         }
         
         // Invia anche la notifica push locale
@@ -527,25 +482,6 @@ const NuovoLottoScreen = () => {
               </Pressable>
             </View>
             {errors.quantita && <HelperText type="error">Inserisci una quantità valida</HelperText>}
-            
-            {/* Selezione del centro */}
-            <Pressable 
-              style={styles.selectField}
-              onPress={() => setShowCentriPicker(true)}
-            >
-              <Text style={styles.selectLabel}>Centro di origine</Text>
-              <View style={[styles.selectValue, errors.centro && styles.errorBorder]}>
-                {loadingCentri ? (
-                  <Text>Caricamento centri...</Text>
-                ) : centroSelezionato ? (
-                  <Text>{centroSelezionato.nome}</Text>
-                ) : (
-                  <Text style={styles.selectPlaceholder}>Seleziona un centro</Text>
-                )}
-                <Ionicons name="chevron-down" size={20} color="#666" />
-              </View>
-              {errors.centro && <HelperText type="error">Seleziona un centro di origine</HelperText>}
-            </Pressable>
           </Card.Content>
         </Card>
         
@@ -744,69 +680,6 @@ const NuovoLottoScreen = () => {
                 onPress={() => setShowDatePicker(false)}
               >
                 Conferma
-              </Button>
-            </View>
-          </Surface>
-        </Modal>
-      </Portal>
-
-      {/* Modal per selezionare il centro */}
-      <Portal>
-        <Modal 
-          visible={showCentriPicker} 
-          onDismiss={() => setShowCentriPicker(false)}
-          contentContainerStyle={styles.modalContainer}
-        >
-          <Surface style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Seleziona centro</Text>
-            </View>
-            <Divider />
-            
-            <ScrollView style={styles.modalScroll}>
-              {loadingCentri ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="large" color={PRIMARY_COLOR} />
-                  <Text style={styles.loadingText}>Caricamento centri...</Text>
-                </View>
-              ) : !Array.isArray(centri) || centri.length === 0 ? (
-                <View style={styles.emptyCentriContainer}>
-                  <Ionicons name="alert-circle-outline" size={48} color="#999" />
-                  <Text style={styles.noCentriText}>Nessun centro disponibile.</Text>
-                </View>
-              ) : (
-                centri.map((centro) => (
-                  <List.Item
-                    key={centro.id}
-                    title={centro.nome}
-                    description={centro.indirizzo || 'Nessun indirizzo disponibile'}
-                    onPress={() => {
-                      setCentroSelezionato(centro);
-                      setShowCentriPicker(false);
-                      validateField('centro', centro);
-                    }}
-                    left={props => <List.Icon {...props} icon="domain" />}
-                    right={props => 
-                      centroSelezionato?.id === centro.id ? 
-                      <List.Icon {...props} icon="check-circle" color={theme.colors.primary} /> : 
-                      null
-                    }
-                    style={[
-                      styles.centroListItem,
-                      centroSelezionato?.id === centro.id && styles.selectedCentroItem
-                    ]}
-                  />
-                ))
-              )}
-            </ScrollView>
-            
-            <Divider />
-            <View style={styles.modalFooter}>
-              <Button 
-                mode="text" 
-                onPress={() => setShowCentriPicker(false)}
-              >
-                Chiudi
               </Button>
             </View>
           </Surface>

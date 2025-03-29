@@ -440,7 +440,7 @@ export default function LottiDisponibiliScreen() {
   // Funzione per mostrare il modale di prenotazione
   const handlePrenotazione = (lotto: Lotto) => {
     setLottoSelezionato(lotto as LottoWithCategoria);
-    setDataRitiroPrevista(addDays(new Date(), 1)); // Imposta la data di ritiro prevista a domani
+    setDataRitiroPrevista(addDays(new Date(), 1)); // Imposta la data di prelievo prevista a domani
     setNotePrenotazione('');
     setPrenotazioneModalVisible(true);
   };
@@ -470,10 +470,10 @@ export default function LottiDisponibiliScreen() {
     try {
       setPrenotazioneInCorso(true);
       
-      // Prepara la data di ritiro nel formato corretto
-      const dataRitiro = dataRitiroPrevista 
+      // Prepara la data di prelievo nel formato corretto
+      const dataRitiro = dataRitiroPrevista
         ? format(dataRitiroPrevista, 'yyyy-MM-dd')
-        : format(addDays(new Date(), 1), 'yyyy-MM-dd');
+        : undefined;
       
       // Converte manualCentroId in numero se necessario
       const overrideCentroId = showCentroIdInput && manualCentroId ? 
@@ -613,11 +613,6 @@ export default function LottiDisponibiliScreen() {
             </View>
             
             <View style={styles.dettaglioItem}>
-              <MapPin width={16} height={16} color="#555" />
-              <Text style={styles.dettaglioText}>{item.centro_nome}</Text>
-            </View>
-            
-            <View style={styles.dettaglioItem}>
               <Calendar width={16} height={16} color="#555" />
               <Text style={styles.dettaglioText}>
                 Scadenza: {formatDate(item.data_scadenza)}
@@ -647,7 +642,8 @@ export default function LottiDisponibiliScreen() {
             onPress={() => handlePrenotazione(item)}
             style={styles.prenotaButton}
             icon="shopping"
-            disabled={!user || ![RUOLI.CENTRO_SOCIALE, RUOLI.CENTRO_RICICLAGGIO].includes(user.ruolo)}
+            disabled={!user || !(user.tipo_utente?.toUpperCase() === 'CANALE SOCIALE' || 
+                               user.tipo_utente?.toUpperCase() === 'CENTRO RICICLO')}
           >
             Prenota
           </Button>
@@ -672,7 +668,7 @@ export default function LottiDisponibiliScreen() {
             {lottoSelezionato?.nome}
           </Text>
           <Text style={styles.dialogText}>
-            Quando prevedi di ritirare questo lotto?
+            Seleziona la data di prelievo:
           </Text>
           
           <View style={styles.dateButtonsContainer}>
@@ -894,7 +890,7 @@ export default function LottiDisponibiliScreen() {
       >
         <Surface style={styles.modalContent}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Seleziona data di ritiro</Text>
+            <Text style={styles.modalTitle}>Seleziona data di prelievo</Text>
           </View>
           <Divider />
           <View style={styles.datePickerContainer}>

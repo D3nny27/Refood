@@ -79,13 +79,15 @@ export const RUOLI = {
   AMMINISTRATORE: 'Amministratore',
   OPERATORE: 'Operatore',
   UTENTE: 'Utente',
+  CENTRO_SOCIALE: 'Canale Sociale',
+  CENTRO_RICICLAGGIO: 'Centro Riciclo'
 };
 
 // Tipi utente
 export const TIPI_UTENTE = {
   PRIVATO: 'Privato',
-  CANALE_SOCIALE: 'Canale sociale',
-  CENTRO_RICICLO: 'centro riciclo',
+  CANALE_SOCIALE: 'Canale Sociale',
+  CENTRO_RICICLO: 'Centro Riciclo',
 };
 
 // Configurazione della navigazione

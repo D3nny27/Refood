@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
-import { Redirect } from 'expo-router';
+import { router } from 'expo-router';
 import { useAuth } from '../src/context/AuthContext';
 import { PRIMARY_COLOR } from '../src/config/constants';
 
@@ -8,22 +8,24 @@ import { PRIMARY_COLOR } from '../src/config/constants';
 export default function IndexPage() {
   const { isAuthenticated, isLoading } = useAuth();
 
-  // Mostra il caricamento mentre verifichiamo lo stato di autenticazione
-  if (isLoading) {
-    return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
-        <Text style={styles.loadingText}>Caricamento in corso...</Text>
-      </View>
-    );
-  }
+  useEffect(() => {
+    if (!isLoading) {
+      // Reindirizza in base allo stato di autenticazione
+      if (isAuthenticated) {
+        router.replace("/(tabs)");
+      } else {
+        router.replace("/login");
+      }
+    }
+  }, [isAuthenticated, isLoading]);
 
-  // Reindirizza in base allo stato di autenticazione (semplice)
-  if (isAuthenticated) {
-    return <Redirect href="/(tabs)" />;
-  } else {
-    return <Redirect href="/login" />;
-  }
+  // Mostra il caricamento mentre verifichiamo lo stato di autenticazione
+  return (
+    <View style={styles.container}>
+      <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+      <Text style={styles.loadingText}>Caricamento in corso...</Text>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({

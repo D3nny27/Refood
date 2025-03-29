@@ -32,7 +32,7 @@ import { useAuth } from '../../../src/context/AuthContext';
 import { getLottoById, updateLotto, invalidateCache } from '../../../src/services/lottiService';
 import { prenotaLotto } from '../../../src/services/prenotazioniService';
 import { PRIMARY_COLOR, RUOLI, STORAGE_KEYS, API_URL } from '../../../src/config/constants';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
 import { format, addDays } from 'date-fns';
@@ -101,7 +101,8 @@ const DettaglioLottoScreen = () => {
   const theme = useTheme();
   const { user } = useAuth();
   const { refreshNotifiche } = useNotifiche();
-  const params = useLocalSearchParams();
+  // @ts-ignore - Ignoro temporaneamente l'errore di tipizzazione
+  const params = require('expo-router').useLocalSearchParams();
   const { id } = params;
   
   // Controlla se l'utente può modificare i lotti in base al suo ruolo
@@ -120,23 +121,16 @@ const DettaglioLottoScreen = () => {
   const [quantita, setQuantita] = useState('');
   const [unitaMisura, setUnitaMisura] = useState('kg');
   const [dataScadenza, setDataScadenza] = useState<Date | null>(new Date());
-  const [centri, setCentri] = useState<any[]>([]);
-  const [centroSelezionato, setCentroSelezionato] = useState<any>(null);
-  const [loadingCentri, setLoadingCentri] = useState(false);
   
   // Stati dei modali
   const [showUnitaPicker, setShowUnitaPicker] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showCentriPicker, setShowCentriPicker] = useState(false);
-  const [showCentroIdInput, setShowCentroIdInput] = useState(false);
-  const [manualCentroId, setManualCentroId] = useState('');
   
   // Validazione
   const [errors, setErrors] = useState({
     nome: false,
     quantita: false,
     dataScadenza: false,
-    centro: false,
   });
 
   // Stati per la prenotazione
@@ -145,9 +139,10 @@ const DettaglioLottoScreen = () => {
   const [notePrenotazione, setNotePrenotazione] = useState('');
   const [prenotazioneInCorso, setPrenotazioneInCorso] = useState(false);
   
-  // Determina se l'utente può prenotare il lotto (solo centri sociali o di riciclaggio)
+  // Determina se l'utente può prenotare il lotto (solo utenti del tipo centro di riciclo o canale sociale)
   const canPrenotareLotto = useMemo(() => {
-    return user?.ruolo === RUOLI.CENTRO_SOCIALE || user?.ruolo === RUOLI.CENTRO_RICICLAGGIO;
+    return user?.tipo_utente?.toUpperCase() === 'CANALE SOCIALE' || 
+           user?.tipo_utente?.toUpperCase() === 'CENTRO RICICLO';
   }, [user]);
   
   // Verifica i permessi di modifica all'avvio
@@ -288,9 +283,6 @@ const DettaglioLottoScreen = () => {
           console.error('Errore nella conversione della data:', dateError);
           setDataScadenza(new Date()); // Fallback alla data corrente
         }
-        
-        // Carica i centri
-        await caricaCentri();
       } catch (error) {
         console.error('Errore nel caricamento del lotto:', error);
         Toast.show({
@@ -307,53 +299,6 @@ const DettaglioLottoScreen = () => {
     fetchLotto();
   }, [id]);
 
-  // Quando vengono caricati i centri, aggiorna il centro selezionato
-  useEffect(() => {
-    if (lotto && Array.isArray(centri) && centri.length > 0) {
-      const centro = centri.find(c => c.id === lotto.centro_id);
-      if (centro) {
-        setCentroSelezionato(centro);
-      }
-    }
-  }, [centri, lotto]);
-
-  // Carica i centri disponibili
-  const caricaCentri = async () => {
-    try {
-      setLoadingCentri(true);
-      const response = await fetch(`${API_URL}/lotti/centri`, {
-        headers: {
-          'Authorization': `Bearer ${await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN)}`
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error('Errore nel caricamento dei centri');
-      }
-      
-      const data = await response.json();
-      // Verifico la struttura della risposta e imposto l'array di centri
-      if (data && data.centri && Array.isArray(data.centri)) {
-        setCentri(data.centri);
-        console.log(`Caricati ${data.centri.length} centri`);
-      } else {
-        // Se la risposta non ha la struttura attesa, imposto un array vuoto
-        console.warn('Struttura risposta API centri non valida:', data);
-        setCentri([]);
-      }
-    } catch (error) {
-      console.error('Errore nel caricamento dei centri:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Errore',
-        text2: 'Impossibile caricare l\'elenco dei centri',
-      });
-      setCentri([]);
-    } finally {
-      setLoadingCentri(false);
-    }
-  };
-
   // Validazione dei campi
   const validateField = (field: string, value: any) => {
     switch (field) {
@@ -367,9 +312,6 @@ const DettaglioLottoScreen = () => {
       case 'dataScadenza':
         setErrors(prev => ({ ...prev, dataScadenza: !value }));
         break;
-      case 'centro':
-        setErrors(prev => ({ ...prev, centro: !value }));
-        break;
       default:
         break;
     }
@@ -380,7 +322,6 @@ const DettaglioLottoScreen = () => {
       nome: !nome.trim(),
       quantita: isNaN(parseFloat(quantita)) || parseFloat(quantita) <= 0,
       dataScadenza: !dataScadenza,
-      centro: !centroSelezionato,
     };
     
     setErrors(newErrors);
@@ -414,7 +355,6 @@ const DettaglioLottoScreen = () => {
         quantita: parseFloat(quantita),
         unita_misura: unitaMisura,
         data_scadenza: formattedDate, // Formato YYYY-MM-DD per il backend
-        centroId: centroSelezionato?.id,
         notifyAdmin: true, // Notifica gli amministratori delle modifiche
       };
       
@@ -557,7 +497,7 @@ const DettaglioLottoScreen = () => {
     }
     
     // Mostra il modale di prenotazione
-    setDataRitiroPrevista(addDays(new Date(), 1)); // Imposta la data di ritiro prevista a domani
+    setDataRitiroPrevista(addDays(new Date(), 1)); // Imposta la data di prelievo prevista a domani
     setNotePrenotazione('');
     setPrenotazioneModalVisible(true);
   };
@@ -570,15 +510,11 @@ const DettaglioLottoScreen = () => {
       // Formatta la data nel formato YYYY-MM-DD
       const dataRitiroFormatted = format(dataRitiroPrevista, 'yyyy-MM-dd');
       
-      const overrideCentroId = showCentroIdInput && manualCentroId ? 
-        parseInt(manualCentroId, 10) : undefined;
-      
       // Effettua la prenotazione
       const result = await prenotaLotto(
         lotto?.id || 0,
         dataRitiroFormatted,
-        notePrenotazione || null,
-        overrideCentroId
+        notePrenotazione || null
       );
       
       if (result.success) {
@@ -613,19 +549,18 @@ const DettaglioLottoScreen = () => {
           Toast.show({
             type: 'error',
             text1: 'Lotto non disponibile',
-            text2: 'Questo lotto è già stato prenotato da un altro centro',
+            text2: 'Questo lotto è già stato prenotato da un altro utente',
             visibilityTime: 3000,
           });
           
           // Torna alla lista dei lotti
           router.push('/lotti');
         } else if (result.missingCentroId) {
-          setShowCentroIdInput(true);
-          
+          // Caso di ID Centro richiesto ma non fornito
           Toast.show({
             type: 'info',
-            text1: 'ID Centro richiesto',
-            text2: 'Inserisci il codice del tuo centro per completare la prenotazione',
+            text1: 'Configurazione mancante',
+            text2: 'Contatta l\'amministratore per completare la configurazione',
             visibilityTime: 3000,
           });
         } else {
@@ -711,13 +646,6 @@ const DettaglioLottoScreen = () => {
                 </View>
                 
                 <View style={styles.infoRow}>
-                  <Ionicons name="business" size={20} color="#666" />
-                  <Text style={styles.infoText}>
-                    Centro: <Text style={styles.infoValue}>{lotto.centro_nome || 'Non specificato'}</Text>
-                  </Text>
-                </View>
-                
-                <View style={styles.infoRow}>
                   <Ionicons name="person" size={20} color="#666" />
                   <Text style={styles.infoText}>
                     Creato da: <Text style={styles.infoValue}>{lotto.creato_nome || "Utente"}</Text>
@@ -737,7 +665,7 @@ const DettaglioLottoScreen = () => {
                   </Text>
                 </View>
 
-                {/* Pulsante di prenotazione per i centri beneficiari */}
+                {/* Pulsante di prenotazione */}
                 {canPrenotareLotto && (
                   <TouchableOpacity 
                     onPress={handlePrenotazione} 
@@ -817,30 +745,6 @@ const DettaglioLottoScreen = () => {
                 </View>
                 {errors.quantita && <HelperText type="error">Inserisci una quantità valida</HelperText>}
                 
-                {/* Selezione del centro */}
-                <Pressable 
-                  style={styles.selectField}
-                  onPress={() => setShowCentriPicker(true)}
-                >
-                  <Text style={styles.selectLabel}>Centro di origine</Text>
-                  <View style={[styles.selectValue, errors.centro && styles.errorBorder]}>
-                    {loadingCentri ? (
-                      <Text>Caricamento centri...</Text>
-                    ) : centroSelezionato ? (
-                      <Text>{centroSelezionato.nome}</Text>
-                    ) : (
-                      <Text style={styles.selectPlaceholder}>Seleziona un centro</Text>
-                    )}
-                    <Ionicons name="chevron-down" size={20} color="#666" />
-                  </View>
-                  {errors.centro && <HelperText type="error">Seleziona un centro di origine</HelperText>}
-                </Pressable>
-              </Card.Content>
-            </Card>
-            
-            <Card style={styles.formCard}>
-              <Card.Title title="Data di Scadenza" />
-              <Card.Content>
                 <Pressable 
                   onPress={() => setShowDatePicker(true)}
                   style={({ pressed }) => [
@@ -1024,57 +928,6 @@ const DettaglioLottoScreen = () => {
         </Modal>
       </Portal>
       
-      {/* Modal per la selezione del centro */}
-      <Portal>
-        <Modal 
-          visible={showCentriPicker} 
-          onDismiss={() => setShowCentriPicker(false)}
-          contentContainerStyle={styles.modalContainer}
-        >
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Seleziona centro</Text>
-            </View>
-            <ScrollView style={styles.modalScroll}>
-              {loadingCentri ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="large" color={PRIMARY_COLOR} />
-                  <Text style={styles.loadingText}>Caricamento centri...</Text>
-                </View>
-              ) : !Array.isArray(centri) || centri.length === 0 ? (
-                <View style={styles.emptyCentriContainer}>
-                  <Ionicons name="alert-circle-outline" size={48} color="#999" />
-                  <Text style={styles.noCentriText}>Nessun centro disponibile.</Text>
-                </View>
-              ) : (
-                centri.map(centro => (
-                  <List.Item
-                    key={centro.id}
-                    title={centro.nome}
-                    description={centro.indirizzo || 'Nessun indirizzo disponibile'}
-                    onPress={() => {
-                      setCentroSelezionato(centro);
-                      validateField('centro', centro);
-                      setShowCentriPicker(false);
-                    }}
-                    style={[
-                      styles.centroListItem,
-                      centroSelezionato?.id === centro.id && styles.selectedCentroItem
-                    ]}
-                    left={props => <List.Icon {...props} icon="domain" />}
-                    right={() => centroSelezionato?.id === centro.id ? 
-                      <List.Icon icon="check-circle" color={theme.colors.primary} /> : null}
-                  />
-                ))
-              )}
-            </ScrollView>
-            <View style={styles.modalFooter}>
-              <Button onPress={() => setShowCentriPicker(false)}>Chiudi</Button>
-            </View>
-          </View>
-        </Modal>
-      </Portal>
-      
       {/* Modal per la prenotazione del lotto */}
       <Portal>
         <Modal 
@@ -1094,7 +947,7 @@ const DettaglioLottoScreen = () => {
               
               <Divider style={styles.divider} />
               
-              <Text style={styles.prenotazioneLabel}>Data di ritiro prevista:</Text>
+              <Text style={styles.prenotazioneLabel}>Data di prelievo prevista:</Text>
               <Pressable 
                 onPress={() => setShowDatePicker(true)}
                 style={({ pressed }) => [
@@ -1385,13 +1238,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
     textAlign: 'center',
-  } as any,
-  centroListItem: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  } as any,
-  selectedCentroItem: {
-    backgroundColor: '#e8f5e9',
   } as any,
   dateButtonsContainer: {
     padding: 24,

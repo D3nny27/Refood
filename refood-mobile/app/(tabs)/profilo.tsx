@@ -93,11 +93,37 @@ export default function ProfiloScreen() {
           <View style={styles.profileInfo}>
             <Text style={styles.name}>{user?.nome} {user?.cognome}</Text>
             <Text style={styles.email}>{user?.email}</Text>
-            <Text style={styles.role}>
-              {user?.ruolo === RUOLI.AMMINISTRATORE ? 'Amministratore' : 
-               user?.ruolo === RUOLI.OPERATORE ? 'Operatore' : 
-               'Utente'}
-            </Text>
+            <View style={styles.roleContainer}>
+              {user?.ruolo === RUOLI.AMMINISTRATORE ? (
+                <View style={styles.userTypeContainer}>
+                  <Text style={styles.role}>Amministratore</Text>
+                  <View style={[styles.userTypeBadge, styles.badgeAmministratore]} />
+                </View>
+              ) : user?.ruolo === RUOLI.OPERATORE ? (
+                <View style={styles.userTypeContainer}>
+                  <Text style={styles.role}>Operatore</Text>
+                  <View style={[styles.userTypeBadge, styles.badgeOperatore]} />
+                </View>
+              ) : (
+                <View style={styles.userTypeContainer}>
+                  <Text style={styles.role}>
+                    {user?.tipo_utente && typeof user.tipo_utente === 'string' ? 
+                      (user.tipo_utente.toUpperCase() === 'PRIVATO' ? 'Utente privato' :
+                       user.tipo_utente.toUpperCase() === 'CANALE SOCIALE' ? 'Canale Sociale' :
+                       user.tipo_utente.toUpperCase() === 'CENTRO RICICLO' ? 'Centro riciclo' :
+                       user.tipo_utente) : 'Utente'}
+                  </Text>
+                  <View style={[
+                    styles.userTypeBadge,
+                    user?.tipo_utente && typeof user.tipo_utente === 'string' ? 
+                      (user.tipo_utente.toUpperCase() === 'PRIVATO' ? styles.badgePrivato :
+                       user.tipo_utente.toUpperCase() === 'CANALE SOCIALE' ? styles.badgeSociale :
+                       user.tipo_utente.toUpperCase() === 'CENTRO RICICLO' ? styles.badgeRiciclo :
+                       {}) : {}
+                  ]} />
+                </View>
+              )}
+            </View>
           </View>
         </Card.Content>
       </Card>
@@ -248,11 +274,40 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 4,
   },
+  roleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   role: {
     fontSize: 14,
     color: PRIMARY_COLOR,
     fontWeight: '500',
     marginTop: 4,
+  },
+  userTypeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  userTypeBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    marginLeft: 8,
+  },
+  badgePrivato: {
+    backgroundColor: '#4caf50',  // Verde
+  },
+  badgeSociale: {
+    backgroundColor: '#ff9800',  // Arancione
+  },
+  badgeRiciclo: {
+    backgroundColor: '#f44336',  // Rosso
+  },
+  badgeOperatore: {
+    backgroundColor: '#2196F3',  // Blu
+  },
+  badgeAmministratore: {
+    backgroundColor: '#2196F3',  // Blu
   },
   sectionCard: {
     margin: 16,

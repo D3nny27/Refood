@@ -22,6 +22,16 @@ const STATI_LOTTI = {
   ROSSO: 'Rosso'
 };
 
+// Formatta una data nel formato italiano
+const formatDate = (date: Date) => {
+  try {
+    return date.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  } catch (error) {
+    console.error('Errore nella formattazione della data:', error);
+    return 'Data non valida';
+  }
+};
+
 export default function LottiScreen() {
   // Stati per gestire i dati e le interazioni dell'utente
   const [lotti, setLotti] = useState<Lotto[]>([]);
@@ -42,12 +52,14 @@ export default function LottiScreen() {
   const [dataRitiroPrevista, setDataRitiroPrevista] = useState<Date | undefined>(addDays(new Date(), 1));
   const [notePrenotazione, setNotePrenotazione] = useState('');
   const [isPrenotazioneLoading, setIsPrenotazioneLoading] = useState(false);
-  const [manualCentroId, setManualCentroId] = useState<string>('');
-  const [showCentroIdInput, setShowCentroIdInput] = useState(false);
   const [showCustomDatePicker, setShowCustomDatePicker] = useState(false);
   
   // Ottieni l'utente autenticato
   const { user } = useAuth();
+  
+  // Ripristino le variabili di stato ma non saranno usate attivamente
+  const [manualCentroId, setManualCentroId] = useState<string>('');
+  const [showCentroIdInput, setShowCentroIdInput] = useState(false);
   
   // Costruisce i filtri da applicare alla richiesta
   const buildFiltri = (): LottoFiltri => {
@@ -254,7 +266,7 @@ export default function LottiScreen() {
   // Gestisce la prenotazione di un lotto
   const handlePrenotazioneLotto = (lotto: Lotto) => {
     // Verifica se l'utente ha i permessi necessari
-    if (user?.ruolo !== RUOLI.CENTRO_SOCIALE && user?.ruolo !== RUOLI.CENTRO_RICICLAGGIO) {
+    if (!(user?.tipo_utente?.toUpperCase() === 'CANALE SOCIALE' || user?.tipo_utente?.toUpperCase() === 'CENTRO RICICLO')) {
       Toast.show({
         type: 'error',
         text1: 'Permessi insufficienti',
@@ -266,8 +278,8 @@ export default function LottiScreen() {
     setSelectedLotto(lotto);
     setDataRitiroPrevista(addDays(new Date(), 1));
     setNotePrenotazione('');
-    setShowCentroIdInput(false); // Resetta lo stato del campo centro_id
-    setManualCentroId(''); // Resetta il valore del campo centro_id
+    setShowCentroIdInput(false);
+    setManualCentroId('');
     setShowModalPrenotazione(true);
   };
   
@@ -282,35 +294,27 @@ export default function LottiScreen() {
       return;
     }
     
-    // Verifica se è necessario il centro_id e non è stato inserito
-    if (showCentroIdInput && (!manualCentroId || isNaN(parseInt(manualCentroId, 10)))) {
-      Toast.show({
-        type: 'info',
-        text1: 'Centro richiesto',
-        text2: 'Inserisci un ID centro valido per completare la prenotazione',
-        visibilityTime: 3000,
-      });
-      return;
-    }
-    
     try {
       setIsPrenotazioneLoading(true);
       
-      // Prepara la data di ritiro nel formato corretto
-      const dataRitiro = dataRitiroPrevista 
+      // Prepara la data di prelievo nel formato corretto
+      const dataRitiro = dataRitiroPrevista
         ? format(dataRitiroPrevista, 'yyyy-MM-dd')
-        : format(addDays(new Date(), 1), 'yyyy-MM-dd');
+        : undefined;
       
-      // Converte manualCentroId in numero se necessario
-      const overrideCentroId = showCentroIdInput && manualCentroId ? 
-        parseInt(manualCentroId, 10) : undefined;
+      // Prepara l'oggetto prenotazione senza centro_id (sarà determinato dal backend)
+      const prenotazione = {
+        lottoId: selectedLotto.id,
+        note: notePrenotazione,
+        dataPrelievo: dataRitiro
+      };
       
       // Chiama il servizio di prenotazione
       const result = await prenotaLotto(
         selectedLotto.id,
         dataRitiro,
         notePrenotazione || null,
-        overrideCentroId
+        undefined
       );
       
       if (result.success) {
@@ -339,21 +343,12 @@ export default function LottiScreen() {
           Toast.show({
             type: 'error',
             text1: 'Lotto non disponibile',
-            text2: 'Questo lotto è già stato prenotato da un altro centro',
+            text2: 'Questo lotto è già stato prenotato da un altro punto di consegna',
             visibilityTime: 3000,
           });
           
           // Ricarica i lotti per rimuoverlo dalla lista
           await loadLotti(true);
-        } else if (result.missingCentroId) {
-          // Caso di centro_id mancante
-          setShowCentroIdInput(true);
-          Toast.show({
-            type: 'info',
-            text1: 'ID Centro richiesto',
-            text2: 'Inserisci il codice del tuo centro per completare la prenotazione',
-            visibilityTime: 3000,
-          });
         } else {
           // Altri errori
           Toast.show({
@@ -635,13 +630,8 @@ export default function LottiScreen() {
                     </View>
                     
                     <View style={styles.detailItem}>
-                      <Text style={styles.detailLabel}>Centro di origine</Text>
-                      <Text style={styles.detailValue}>{selectedLotto.centro_nome || `Centro #${selectedLotto.centro_id}`}</Text>
-                    </View>
-
-                    <View style={styles.detailItem}>
-                      <Text style={styles.detailLabel}>Ritiro entro</Text>
-                      <Text style={styles.detailValue}>{selectedLotto.data_scadenza ? new Date(selectedLotto.data_scadenza).toLocaleDateString('it-IT') : 'Non specificato'}</Text>
+                      <Text style={styles.detailLabel}>Prelievo entro</Text>
+                      <Text style={styles.detailValue}>{selectedLotto?.data_scadenza ? format(new Date(selectedLotto.data_scadenza), 'dd/MM/yyyy', { locale: it }) : 'N/D'}</Text>
                     </View>
                   </View>
                 </View>
@@ -661,7 +651,7 @@ export default function LottiScreen() {
                   </Button>
                 </View>
                 
-                <Text style={styles.sectionTitle}>Data di ritiro prevista</Text>
+                <Text style={styles.sectionTitle}>Data di prelievo prevista</Text>
                 <View style={styles.datePickerContainer}>
                   {/* DatePickerInput is removed as per the instructions */}
                   {Platform.OS === 'web' ? (
@@ -748,28 +738,6 @@ export default function LottiScreen() {
                   style={styles.notesInput}
                   dense={Platform.OS === 'ios' || Platform.OS === 'android'}
                 />
-                
-                {showCentroIdInput && (
-                  <View style={styles.centroIdContainer}>
-                    <Text style={[styles.sectionTitle, {color: '#F44336'}]}>Centro (richiesto)</Text>
-                    <Text style={styles.centroIdHelp}>
-                      Il sistema non è riuscito a determinare automaticamente il tuo centro. 
-                      Inserisci l'ID del tuo centro per completare la prenotazione.
-                      Questo valore verrà salvato per future prenotazioni, così non dovrai reinserirlo.
-                    </Text>
-                    <PaperTextInput
-                      mode="outlined"
-                      value={manualCentroId}
-                      onChangeText={setManualCentroId}
-                      placeholder="ID del centro (numero)"
-                      keyboardType="number-pad"
-                      style={styles.centroIdInput}
-                      right={<PaperTextInput.Icon icon="office-building" />}
-                      outlineStyle={{borderColor: '#F44336', borderWidth: 2}}
-                      error={manualCentroId !== '' && isNaN(parseInt(manualCentroId, 10))}
-                    />
-                  </View>
-                )}
               </View>
             )}
 
@@ -797,7 +765,7 @@ export default function LottiScreen() {
 
             <View style={styles.modalFooterNote}>
               <Text style={styles.footerText}>
-                La prenotazione ti impegna a ritirare il lotto nella data selezionata
+                La prenotazione ti impegna a prelevare il lotto nella data selezionata
               </Text>
             </View>
           </View>
@@ -813,7 +781,7 @@ export default function LottiScreen() {
         >
           <View style={styles.modalContent}>
             <View style={styles.modalHeaderContainer}>
-              <Text style={{fontSize: 18, fontWeight: 'bold', color: '#fff'}}>Seleziona data di ritiro</Text>
+              <Text style={{fontSize: 18, fontWeight: 'bold', color: '#fff'}}>Seleziona data di prelievo</Text>
             </View>
             
             <View style={{padding: 16}}>
@@ -1452,5 +1420,16 @@ const styles = StyleSheet.create({
   },
   pastDayText: {
     color: '#999',
+  },
+  stateBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+  },
+  stateBadgeText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 12,
   },
 }); 
