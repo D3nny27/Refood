@@ -159,11 +159,37 @@ const authorize = (roles = []) => {
       return next(new ApiError(401, 'Utente non autenticato'));
     }
     
-    if (roles.length && !roles.includes(req.user.ruolo)) {
-      return next(new ApiError(403, 'Non autorizzato: ruolo non sufficiente'));
+    // MIGLIORAMENTO: Verifica sia il ruolo che il tipo_utente
+    // Mappatura tra tipi utente e ruoli autorizzati
+    const tipoUtenteToRoles = {
+      'CANALE SOCIALE': ['TipoUtenteSociale', 'CentroSociale'],
+      'CENTRO RICICLO': ['TipoUtenteRiciclaggio', 'CentroRiciclaggio']
+    };
+    
+    console.log(`AUTH: Verifica autorizzazione per ruolo=${req.user.ruolo}, tipo_utente=${req.user.tipo_utente || 'non definito'}`);
+    
+    // Se il ruolo dell'utente è tra quelli autorizzati, consenti l'accesso
+    if (roles.includes(req.user.ruolo)) {
+      console.log(`AUTH: Autorizzazione concessa in base al ruolo: ${req.user.ruolo}`);
+      return next();
     }
     
-    next();
+    // Se l'utente ha un tipo_utente, verifica se corrisponde a uno dei ruoli autorizzati
+    if (req.user.tipo_utente) {
+      const tipoUtenteUpper = req.user.tipo_utente.toUpperCase();
+      const rolesForTipoUtente = tipoUtenteToRoles[tipoUtenteUpper] || [];
+      
+      // Verifica se c'è una intersezione tra i ruoli associati al tipo_utente e i ruoli autorizzati
+      const authorized = rolesForTipoUtente.some(role => roles.includes(role));
+      
+      if (authorized) {
+        console.log(`AUTH: Autorizzazione concessa in base al tipo_utente: ${req.user.tipo_utente}`);
+        return next();
+      }
+    }
+    
+    // Se non è stato autorizzato né per ruolo né per tipo_utente, nega l'accesso
+    return next(new ApiError(403, 'Non autorizzato: ruolo e tipo utente non sufficienti'));
   };
 };
 

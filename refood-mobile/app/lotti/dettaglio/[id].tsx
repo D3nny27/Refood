@@ -439,22 +439,43 @@ const DettaglioLottoScreen = () => {
     if (!lotto) return { label: 'In caricamento', color: '#666', bgColor: '#f5f5f5' };
     
     try {
-      const oggi = new Date();
-      const scadenza = new Date(lotto.data_scadenza);
+      // Usa direttamente lo stato calcolato dal backend
+      console.log('Stato del lotto dal backend:', lotto.stato);
       
-      if (scadenza < oggi) {
-        return { label: 'Scaduto', color: '#d32f2f', bgColor: '#ffebee' };
+      // Il backend può inviare "Verde", "Arancione", "Rosso"
+      switch(lotto.stato) {
+        case 'Rosso':
+          return { label: 'Scaduto', color: '#d32f2f', bgColor: '#ffebee' };
+        case 'Arancione':
+          return { label: 'In scadenza', color: '#ff9800', bgColor: '#fff3e0' };
+        case 'Verde':
+          return { label: 'Valido', color: '#43a047', bgColor: '#e8f5e9' };
+        default:
+          // Fallback al calcolo manuale solo se non c'è lo stato
+          const oggi = new Date();
+          const scadenza = new Date(lotto.data_scadenza);
+          
+          console.log('Fallback al calcolo manuale:', {
+            oggi: oggi.toISOString(),
+            scadenza: scadenza.toISOString(),
+          });
+          
+          if (scadenza < oggi) {
+            return { label: 'Scaduto', color: '#d32f2f', bgColor: '#ffebee' };
+          }
+          
+          // Giorni rimanenti
+          const diffTime = scadenza.getTime() - oggi.getTime();
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          console.log(`Giorni rimanenti (calcolo manuale): ${diffDays}`);
+          
+          // Utilizzo la soglia dei 5 giorni come nel resto dell'app
+          if (diffDays <= 5) {
+            return { label: 'In scadenza', color: '#ff9800', bgColor: '#fff3e0' };
+          }
+          
+          return { label: 'Valido', color: '#43a047', bgColor: '#e8f5e9' };
       }
-      
-      // Calcola i giorni rimanenti
-      const diffTime = Math.abs(scadenza.getTime() - oggi.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      
-      if (diffDays <= 3) {
-        return { label: 'In scadenza', color: '#ff9800', bgColor: '#fff3e0' };
-      }
-      
-      return { label: 'Valido', color: '#43a047', bgColor: '#e8f5e9' };
     } catch (error) {
       console.error('Errore nel calcolo dello stato del lotto:', error);
       return { label: 'Stato sconosciuto', color: '#666', bgColor: '#f5f5f5' };

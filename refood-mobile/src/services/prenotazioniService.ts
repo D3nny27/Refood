@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../config/constants';
 import { Lotto } from './lottiService';
 import notificheService from './notificheService';
+import NotificheService from './notificheService';
 
 // Chiave per memorizzare il centro_id nella cache locale
 const CENTRO_ID_STORAGE_KEY = 'user_centro_id';
@@ -123,13 +124,12 @@ export const getAuthHeader = async () => {
 export const prenotaLotto = async (
   lotto_id: number, 
   data_ritiro_prevista: string | null = null, 
-  note: string | null = null,
-  override_centro_id?: number // Parametro opzionale per specificare manualmente il centro_id
+  note: string | null = null
 ): Promise<PrenotazioneResponse> => {
   try {
     console.log(`Prenotazione del lotto ${lotto_id} in corso...`);
     
-    const headers = await getAuthHeader();
+    let headers = await getAuthHeader();
     console.log('Headers autenticazione:', headers);
     
     // MIGLIORAMENTO: Verifica prima lo stato del lotto per evitare prenotazioni multiple
@@ -142,17 +142,6 @@ export const prenotaLotto = async (
       
       const lotto = lottoResponse.data;
       console.log(`Stato attuale del lotto: "${lotto.stato || 'Non specificato'}"`);
-      
-      // CORREZIONE: I lotti con stato 'Verde' sono disponibili per la prenotazione
-      // Un lotto è prenotabile se è nello stato "Verde" (appena inserito) o se era stato annullato
-      if (lotto.stato && lotto.stato !== 'Verde' && lotto.stato !== 'Disponibile') {
-        console.error(`Impossibile prenotare lotto con stato "${lotto.stato}" (ID: ${lotto_id})`);
-        return {
-          success: false,
-          message: `Impossibile prenotare questo lotto: non è disponibile (stato "${lotto.stato}").`,
-          error: { status: 400, message: 'Lotto non disponibile per la prenotazione' }
-        };
-      }
       
       // Verifica se esistono già prenotazioni attive per questo lotto
       console.log(`Verifico se esistono già prenotazioni per il lotto ${lotto_id}...`);
@@ -175,45 +164,8 @@ export const prenotaLotto = async (
         
         // Log dettagliato delle prenotazioni trovate
         prenotazioniAttive.forEach((p: any, index: number) => {
-          console.error(`Prenotazione #${index+1}: ID=${p.id}, Stato=${p.stato}, Centro=${p.centro_ricevente_id || 'N/A'}`);
+          console.error(`Prenotazione #${index+1}: ID=${p.id}, Stato=${p.stato}`);
         });
-        
-        // Verifica se c'è una prenotazione dell'utente corrente
-        const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-        let user;
-        if (userData) {
-          user = JSON.parse(userData);
-        }
-        
-        // Ottieni l'ID del centro dell'utente corrente
-        let centro_utente_id = override_centro_id;
-        if (!centro_utente_id && user?.centro_id) {
-          centro_utente_id = user.centro_id;
-        }
-        if (!centro_utente_id) {
-          const cachedCentroId = await getCachedCentroId();
-          if (cachedCentroId !== null) {
-            centro_utente_id = cachedCentroId;
-          }
-        }
-        
-        // Se l'utente ha già una prenotazione attiva per questo lotto, informa l'utente
-        const prenotazioneUtenteCorrente = prenotazioniAttive.find((p: any) => p.centro_ricevente_id === centro_utente_id);
-        if (prenotazioneUtenteCorrente) {
-          console.warn(`L'utente ha già una prenotazione attiva (ID: ${prenotazioneUtenteCorrente.id}) per questo lotto`);
-          return {
-            success: false,
-            message: `Hai già una prenotazione attiva per questo lotto (Stato: ${prenotazioneUtenteCorrente.stato}).`,
-            error: { 
-              status: 400, 
-              message: 'Prenotazione duplicata',
-              prenotazioneEsistente: { 
-                id: prenotazioneUtenteCorrente.id, 
-                stato: prenotazioneUtenteCorrente.stato 
-              }
-            }
-          };
-        }
         
         return {
           success: false,
@@ -224,7 +176,7 @@ export const prenotaLotto = async (
             prenotazioniEsistenti: prenotazioniAttive.map((p: any) => ({ 
               id: p.id, 
               stato: p.stato,
-              centro: p.centro_ricevente_nome || `Centro #${p.centro_ricevente_id}`
+              centro: p.centro_ricevente_nome || `Centro #${p.centro_ricevente_id || 'N/A'}`
             }))
           }
         };
@@ -236,106 +188,6 @@ export const prenotaLotto = async (
       console.warn(`Errore durante la verifica dello stato del lotto ${lotto_id}:`, checkError.message);
       console.warn('Procedo comunque con il tentativo di prenotazione');
     }
-    
-    // Ottieni i dati dell'utente per recuperare il centro_id
-    const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-    if (!userData) {
-      throw new Error('Dati utente non trovati. Effettua nuovamente il login.');
-    }
-    
-    const user = JSON.parse(userData);
-    console.log('Dati utente per prenotazione:', user);
-    console.log('Ruolo utente:', user.ruolo);
-    
-    // Verifica se l'utente ha i permessi corretti
-    if (user.ruolo !== 'CentroSociale' && user.ruolo !== 'CENTRO_SOCIALE' && 
-        user.ruolo !== 'CentroRiciclaggio' && user.ruolo !== 'CENTRO_RICICLAGGIO') {
-      console.error('Errore di autorizzazione: ruolo non valido', user.ruolo);
-      throw new Error('Non hai i permessi per prenotare questo lotto. Solo i centri sociali o di riciclaggio possono prenotare.');
-    }
-    
-    // Se è stato fornito un override_centro_id, utilizzalo direttamente e salvalo per il futuro
-    let centro_id = override_centro_id;
-    if (override_centro_id) {
-      // Salva il centro_id per il futuro
-      await saveCentroId(override_centro_id);
-    } else {
-      // Altrimenti prova a usare quello nei dati utente
-      centro_id = user.centro_id;
-      
-      // Se non abbiamo ancora un centro_id, prova a recuperarlo dalla cache locale
-      if (!centro_id) {
-        const cachedCentroId = await getCachedCentroId();
-        if (cachedCentroId !== null) {
-          centro_id = cachedCentroId;
-          console.log('Usando centro_id dalla cache locale:', centro_id);
-        }
-      }
-    }
-    
-    console.log('Centro ID iniziale:', centro_id, 
-      override_centro_id ? '(override fornito)' : 
-      (user.centro_id ? '(dai dati utente)' : 
-      (centro_id ? '(dalla cache locale)' : '(non trovato)'))
-    );
-    
-    if (!centro_id) {
-      // Se l'utente è associato a più centri, prova a ottenere l'elenco
-      try {
-        console.log('Centro ID non trovato nei dati utente, provo a recuperarlo da /users/centri');
-        const userCentriResponse = await axios.get(`${API_URL}/users/centri`, { headers });
-        const centri = userCentriResponse.data?.centri || [];
-        
-        console.log('Centri associati all\'utente:', centri);
-        
-        if (centri.length === 0) {
-          throw new Error('Non sei associato a nessun centro. Impossibile effettuare la prenotazione.');
-        }
-        
-        // Usa il primo centro associato all'utente
-        centro_id = centri[0].id;
-        console.log('Centro ID ottenuto dalla lista centri:', centro_id);
-        
-        // Salva il centro_id per il futuro
-        if (centro_id !== undefined) {
-          await saveCentroId(centro_id);
-        }
-      } catch (err: any) {
-        console.error('Errore nel recupero dei centri:', err);
-        
-        // Se la chiamata users/centri non è disponibile e l'errore è 403/404, 
-        // proviamo ad ottenere il centro_id dal contesto dell'applicazione
-        if (err.response && (err.response.status === 403 || err.response.status === 404)) {
-          console.log('API users/centri non accessibile. Tentativo di prenotazione diretta...');
-          
-          // Se abbiamo un centro_id salvato in precedenza, utilizziamolo
-          const savedCentroId = await getCachedCentroId();
-          if (savedCentroId !== null) {
-            console.log('Usando centro_id salvato in precedenza:', savedCentroId);
-            centro_id = savedCentroId;
-          } else {
-            // Altrimenti, segnaliamo che è necessario fornire un centro_id manualmente
-            console.log('Nessun centro_id trovato, richiesto input manuale');
-            return {
-              success: false,
-              message: 'È necessario specificare manualmente il centro per la prenotazione',
-              missingCentroId: true
-            };
-          }
-        } else {
-          throw new Error('Impossibile recuperare il centro associato. Verifica la configurazione del tuo account.');
-        }
-      }
-    } else {
-      console.log('Centro ID già disponibile:', centro_id);
-    }
-    
-    if (!centro_id) {
-      throw new Error('Nessun centro valido associato al tuo account. Contatta l\'amministratore.');
-    }
-    
-    // Assicurati che il centro_id sia un numero 
-    const centro_ricevente_id = typeof centro_id === 'string' ? parseInt(centro_id, 10) : centro_id;
     
     // Controlla il formato della data, assicurandoti che sia valida
     if (data_ritiro_prevista) {
@@ -351,21 +203,20 @@ export const prenotaLotto = async (
         }
       } catch (err) {
         console.error('Errore nella validazione della data:', err);
-        throw new Error('Data di ritiro non valida. Utilizza il formato YYYY-MM-DD');
+        throw new Error('La data di ritiro prevista non è valida. Usa il formato YYYY-MM-DD.');
       }
     }
     
-    // Assicurati di usare il nome del campo corretto per l'API
+    // Costruisci il payload con solo i dati realmente necessari
     const payload = {
       lotto_id,
-      centro_ricevente_id,
       data_ritiro: data_ritiro_prevista,
-      note: note || undefined, // Invia undefined invece di null
-      percorso: null // Imposta esplicitamente percorso a null per evitare il tentativo di calcolo e salvataggio del trasporto
+      note
     };
     
-    console.log('Payload per prenotazione:', JSON.stringify(payload));
+    console.log('Invio richiesta di prenotazione con payload:', payload);
     
+    // Effettua la richiesta al backend
     const response = await axios.post(`${API_URL}/prenotazioni`, payload, {
       headers: {
         ...headers,
@@ -375,128 +226,70 @@ export const prenotaLotto = async (
       timeout: 30000
     });
     
-    console.log('Risposta prenotazione:', JSON.stringify(response.data));
+    console.log('Risposta ricevuta:', response.data);
     
-    // Invalida la cache
-    invalidateCache();
-    
-    // Invia notifica utilizzando setStatoPrenotazione per il primo stato
-    if (response.data.prenotazione) {
+    if (response.data && response.data.status === 'success') {
+      // Notifica dell'avvenuta prenotazione
       try {
-        const prenotazione = response.data.prenotazione;
-        
-        // Formatta informazioni dettagliate per la notifica
-        const dataRitiroString = data_ritiro_prevista 
-          ? `Data Ritiro Prevista: ${new Date(data_ritiro_prevista).toLocaleDateString('it-IT')}` 
-          : '';
-        
-        const notePrenotazione = [
-          dataRitiroString,
-          note ? `Note: ${note}` : ''
-        ].filter(Boolean).join('\n');
-        
-        // Utilizza setStatoPrenotazione per creare una notifica dettagliata
-        await setStatoPrenotazione(prenotazione.id, 'Prenotato', notePrenotazione);
-        
-        // MIGLIORAMENTO: Invia anche una notifica diretta al centro sociale
-        try {
-          // Dobbiamo ottenere dati più dettagliati per la notifica
-          const headers = await getAuthHeader();
-          const lottoResponse = await axios.get(`${API_URL}/lotti/${lotto_id}`, { 
-            headers,
-            timeout: 10000
-          });
-          
-          const lotto = lottoResponse.data;
-          // Prepara un messaggio specifico per il centro sociale che sta prenotando
-          const dettagliPrenotazione = [
-            `Nome Lotto: ${lotto.prodotto || lotto.nome || 'Non specificato'}`,
-            `Quantità: ${lotto.quantita || 'N/A'} ${lotto.unita_misura || 'pz'}`,
-            `Data Scadenza: ${lotto.data_scadenza ? new Date(lotto.data_scadenza).toLocaleDateString('it-IT') : 'N/A'}`,
-            `Centro di Origine: ${lotto.centro_nome || `Centro #${lotto.centro_id}`}`,
-            dataRitiroString,
-            note ? `Note: ${note}` : ''
-          ].filter(Boolean).join('\n');
-          
-          // Invia notifica specifica al centro sociale richiedente
-          await notificheService.addNotificaToCentroSociale(
-            centro_ricevente_id,
-            'Prenotazione inviata con successo',
-            `Hai inviato una prenotazione per un lotto. La tua richiesta è in attesa di conferma.\n\n${dettagliPrenotazione}`
-          );
-          
-          console.log(`Notifica di prenotazione inviata anche al centro sociale richiedente (ID: ${centro_ricevente_id})`);
-        } catch (directNotifyError) {
-          console.error('Errore nell\'invio della notifica diretta al centro sociale:', directNotifyError);
-        }
-        
-        console.log('Notifica di prenotazione inviata tramite setStatoPrenotazione');
-      } catch (notifyError) {
-        console.error('Errore nell\'invio della notifica di prenotazione:', notifyError);
-        // Non blocchiamo il flusso se fallisce la notifica
+        // Crea una notifica locale per confermare la prenotazione
+        notificheService.addLocalNotifica(
+          'Prenotazione effettuata',
+          `Hai prenotato il lotto "${response.data.data?.prodotto || 'Lotto #' + lotto_id}" con successo!`,
+          false,
+          true
+        );
+      } catch (notificaErr) {
+        console.warn('Errore nella generazione della notifica locale:', notificaErr);
+        // Ignoriamo eventuali errori nella generazione delle notifiche
       }
+      
+      return {
+        success: true,
+        message: response.data.message || 'Prenotazione effettuata con successo',
+        prenotazione: response.data.data
+      };
+    } else {
+      console.warn('Risposta anomala dal server:', response.data);
+      return {
+        success: false,
+        message: response.data.message || 'Errore nella prenotazione',
+        error: response.data.error || { status: response.status, message: 'Errore generico' }
+      };
     }
-    
-    return {
-      success: true,
-      message: response.data.message || 'Prenotazione effettuata con successo',
-      prenotazione: response.data.prenotazione
-    };
   } catch (error: any) {
     console.error('Errore nella prenotazione del lotto:', error);
     
-    // Log dettagliato per error 403
-    if (error.response && error.response.status === 403) {
-      console.error('Error 403 - Forbidden. Dettagli risposta:', error.response.data);
+    // Gestisci le risposte di errore dal server
+    if (error.response) {
+      console.error('Error ' + error.response.status + ' - ' + error.response.statusText);
+      console.error('Dettagli risposta:', error.response.data);
       
-      // Verifica se si tratta di un errore di permessi
-      if (error.response.data && (
-          error.response.data.message?.includes('permessi') || 
-          error.response.data.message?.includes('autorizzato') ||
-          error.response.data.message?.includes('ruolo')
-      )) {
-        // Recupera i dati utente per diagnosticare
+      // Log dei dati utente in caso di 403
+      if (error.response.status === 403) {
         try {
           const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
           const user = userData ? JSON.parse(userData) : null;
-          console.error('Dati utente durante errore 403:', user ? 
-            `ID: ${user.id}, Ruolo: ${user.ruolo}, Centro: ${user.centro_id}` : 
-            'Nessun dato utente trovato');
-        } catch (e) {
-          console.error('Errore nel recupero dati utente per diagnostica:', e);
+          console.error(`Dati utente durante errore 403: ID: ${user?.id}, Ruolo: ${user?.ruolo}, Centro: ${user?.centro_id}, [ERROR] ${error.response.status} - ${error.response.data?.message || error.response.statusText}`);
+        } catch (err) {
+          console.error('Errore nel log dei dati utente:', err);
         }
-        
-        return {
-          success: false,
-          message: error.response.data.message || 'Non hai i permessi necessari per prenotare questo lotto',
-          error: error.response.data,
-          missingCentroId: true  // Flag per indicare che potrebbe mancare il centro_id
-        };
-      } else {
-        // Potrebbe essere un problema con il centro_id
-        return {
-          success: false,
-          message: 'Errore di autorizzazione. Assicurati di essere associato ad un centro valido.',
-          error: error.response.data,
-          missingCentroId: true
-        };
       }
-    }
-    
-    // Se l'errore proviene dalla risposta, mostra il messaggio
-    if (error.response) {
+
       return {
         success: false,
-        message: error.response.data?.message || 'Errore nella prenotazione del lotto',
-        error: error.response.data
+        message: error.response.data?.message || `Errore ${error.response.status}: ${error.response.statusText}`,
+        error: {
+          status: error.response.status,
+          message: error.response.data?.message || error.response.statusText,
+          details: error.response.data
+        }
       };
     }
     
-    // Altrimenti mostra un messaggio generico
     return {
       success: false,
-      message: error.message || 'Errore nella prenotazione del lotto',
-      error
+      message: error.message || 'Errore nella prenotazione',
+      error: { message: error.message }
     };
   }
 };
@@ -1404,14 +1197,14 @@ export const setStatoPrenotazione = async (
           
           // Se è un centro sociale, invia anche a tutti gli utenti del centro
           try {
-            console.log(`Invio notifica agli utenti del centro sociale (ID: ${prenotazione.centro_ricevente_id})`);
-            await notificheService.addNotificaToCentroSociale(
+            console.log(`Invio notifica agli utenti del centro (ID: ${prenotazione.centro_ricevente_id})`);
+            await notificheService.addNotificaToCentroBySocialType(
               prenotazione.centro_ricevente_id,
               titoloRichiedente,
               messaggioRichiedente
             );
           } catch (csError) {
-            console.error(`Errore nell'invio delle notifiche al centro sociale: ${csError}`);
+            console.error(`Errore nell'invio delle notifiche al centro: ${csError}`);
           }
         }
       } catch (notifyError) {

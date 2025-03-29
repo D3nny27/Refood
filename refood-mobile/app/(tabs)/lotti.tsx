@@ -313,8 +313,7 @@ export default function LottiScreen() {
       const result = await prenotaLotto(
         selectedLotto.id,
         dataRitiro,
-        notePrenotazione || null,
-        undefined
+        notePrenotazione || null
       );
       
       if (result.success) {

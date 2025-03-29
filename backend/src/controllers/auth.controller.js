@@ -128,6 +128,9 @@ const login = async (req, res, next) => {
         if (tipoUtenteInfo) {
           user.tipo_utente = tipoUtenteInfo.tipo;
           logger.info(`Tipo utente rilevato per ${user.email}: ${user.tipo_utente}`);
+          
+          // Aggiungiamo un log dettagliato per debug
+          logger.info(`Dettagli completi utente: ruolo=${user.ruolo}, tipo_utente=${user.tipo_utente}`);
         } else {
           logger.warn(`Nessun tipo utente trovato per l'utente ${user.email} con ID ${user.id}`);
         }

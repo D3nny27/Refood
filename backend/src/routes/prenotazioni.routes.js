@@ -115,11 +115,8 @@ router.get('/:id', [
  *             type: object
  *             required:
  *               - lotto_id
- *               - tipo_utente_ricevente_id
  *             properties:
  *               lotto_id:
- *                 type: integer
- *               tipo_utente_ricevente_id:
  *                 type: integer
  *               note:
  *                 type: string
@@ -140,11 +137,9 @@ router.post('/', [
   authenticate,
   authorize(['TipoUtenteSociale', 'TipoUtenteRiciclaggio', 'Amministratore']),
   body('lotto_id').isInt().withMessage('ID lotto deve essere un numero intero'),
-  body('tipo_utente_ricevente_id').isInt().withMessage('ID centro ricevente deve essere un numero intero'),
   body('note').optional().isString().withMessage('Note deve essere una stringa'),
   body('data_ritiro').optional().isISO8601().withMessage('Data ritiro deve essere una data valida'),
-  validator.validate,
-  belongsToTipoUtente(req => req.body.tipo_utente_ricevente_id)
+  validator.validate
 ], prenotazioniController.createPrenotazione);
 
 /**

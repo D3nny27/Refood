@@ -236,156 +236,165 @@ async function notificaAmministratori(prenotazioneId, lotto, centro, data_ritiro
  */
 const createPrenotazione = async (req, res, next) => {
   try {
-    const { lotto_id, data_ritiro_prevista, note } = req.body;
+    console.log("Creazione prenotazione richiesta", req.body);
+
+    // Verifica che lotto_id sia presente e valido
+    const { lotto_id, note, data_ritiro } = req.body;
     
     if (!lotto_id) {
-      throw new ApiError(400, 'ID del lotto mancante');
+      return next(new ApiError(400, 'ID lotto mancante o non valido'));
     }
     
-    // Verifica che il lotto esista
-    const lottoQuery = `
-      SELECT l.*
-      FROM Lotti l
-      WHERE l.id = ?
+    if (isNaN(Number(lotto_id)) || Number(lotto_id) <= 0) {
+      return next(new ApiError(400, 'ID lotto deve essere un numero positivo'));
+    }
+    
+    // Log dell'utente corrente per debug
+    console.log('Utente che effettua la prenotazione:', {
+      id: req.user.id,
+      email: req.user.email,
+      ruolo: req.user.ruolo,
+      tipo_utente: req.user.tipo_utente
+    });
+
+    // Ottiene il tipo_utente_id dell'utente autenticato
+    const userTipoUtenteQuery = `
+      SELECT tipo_utente_id 
+      FROM AttoriTipoUtente 
+      WHERE attore_id = ?
     `;
     
+    console.log(`Cerco tipo_utente per l'attore ID: ${req.user.id}`);
+    const userTipoUtente = await db.get(userTipoUtenteQuery, [req.user.id]);
+    
+    console.log('Risultato query tipo utente:', userTipoUtente);
+    
+    if (!userTipoUtente || !userTipoUtente.tipo_utente_id) {
+      return next(new ApiError(400, `L'utente con ID ${req.user.id} non è associato a nessun tipo utente`));
+    }
+    
+    const tipo_utente_ricevente_id = userTipoUtente.tipo_utente_id;
+    console.log(`Tipo utente trovato: ${tipo_utente_ricevente_id}`);
+    
+    // Verifica dell'esistenza del lotto
+    const lottoQuery = `
+      SELECT * FROM Lotti 
+      WHERE id = ?
+    `;
+    
+    console.log(`Cerco il lotto con ID: ${lotto_id}`);
     const lotto = await db.get(lottoQuery, [lotto_id]);
     
     if (!lotto) {
-      throw new ApiError(404, 'Lotto non trovato');
+      return next(new ApiError(404, `Lotto con ID ${lotto_id} non trovato`));
     }
     
+    console.log('Lotto trovato:', { id: lotto.id, prodotto: lotto.prodotto });
+
     // Verifica che il lotto non sia già prenotato
-    const prenotazioneAttivaQuery = `
-      SELECT COUNT(*) AS count 
-      FROM Prenotazioni 
-      WHERE lotto_id = ? AND stato IN ('Attiva', 'In transito', 'Consegnata')
+    const esistePrenotazioneQuery = `
+      SELECT 1 FROM Prenotazioni
+      WHERE lotto_id = ? AND stato NOT IN ('Annullato', 'Eliminato')
     `;
     
-    const prenotazioneAttivaResult = await db.get(prenotazioneAttivaQuery, [lotto_id]);
-    
-    if (prenotazioneAttivaResult.count > 0) {
-      throw new ApiError(400, 'Questo lotto è già stato prenotato');
+    const esistePrenotazione = await db.get(esistePrenotazioneQuery, [lotto_id]);
+
+    if (esistePrenotazione) {
+      return next(new ApiError(400, 'Questo lotto è già stato prenotato'));
     }
+
+    // Manteniamo i log per tracciamento
+    console.log(`Stato lotto: ${lotto.stato}, Ruolo utente: ${req.user.ruolo}, Tipo utente: ${req.user.tipo_utente || 'non specificato'}`);
     
-    // Verifica che l'utente autorizzato possa prenotare questo tipo di lotto in base allo stato
-    const userRole = req.user.ruolo;
+    // Creazione della prenotazione
+    const dataPrenotazione = new Date().toISOString();
     
-    // Verifica che il centro dell'utente corrisponda al destinatario corretto in base allo stato
-    if (userRole !== 'Amministratore' && userRole !== 'Operatore') {
-      if (
-        (userRole === 'Privato' && lotto.stato !== 'Verde') ||
-        (userRole === 'Canale sociale' && lotto.stato !== 'Arancione') ||
-        (userRole === 'centro riciclo' && lotto.stato !== 'Rosso')
-      ) {
-        throw new ApiError(403, `Non hai il permesso di prenotare un lotto in stato ${lotto.stato}`);
-      }
-    }
-    
-    // Se l'utente non è un Amministratore o Operatore, deve avere un centro associato
-    let tipo_utente_ricevente_id = req.body.tipo_utente_ricevente_id;
-    
-    if (!tipo_utente_ricevente_id && userRole !== 'Amministratore' && userRole !== 'Operatore') {
-      // Trova il centro associato all'utente
-      const userCentroQuery = `
-        SELECT tipo_utente_id 
-        FROM AttoriTipoUtente 
-        WHERE attore_id = ? 
-        LIMIT 1
-      `;
-      
-      const userCentro = await db.get(userCentroQuery, [req.user.id]);
-      
-      if (!userCentro) {
-        throw new ApiError(400, 'Non hai un centro associato per effettuare prenotazioni');
-      }
-      
-      tipo_utente_ricevente_id = userCentro.tipo_utente_id;
-    }
-    
-    // Verifica che il centro esista
-    if (tipo_utente_ricevente_id) {
-      const centroQuery = `SELECT * FROM Tipo_Utente WHERE id = ?`;
-      const centro = await db.get(centroQuery, [tipo_utente_ricevente_id]);
-      
-      if (!centro) {
-        throw new ApiError(404, 'Centro ricevente non trovato');
-      }
-    }
-    
-    // Avvia la transazione
-    await db.exec('BEGIN TRANSACTION');
-    
-    try {
-      // Inserisci la prenotazione
-      const insertPrenotazioneQuery = `
-        INSERT INTO Prenotazioni (
-          lotto_id, 
-          tipo_utente_ricevente_id, 
-          data_prenotazione, 
-          data_ritiro_prevista, 
-          stato, 
-          note, 
-          creato_da
-        ) VALUES (?, ?, datetime('now'), ?, 'Attiva', ?, ?)
-      `;
-      
-      const result = await db.run(
-        insertPrenotazioneQuery, 
-        [
-          lotto_id, 
-          tipo_utente_ricevente_id, 
-          data_ritiro_prevista || null, 
-          note || null, 
-          req.user.id
-        ]
-      );
-      
-      const prenotazioneId = result.lastID;
-      
-      // Commit della transazione
-      await db.exec('COMMIT');
-      
-      // Ottieni il centro associato alla prenotazione
-      const centroQuery = `SELECT * FROM Tipo_Utente WHERE id = ?`;
-      const centro = await db.get(centroQuery, [tipo_utente_ricevente_id]);
-      
-      // Invia notifiche push agli amministratori (asincrono, dopo la risposta)
+    // Validazione della data di ritiro se presente
+    let dataRitiroValidata = null;
+    if (data_ritiro) {
       try {
-        await notificaAmministratori(
-          prenotazioneId, 
-          lotto, 
-          centro, 
-          data_ritiro_prevista, 
-          note
-        );
-      } catch (notificaErr) {
-        console.error(`Errore nell'invio delle notifiche: ${notificaErr.message}`);
-        // Continuiamo comunque, la prenotazione è stata creata
+        // Verifica che sia una data valida
+        const dataRitiroObj = new Date(data_ritiro);
+        dataRitiroValidata = dataRitiroObj.toISOString();
+      } catch (err) {
+        return next(new ApiError(400, 'Data di ritiro non valida. Usa il formato ISO 8601'));
       }
-      
-      // Ottieni i dettagli completi della prenotazione
-      const prenotazioneQuery = `
-        SELECT p.*, l.prodotto
-        FROM Prenotazioni p
-        JOIN Lotti l ON p.lotto_id = l.id
-        WHERE p.id = ?
-      `;
-      
-      const prenotazione = await db.get(prenotazioneQuery, [prenotazioneId]);
-      
-      // Invia la risposta
-      res.status(201).json({
-        status: 'success',
-        message: 'Prenotazione creata con successo',
-        data: prenotazione
-      });
-    } catch (error) {
-      // Rollback in caso di errore
-      await db.exec('ROLLBACK');
-      throw error;
     }
+    
+    const insertQuery = `
+      INSERT INTO Prenotazioni (
+        lotto_id,
+        tipo_utente_ricevente_id,
+        data_prenotazione,
+        data_ritiro,
+        note,
+        stato
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `;
+    
+    console.log('Inserimento prenotazione con parametri:', {
+      lotto_id,
+      tipo_utente_ricevente_id,
+      data_prenotazione: dataPrenotazione,
+      data_ritiro: dataRitiroValidata,
+      note: note || null
+    });
+    
+    const result = await db.run(
+      insertQuery, 
+      [
+        lotto_id,
+        tipo_utente_ricevente_id,
+        dataPrenotazione,
+        dataRitiroValidata,
+        note || null,
+        'Prenotato'
+      ]
+    );
+    
+    const prenotazioneId = result.lastID;
+    console.log(`Prenotazione creata con ID: ${prenotazioneId}`);
+
+    // Ottieni il tipo_utente
+    const tipoUtenteQuery = `SELECT * FROM Tipo_Utente WHERE id = ?`;
+    const tipoUtente = await db.get(tipoUtenteQuery, [tipo_utente_ricevente_id]);
+    
+    // Invia notifiche push agli amministratori (asincrono, dopo la risposta)
+    try {
+      await notificaAmministratori(
+        prenotazioneId, 
+        lotto, 
+        tipoUtente, 
+        dataRitiroValidata, 
+        note
+      );
+    } catch (notificaErr) {
+      console.error(`Errore nell'invio delle notifiche: ${notificaErr.message}`);
+      // Continuiamo comunque, la prenotazione è stata creata
+    }
+    
+    // Ottieni i dettagli completi della prenotazione
+    const prenotazioneQuery = `
+      SELECT 
+        p.*,
+        l.prodotto, l.quantita, l.unita_misura, l.data_scadenza,
+        tu.tipo AS tipo_utente_ricevente_nome
+      FROM Prenotazioni p
+      JOIN Lotti l ON p.lotto_id = l.id
+      JOIN Tipo_Utente tu ON p.tipo_utente_ricevente_id = tu.id
+      WHERE p.id = ?
+    `;
+    
+    const prenotazioneAggiornata = await db.get(prenotazioneQuery, [prenotazioneId]);
+    
+    // Invia la risposta
+    res.status(201).json({
+      status: 'success',
+      message: 'Prenotazione creata con successo',
+      data: prenotazioneAggiornata
+    });
   } catch (error) {
+    console.error('Errore nella creazione della prenotazione:', error);
     next(error);
   }
 };

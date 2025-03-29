@@ -1159,13 +1159,13 @@ class NotificheService {
   }
 
   /**
-   * Invia una notifica agli utenti di un centro sociale
-   * @param centroId ID del centro sociale
+   * Invia una notifica agli utenti di un centro di un certo tipo (canale sociale o centro riciclo)
+   * @param centroId ID del centro 
    * @param titolo Titolo della notifica
    * @param contenuto Corpo della notifica
    * @returns Promise<void>
    */
-  public async addNotificaToCentroSociale(
+  public async addNotificaToCentroBySocialType(
     centroId: number | null = null, 
     titolo: string, 
     contenuto: string
@@ -1179,17 +1179,17 @@ class NotificheService {
         true   // sincronizza con il server
       );
       
-      logger.log('Notifica locale per centro sociale aggiunta al contesto con ID:', notificaLocale.id);
+      logger.log('Notifica locale per centro aggiunta al contesto con ID:', notificaLocale.id);
       
       // Se non è specificato un centroId, otteniamo un centro valido dal backend
       if (centroId === null) {
-        console.error('CentroId non specificato per inviare notifica al centro sociale');
+        console.error('CentroId non specificato per inviare notifica al centro');
         return;
       }
       
       // Controllo finale che il centroId sia valido
       if (!centroId) {
-        console.error('CentroId non valido per inviare notifica al centro sociale');
+        console.error('CentroId non valido per inviare notifica al centro');
         return;
       }
 
@@ -1197,12 +1197,12 @@ class NotificheService {
       const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
       
       if (!token) {
-        console.warn('Token non disponibile per inviare notifica al centro sociale');
+        console.warn('Token non disponibile per inviare notifica al centro');
         // La notifica locale è già stata aggiunta sopra
         return;
       }
       
-      // Prepara i dati della notifica per il centro sociale
+      // Prepara i dati della notifica per il centro
       const notificaData = {
         titolo,
         messaggio: contenuto,
@@ -1210,10 +1210,10 @@ class NotificheService {
         priorita: 'Media'
       };
       
-      console.log(`Invio notifica al centro sociale ${centroId}: ${titolo}`);
+      console.log(`Invio notifica al centro ${centroId}: ${titolo}`);
       
-      // Invia la notifica al backend usando un endpoint specifico per i centri sociali
-      const response = await fetch(`${API_CONFIG.NOTIFICATIONS_API_URL}/centro-sociale/${centroId}`, {
+      // Invia la notifica al backend usando un endpoint generico
+      const response = await fetch(`${API_CONFIG.NOTIFICATIONS_API_URL}/centro/${centroId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1225,14 +1225,14 @@ class NotificheService {
       if (!response.ok) {
         // Se l'endpoint specifico non esiste, prova con l'endpoint generico
         if (response.status === 404) {
-          console.warn('Endpoint specifico per centro sociale non trovato, uso endpoint generico per amministratori');
+          console.warn('Endpoint specifico per centro non trovato, uso endpoint generico per amministratori');
           // Utilizziamo l'endpoint degli amministratori come fallback
           await this.addNotificaToAmministratori(centroId, titolo, contenuto);
           return;
         }
         
         const errorData = await response.json().catch(() => ({}));
-        console.error('Errore nell\'invio della notifica al centro sociale:', 
+        console.error('Errore nell\'invio della notifica al centro:', 
           response.status, errorData.message || response.statusText);
         
         // La notifica locale è già stata aggiunta sopra
@@ -1240,17 +1240,30 @@ class NotificheService {
       }
       
       const data = await response.json();
-      console.log('Notifica inviata al centro sociale con successo:', data);
+      console.log('Notifica inviata al centro con successo:', data);
       
       // Emetti manualmente un evento di refresh delle notifiche 
       // per garantire che il contesto venga aggiornato
       emitEvent(APP_EVENTS.REFRESH_NOTIFICATIONS);
       
     } catch (error) {
-      console.error('Errore nell\'invio della notifica al centro sociale:', error);
+      console.error('Errore nell\'invio della notifica al centro:', error);
       
       // La notifica locale è già stata aggiunta sopra
     }
+  }
+  
+  /**
+   * Invia una notifica agli utenti di un centro sociale (mantenuto per retrocompatibilità)
+   * @deprecated Usa addNotificaToCentroBySocialType
+   */
+  public async addNotificaToCentroSociale(
+    centroId: number | null = null, 
+    titolo: string, 
+    contenuto: string
+  ): Promise<void> {
+    // Usa il nuovo metodo più generico
+    return this.addNotificaToCentroBySocialType(centroId, titolo, contenuto);
   }
   
   /**
