@@ -32,7 +32,7 @@ async function trovaTipoUtenteConAmministratori() {
     const amministratori = await db.all(`
       SELECT u.id, u.nome, u.cognome, u.email
       FROM Attori u
-      JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+      JOIN AttoriTipoUtente uc ON u.id = uc.attore_id
       WHERE uc.tipo_utente_id = ? AND u.ruolo = 'Amministratore'
     `, [centro.id]);
     
@@ -442,7 +442,7 @@ exports.notificaAdminTipoUtente = async (centroId, tipo, titolo, messaggio, link
     const amministratori = await db.all(`
       SELECT u.id
       FROM Attori u
-      JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+      JOIN AttoriTipoUtente uc ON u.id = uc.attore_id
       WHERE uc.tipo_utente_id = ? AND u.ruolo = 'Amministratore'
     `, [centroId]);
     
@@ -701,7 +701,7 @@ exports.notifyAdmins = async (req, res, next) => {
     const query = `
       SELECT u.id 
       FROM Attori u
-      JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+      JOIN AttoriTipoUtente uc ON u.id = uc.attore_id
       WHERE uc.tipo_utente_id = ? 
       AND u.ruolo = 'Amministratore'
     `;

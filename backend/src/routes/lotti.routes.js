@@ -65,7 +65,7 @@ router.get('/test', (req, res) => {
  */
 router.get('/disponibili', [
   authenticate,
-  authorize(['TipoUtenteSociale', 'TipoUtenteRiciclaggio', 'Amministratore']),
+  authorize(['Utente', 'Operatore', 'Amministratore']),
   query('stato').optional().isString().isIn(['Verde', 'Arancione', 'Rosso']).withMessage('Stato non valido'),
   query('raggio').optional().isFloat({ min: 0.1 }).withMessage('Raggio deve essere un numero positivo'),
   query('lat').optional().isFloat().withMessage('Latitudine non valida'),
@@ -130,28 +130,6 @@ router.post('/test-create', authenticate, async (req, res, next) => {
     const userId = req.user.sub;
     console.log('ID attore estratto dal token:', userId);
     
-    // Ottieni un ID centro (utilizziamo il primo disponibile per semplicità)
-    let centroId = 1; // Valore predefinito
-    
-    try {
-      console.log('Cerco un centro valido per l\'attore');
-      const rows = await new Promise((resolve, reject) => {
-        db.all('SELECT tipo_utente_id FROM AttoriTipo_Utente WHERE attore_id = ? LIMIT 1', [userId], (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        });
-      });
-      
-      if (rows && rows.length > 0) {
-        centroId = rows[0].tipo_utente_id;
-        console.log('TipoUtente trovato:', centroId);
-      } else {
-        console.log('Nessun centro trovato per l\'attore, uso valore predefinito:', centroId);
-      }
-    } catch (dbErr) {
-      console.error('Errore nel recupero del centro:', dbErr);
-    }
-    
     // Dati completi per l'inserimento
     const dataScadenza = new Date();
     dataScadenza.setDate(dataScadenza.getDate() + 7); // Scadenza tra 7 giorni
@@ -162,7 +140,6 @@ router.post('/test-create', authenticate, async (req, res, next) => {
       quantita: parseFloat(quantita),
       unita_misura: 'kg',
       data_scadenza: dataScadenza.toISOString().split('T')[0],
-      tipo_utente_origine_id: centroId,
       stato: 'Verde',
       giorni_permanenza: 7
     };
@@ -187,9 +164,9 @@ router.post('/test-create', authenticate, async (req, res, next) => {
             const sql = `
               INSERT INTO Lotti (
                 prodotto, descrizione, quantita, unita_misura, 
-                data_inserimento, data_scadenza, tipo_utente_origine_id, 
+                data_inserimento, data_scadenza, 
                 stato, giorni_permanenza
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `;
             
             const params = [
@@ -199,7 +176,6 @@ router.post('/test-create', authenticate, async (req, res, next) => {
               lottoData.unita_misura,
               new Date().toISOString(),
               lottoData.data_scadenza,
-              lottoData.tipo_utente_origine_id,
               lottoData.stato,
               lottoData.giorni_permanenza
             ];
@@ -278,21 +254,24 @@ router.post("/simple-test", (req, res) => {
  * @swagger
  * /lotti/centri:
  *   get:
- *     summary: Ottieni centri disponibili per l'attore corrente
+ *     summary: (DEPRECATA) Ottieni centri disponibili
  *     tags: [Lotti]
  *     security:
  *       - bearerAuth: []
  *     responses:
- *       200:
- *         description: Lista di centri disponibili
- *       401:
- *         description: Autenticazione richiesta
+ *       410:
+ *         description: API deprecata
  *       500:
  *         description: Errore interno del server
  */
 router.get('/centri', [
   authenticate,
-], lottiController.getTipo_UtenteDisponibili);
+], (req, res) => {
+  // Funzione di risposta che indica che l'API è deprecata
+  res.status(410).json({
+    message: "Questa API è deprecata. Non è più necessario selezionare il centro per la creazione o la gestione dei lotti. Il sistema è ora centralizzato."
+  });
+});
 
 /**
  * @swagger
@@ -379,7 +358,6 @@ router.get('/', authenticate, lottiController.getLotti);
  *               - unita_misura
  *               - data_scadenza
  *               - giorni_permanenza
- *               - tipo_utente_origine_id
  *             properties:
  *               prodotto:
  *                 type: string
@@ -391,8 +369,6 @@ router.get('/', authenticate, lottiController.getLotti);
  *                 type: string
  *                 format: date
  *               giorni_permanenza:
- *                 type: integer
- *               tipo_utente_origine_id:
  *                 type: integer
  *               categorie_ids:
  *                 type: array
@@ -412,11 +388,9 @@ router.post('/', [
   body('unita_misura').isString().isIn(['kg', 'g', 'l', 'ml', 'pz']).withMessage('Unità di misura non valida'),
   body('data_scadenza').isDate().withMessage('Data di scadenza non valida'),
   body('giorni_permanenza').isInt({ min: 1 }).withMessage('Giorni di permanenza deve essere un numero intero positivo'),
-  body('tipo_utente_origine_id').isInt().withMessage('ID centro origine deve essere un numero intero'),
   body('categorie_ids').optional().isArray().withMessage('Categorie deve essere un array di ID'),
   body('categorie_ids.*').optional().isInt().withMessage('ID categoria deve essere un numero intero'),
-  validator.validate,
-  belongsToTipoUtente(req => req.body.tipo_utente_origine_id)
+  validator.validate
 ], lottiController.createLotto);
 
 /**

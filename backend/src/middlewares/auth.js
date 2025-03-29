@@ -107,6 +107,9 @@ const authenticate = async (req, res, next) => {
     const jwtId = jwt.decode(token).jti || 'no-jti';
     console.log(`AUTH: JTI estratto dal token: ${jwtId}`);
     
+    // Ottieni tutti i dati dal token decodificato
+    const decodedToken = jwt.decode(token);
+    
     // Utilizzo del metodo promisified invece della callback
     const row = await db.get(sql, [token, jwtId]);
     
@@ -121,10 +124,11 @@ const authenticate = async (req, res, next) => {
       email: row.email,
       nome: row.nome,
       cognome: row.cognome,
-      ruolo: row.ruolo
+      ruolo: row.ruolo,
+      tipo_utente: decodedToken.tipo_utente || null
     };
     
-    console.log(`AUTH: Autenticazione riuscita per attore ${row.email} con ruolo ${row.ruolo} per ${req.originalUrl}`);
+    console.log(`AUTH: Autenticazione riuscita per attore ${row.email} con ruolo ${row.ruolo}${req.user.tipo_utente ? `, tipo: ${req.user.tipo_utente}` : ''} per ${req.originalUrl}`);
     console.log('AUTH: Verifica del token JWT completata');
     next();
   } catch (err) {

@@ -40,6 +40,7 @@ const generateTokens = async (user) => {
       nome: user.nome,
       cognome: user.cognome,
       ruolo: user.ruolo,
+      tipo_utente: user.tipo_utente || null,
       jti: tokenId 
     },
     process.env.JWT_SECRET,
@@ -114,6 +115,28 @@ const login = async (req, res, next) => {
       throw new ApiError(401, 'Credenziali non valide');
     }
     
+    // Se l'utente ha ruolo "Utente", recuperiamo il suo tipo_utente
+    if (user.ruolo === 'Utente') {
+      try {
+        const tipoUtenteInfo = await db.get(`
+          SELECT tu.tipo 
+          FROM Tipo_Utente tu
+          JOIN AttoriTipoUtente atu ON tu.id = atu.tipo_utente_id
+          WHERE atu.attore_id = ?
+        `, [user.id]);
+        
+        if (tipoUtenteInfo) {
+          user.tipo_utente = tipoUtenteInfo.tipo;
+          logger.info(`Tipo utente rilevato per ${user.email}: ${user.tipo_utente}`);
+        } else {
+          logger.warn(`Nessun tipo utente trovato per l'utente ${user.email} con ID ${user.id}`);
+        }
+      } catch (err) {
+        logger.error(`Errore durante il recupero del tipo utente: ${err.message}`);
+        logger.error(err.stack);
+      }
+    }
+    
     // Genera tokens
     const tokens = await generateTokens(user);
     
@@ -184,17 +207,33 @@ const refreshToken = async (req, res, next) => {
     `, [refresh_token]);
     
     if (!tokenEntry) {
-      throw new ApiError(401, 'Refresh token non valido o scaduto');
+      logger.warn(`Refresh token non valido o scaduto: ${refresh_token.substring(0, 10)}...`);
+      return next(new ApiError(401, 'Refresh token non valido o scaduto'));
     }
     
-    // Genera un nuovo access token
-    const tokens = await generateTokens({
-      id: tokenEntry.id,
-      email: tokenEntry.email,
-      nome: tokenEntry.nome,
-      cognome: tokenEntry.cognome,
-      ruolo: tokenEntry.ruolo
-    });
+    // Se l'utente ha ruolo "Utente", recuperiamo il suo tipo_utente
+    if (tokenEntry.ruolo === 'Utente') {
+      try {
+        const tipoUtenteInfo = await db.get(`
+          SELECT tu.tipo 
+          FROM Tipo_Utente tu
+          JOIN AttoriTipoUtente atu ON tu.id = atu.tipo_utente_id
+          WHERE atu.attore_id = ?
+        `, [tokenEntry.id]);
+        
+        if (tipoUtenteInfo) {
+          tokenEntry.tipo_utente = tipoUtenteInfo.tipo;
+          logger.info(`Tipo utente rilevato per ${tokenEntry.email} durante refresh: ${tokenEntry.tipo_utente}`);
+        } else {
+          logger.warn(`Nessun tipo utente trovato per l'utente ${tokenEntry.email} con ID ${tokenEntry.id} durante refresh`);
+        }
+      } catch (err) {
+        logger.error(`Errore durante il recupero del tipo utente nel refresh: ${err.message}`);
+      }
+    }
+    
+    // Genera nuovi token
+    const tokens = await generateTokens(tokenEntry);
     
     // Aggiorna il token nel database
     await db.run(`

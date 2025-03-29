@@ -17,11 +17,9 @@ const getPrenotazioni = async (req, res, next) => {
       SELECT 
         p.*,
         l.prodotto, l.quantita, l.unita_misura, l.data_scadenza,
-        co.nome AS centro_origine_nome,
-        cr.nome AS centro_ricevente_nome
+        cr.tipo AS centro_ricevente_nome
       FROM Prenotazioni p
       JOIN Lotti l ON p.lotto_id = l.id
-      JOIN Tipo_Utente co ON l.tipo_utente_origine_id = co.id
       JOIN Tipo_Utente cr ON p.tipo_utente_ricevente_id = cr.id
       WHERE 1=1
     `;
@@ -34,16 +32,16 @@ const getPrenotazioni = async (req, res, next) => {
       params.push(stato);
     }
     
-    // Filtro per centro
+    // Filtro per centro ricevente
     if (centro) {
-      query += ' AND (p.tipo_utente_ricevente_id = ? OR l.tipo_utente_origine_id = ?)';
-      params.push(centro, centro);
+      query += ' AND p.tipo_utente_ricevente_id = ?';
+      params.push(centro);
     }
     
     // Per utenti con ruoli specifici, limita alle prenotazioni dei propri centri
     if (req.user.ruolo !== 'Amministratore') {
       const userTipo_UtenteQuery = `
-        SELECT tipo_utente_id FROM AttoriTipo_Utente WHERE attore_id = ?
+        SELECT tipo_utente_id FROM AttoriTipoUtente WHERE attore_id = ?
       `;
       
       const userTipo_Utente = await db.all(userTipo_UtenteQuery, [req.user.id]);
@@ -63,8 +61,8 @@ const getPrenotazioni = async (req, res, next) => {
       }
       
       const placeholders = centriIds.map(() => '?').join(',');
-      query += ` AND (p.tipo_utente_ricevente_id IN (${placeholders}) OR l.tipo_utente_origine_id IN (${placeholders}))`;
-      params.push(...centriIds, ...centriIds);
+      query += ` AND p.tipo_utente_ricevente_id IN (${placeholders})`;
+      params.push(...centriIds);
     }
     
     // Query per conteggio totale
@@ -108,12 +106,12 @@ const getPrenotazioneById = async (req, res, next) => {
       SELECT 
         p.*,
         l.prodotto, l.quantita, l.unita_misura, l.data_scadenza, l.stato AS stato_lotto,
-        co.nome AS centro_origine_nome, co.indirizzo AS indirizzo_origine, co.telefono AS telefono_origine,
-        cr.nome AS centro_ricevente_nome, cr.indirizzo AS indirizzo_ricevente, cr.telefono AS telefono_ricevente
+        cr.tipo AS centro_ricevente_nome, cr.indirizzo AS indirizzo_ricevente, cr.telefono AS telefono_ricevente,
+        a.nome AS creatore_nome, a.cognome AS creatore_cognome
       FROM Prenotazioni p
       JOIN Lotti l ON p.lotto_id = l.id
-      JOIN Tipo_Utente co ON l.tipo_utente_origine_id = co.id
       JOIN Tipo_Utente cr ON p.tipo_utente_ricevente_id = cr.id
+      LEFT JOIN Attori a ON l.inserito_da = a.id
       WHERE p.id = ?
     `;
     
@@ -124,16 +122,16 @@ const getPrenotazioneById = async (req, res, next) => {
     }
     
     // Verifica i permessi dell'attore
-    if (req.user.ruolo !== 'Amministratore') {
-      // Controlla se l'attore appartiene al centro origine o ricevente
+    if (req.user.ruolo !== 'Amministratore' && req.user.ruolo !== 'Operatore') {
+      // Controlla se l'attore appartiene al centro ricevente
       const userTipo_UtenteQuery = `
-        SELECT 1 FROM AttoriTipo_Utente 
-        WHERE attore_id = ? AND tipo_utente_id IN (?, ?)
+        SELECT 1 FROM AttoriTipoUtente 
+        WHERE attore_id = ? AND tipo_utente_id = ?
       `;
       
       const userCanAccess = await db.get(
         userTipo_UtenteQuery, 
-        [req.user.id, prenotazione.tipo_utente_origine_id, prenotazione.tipo_utente_ricevente_id]
+        [req.user.id, prenotazione.tipo_utente_ricevente_id]
       );
       
       if (!userCanAccess) {
@@ -161,16 +159,16 @@ const getPrenotazioneById = async (req, res, next) => {
 };
 
 /**
- * Invia notifiche push agli amministratori del centro di origine quando un lotto viene prenotato
+ * Invia notifiche push agli amministratori quando un lotto viene prenotato
  * @param {number} prenotazioneId - ID della prenotazione
  * @param {object} lotto - Dettagli del lotto prenotato
  * @param {object} centro - Dettagli del centro che ha effettuato la prenotazione
  * @param {string|null} data_ritiro - Data prevista per il ritiro (opzionale)
  * @param {string|null} note - Note aggiuntive (opzionale)
  */
-async function notificaAmministratoriTipoUtenteOrigine(prenotazioneId, lotto, centro, data_ritiro, note) {
+async function notificaAmministratori(prenotazioneId, lotto, centro, data_ritiro, note) {
   try {
-    // Recupera gli utenti amministratori e operatori del centro di origine
+    // Recupera gli utenti amministratori e operatori del sistema centralizzato
     const utentiQuery = `
       SELECT 
         u.id, 
@@ -178,84 +176,76 @@ async function notificaAmministratoriTipoUtenteOrigine(prenotazioneId, lotto, ce
         u.cognome, 
         u.token_notifiche
       FROM Attori u
-      JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
-      WHERE uc.tipo_utente_id = ? 
-      AND (u.ruolo = 'Amministratore' OR u.ruolo = 'Operatore')
+      WHERE (u.ruolo = 'Amministratore' OR u.ruolo = 'Operatore')
       AND u.token_notifiche IS NOT NULL
     `;
     
-    const utenti = await db.all(utentiQuery, [lotto.tipo_utente_origine_id]);
+    const utenti = await db.all(utentiQuery);
     if (utenti.length === 0) {
-      console.log(`Nessun amministratore o operatore con token notifiche trovato per il centro ${lotto.tipo_utente_origine_id}`);
+      console.log('Nessun amministratore o operatore con token notifiche trovato nel sistema');
       return;
     }
     
     // Costruisci il messaggio dettagliato
     const titolo = 'Nuova prenotazione ricevuta';
-    const messaggio = `Il lotto "${lotto.prodotto}" (${lotto.quantita} ${lotto.unita_misura}) è stato prenotato dal centro "${centro.nome}". ${data_ritiro ? `Ritiro previsto: ${data_ritiro}` : 'Data ritiro non specificata'}.`;
+    const messaggio = `Il lotto "${lotto.prodotto}" (${lotto.quantita} ${lotto.unita_misura}) è stato prenotato dal centro "${centro.tipo}". ${data_ritiro ? `Ritiro previsto: ${data_ritiro}` : 'Data ritiro non specificata'}.`;
     
     // Log per debug
     console.log(`Invio notifiche push a ${utenti.length} utenti per la prenotazione ${prenotazioneId}`);
     
     // Imposta le notifiche nel sistema (usato poi per le notifiche push)
-    const notificaQuery = `
-      INSERT INTO Notifiche (
-        titolo,
-        messaggio,
-        tipo,
-        priorita,
-        destinatario_id,
-        riferimento_id,
-        riferimento_tipo,
-        letto,
-        creato_il
-      ) VALUES (?, ?, 'Prenotazione', 'Alta', ?, ?, 'Prenotazione', 0, CURRENT_TIMESTAMP)
-    `;
-    
-    for (const attore of utenti) {
-      if (attore.token_notifiche) {
-        try {
-          // Inserisci la notifica nel database per questo attore specifico
-          await db.run(
-            notificaQuery, 
-            [
-              titolo,
-              messaggio,
-              attore.id,
-              prenotazioneId
-            ]
-          );
-          
-          console.log(`Notifica inserita per l'attore ${attore.id} (${attore.nome} ${attore.cognome})`);
-          
-          // Qui potremmo inviare una notifica push tramite Firebase o altro servizio esterno
-          // usando il token_notifiche dell'attore
-        } catch (notificaErr) {
-          console.error(`Errore durante l'inserimento della notifica per l'attore ${attore.id}:`, notificaErr);
-        }
+    for (const utente of utenti) {
+      try {
+        await notificheController.creaNotifica(
+          utente.id,
+          'Prenotazione',
+          titolo,
+          messaggio,
+          `/prenotazioni/${prenotazioneId}`,
+          {
+            prenotazioneId,
+            lottoId: lotto.id,
+            centroId: centro.id
+          }
+        );
+      } catch (err) {
+        console.error(`Errore nell'invio della notifica all'utente ${utente.id}: ${err.message}`);
       }
     }
     
-    console.log(`Notifiche inviate agli amministratori del centro di origine per la prenotazione ${prenotazioneId}`);
+    // Usa anche il WebSocket per notifiche real-time
+    websocket.notificaNuovaPrenotazione({
+      id: prenotazioneId,
+      lotto_id: lotto.id,
+      lotto_nome: lotto.prodotto,
+      centro_id: centro.id,
+      centro_nome: centro.tipo,
+      data_ritiro: data_ritiro,
+      data_prenotazione: new Date().toISOString()
+    });
+    
+    return true;
   } catch (error) {
-    console.error(`Errore nell'invio delle notifiche agli amministratori del centro: ${error.message}`);
-    throw error;
+    console.error(`Errore nella notifica amministratori: ${error.message}`);
+    return false;
   }
 }
 
 /**
- * Crea una nuova prenotazione
+ * Crea una nuova prenotazione per un lotto
  */
 const createPrenotazione = async (req, res, next) => {
   try {
-    const { lotto_id, tipo_utente_ricevente_id, note, data_ritiro } = req.body;
+    const { lotto_id, data_ritiro_prevista, note } = req.body;
     
-    // Verifica che il lotto esista e sia disponibile
+    if (!lotto_id) {
+      throw new ApiError(400, 'ID del lotto mancante');
+    }
+    
+    // Verifica che il lotto esista
     const lottoQuery = `
-      SELECT l.*, c.nome AS centro_nome, c.latitudine AS origine_lat, 
-             c.longitudine AS origine_lng, c.indirizzo AS origine_indirizzo
+      SELECT l.*
       FROM Lotti l
-      JOIN Tipo_Utente c ON l.tipo_utente_origine_id = c.id
       WHERE l.id = ?
     `;
     
@@ -266,215 +256,132 @@ const createPrenotazione = async (req, res, next) => {
     }
     
     // Verifica che il lotto non sia già prenotato
-    const prenotazioneEsistenteQuery = `
-      SELECT 1 FROM Prenotazioni
-      WHERE lotto_id = ? AND stato IN ('Prenotato', 'InAttesa', 'Confermato', 'InTransito')
+    const prenotazioneAttivaQuery = `
+      SELECT COUNT(*) AS count 
+      FROM Prenotazioni 
+      WHERE lotto_id = ? AND stato IN ('Attiva', 'In transito', 'Consegnata')
     `;
     
-    const prenotazioneEsistente = await db.get(prenotazioneEsistenteQuery, [lotto_id]);
+    const prenotazioneAttivaResult = await db.get(prenotazioneAttivaQuery, [lotto_id]);
     
-    if (prenotazioneEsistente) {
-      throw new ApiError(409, 'Questo lotto è già stato prenotato');
+    if (prenotazioneAttivaResult.count > 0) {
+      throw new ApiError(400, 'Questo lotto è già stato prenotato');
     }
     
-    // Verifica che il centro ricevente esista
-    const centroQuery = `
-      SELECT c.*, c.latitudine AS dest_lat, c.longitudine AS dest_lng, 
-             c.indirizzo AS dest_indirizzo 
-      FROM Tipo_Utente c 
-      WHERE id = ?
-    `;
-    const centro = await db.get(centroQuery, [tipo_utente_ricevente_id]);
+    // Verifica che l'utente autorizzato possa prenotare questo tipo di lotto in base allo stato
+    const userRole = req.user.ruolo;
     
-    if (!centro) {
-      throw new ApiError(404, 'TipoUtente ricevente non trovato');
+    // Verifica che il centro dell'utente corrisponda al destinatario corretto in base allo stato
+    if (userRole !== 'Amministratore' && userRole !== 'Operatore') {
+      if (
+        (userRole === 'Privato' && lotto.stato !== 'Verde') ||
+        (userRole === 'Canale sociale' && lotto.stato !== 'Arancione') ||
+        (userRole === 'centro riciclo' && lotto.stato !== 'Rosso')
+      ) {
+        throw new ApiError(403, `Non hai il permesso di prenotare un lotto in stato ${lotto.stato}`);
+      }
     }
     
-    // Verifica che il centro origine sia diverso dal centro ricevente
-    if (lotto.tipo_utente_origine_id === tipo_utente_ricevente_id) {
-      throw new ApiError(400, 'Il centro ricevente non può essere lo stesso del centro origine');
-    }
+    // Se l'utente non è un Amministratore o Operatore, deve avere un centro associato
+    let tipo_utente_ricevente_id = req.body.tipo_utente_ricevente_id;
     
-    // Calcola la distanza tra i due centri se entrambi hanno coordinate geografiche
-    let distanza = null;
-    let percorso = null;
-    if (lotto.origine_lat && lotto.origine_lng && centro.dest_lat && centro.dest_lng) {
-      // Calcolo della distanza approssimativa usando la formula di Haversine
-      const R = 6371; // Raggio della Terra in km
-      const dLat = (centro.dest_lat - lotto.origine_lat) * Math.PI / 180;
-      const dLon = (centro.dest_lng - lotto.origine_lng) * Math.PI / 180;
-      const a = 
-        Math.sin(dLat/2) * Math.sin(dLat/2) +
-        Math.cos(lotto.origine_lat * Math.PI / 180) * Math.cos(centro.dest_lat * Math.PI / 180) * 
-        Math.sin(dLon/2) * Math.sin(dLon/2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      distanza = R * c; // Distanza in km
+    if (!tipo_utente_ricevente_id && userRole !== 'Amministratore' && userRole !== 'Operatore') {
+      // Trova il centro associato all'utente
+      const userCentroQuery = `
+        SELECT tipo_utente_id 
+        FROM AttoriTipoUtente 
+        WHERE attore_id = ? 
+        LIMIT 1
+      `;
       
-      // Creiamo un oggetto percorso semplificato con le coordinate di partenza e arrivo
-      percorso = {
-        origine: {
-          lat: lotto.origine_lat,
-          lng: lotto.origine_lng,
-          indirizzo: lotto.origine_indirizzo
-        },
-        destinazione: {
-          lat: centro.dest_lat,
-          lng: centro.dest_lng,
-          indirizzo: centro.dest_indirizzo
-        },
-        distanza_km: distanza.toFixed(2)
-      };
+      const userCentro = await db.get(userCentroQuery, [req.user.id]);
+      
+      if (!userCentro) {
+        throw new ApiError(400, 'Non hai un centro associato per effettuare prenotazioni');
+      }
+      
+      tipo_utente_ricevente_id = userCentro.tipo_utente_id;
     }
     
-    // Avvia una transazione per garantire l'integrità dei dati
+    // Verifica che il centro esista
+    if (tipo_utente_ricevente_id) {
+      const centroQuery = `SELECT * FROM Tipo_Utente WHERE id = ?`;
+      const centro = await db.get(centroQuery, [tipo_utente_ricevente_id]);
+      
+      if (!centro) {
+        throw new ApiError(404, 'Centro ricevente non trovato');
+      }
+    }
+    
+    // Avvia la transazione
     await db.exec('BEGIN TRANSACTION');
     
     try {
-      // Crea la prenotazione
-      const insertQuery = `
+      // Inserisci la prenotazione
+      const insertPrenotazioneQuery = `
         INSERT INTO Prenotazioni (
-          lotto_id, tipo_utente_ricevente_id, stato, 
-          data_prenotazione, data_ritiro, note
-        ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+          lotto_id, 
+          tipo_utente_ricevente_id, 
+          data_prenotazione, 
+          data_ritiro_prevista, 
+          stato, 
+          note, 
+          creato_da
+        ) VALUES (?, ?, datetime('now'), ?, 'Attiva', ?, ?)
       `;
       
       const result = await db.run(
-        insertQuery, 
-        [lotto_id, tipo_utente_ricevente_id, 'Prenotato', data_ritiro || null, note || null]
+        insertPrenotazioneQuery, 
+        [
+          lotto_id, 
+          tipo_utente_ricevente_id, 
+          data_ritiro_prevista || null, 
+          note || null, 
+          req.user.id
+        ]
       );
       
       const prenotazioneId = result.lastID;
       
-      if (!prenotazioneId) {
-        throw new ApiError(500, 'Errore durante la creazione della prenotazione');
-      }
-      
-      // Se abbiamo calcolato un percorso, registriamo anche informazioni preliminari di trasporto
-      if (percorso) {
-        const insertTrasportoQuery = `
-          INSERT INTO Trasporti (
-            prenotazione_id, 
-            mezzo,
-            distanza_km, 
-            emissioni_co2, 
-            stato, 
-            latitudine_origine,
-            longitudine_origine,
-            indirizzo_origine,
-            latitudine_destinazione,
-            longitudine_destinazione,
-            indirizzo_destinazione
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `;
-        
-        // Calcoliamo una stima approssimativa delle emissioni di CO2 (0.2 kg per km)
-        const emissioni = distanza * 0.2;
-        
-        await db.run(
-          insertTrasportoQuery, 
-          [
-            prenotazioneId,
-            'Non specificato', // Valore predefinito per il campo mezzo
-            distanza, 
-            emissioni, 
-            'Pianificato',
-            lotto.origine_lat,
-            lotto.origine_lng,
-            lotto.origine_indirizzo,
-            centro.dest_lat,
-            centro.dest_lng,
-            centro.dest_indirizzo
-          ]
-        );
-      }
-      
-      // Crea notifica per il centro di origine
-      const notificaQuery = `
-        INSERT INTO Notifiche (
-          titolo,
-          messaggio,
-          tipo,
-          priorita,
-          destinatario_id,
-          riferimento_id,
-          riferimento_tipo,
-          letto,
-          creato_il
-        )
-        SELECT 
-          'Nuova prenotazione ricevuta',
-          'Il lotto "' || ? || '" (' || ? || ' ' || ? || ') è stato prenotato dal centro "' || ? || '". ' || 
-          'Data ritiro: ' || COALESCE(?, 'Non specificata') || '. ' || 
-          'Note: ' || COALESCE(?, 'Nessuna'), 
-          'Prenotazione',
-          'Alta',
-          u.id,
-          ?,
-          'Prenotazione',
-          0,
-          CURRENT_TIMESTAMP
-        FROM Attori u
-        JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
-        WHERE uc.tipo_utente_id = ? 
-        AND (u.ruolo = 'Amministratore' OR u.ruolo = 'Operatore')
-      `;
-      
-      await db.run(
-        notificaQuery, 
-        [
-          lotto.prodotto, 
-          lotto.quantita,
-          lotto.unita_misura,
-          centro.nome,
-          data_ritiro || 'Non specificata',
-          note || 'Nessuna',
-          prenotazioneId,
-          lotto.tipo_utente_origine_id
-        ]
-      );
-      
       // Commit della transazione
       await db.exec('COMMIT');
       
-      // Ottieni i dettagli completi della prenotazione appena creata
+      // Ottieni il centro associato alla prenotazione
+      const centroQuery = `SELECT * FROM Tipo_Utente WHERE id = ?`;
+      const centro = await db.get(centroQuery, [tipo_utente_ricevente_id]);
+      
+      // Invia notifiche push agli amministratori (asincrono, dopo la risposta)
+      try {
+        await notificaAmministratori(
+          prenotazioneId, 
+          lotto, 
+          centro, 
+          data_ritiro_prevista, 
+          note
+        );
+      } catch (notificaErr) {
+        console.error(`Errore nell'invio delle notifiche: ${notificaErr.message}`);
+        // Continuiamo comunque, la prenotazione è stata creata
+      }
+      
+      // Ottieni i dettagli completi della prenotazione
       const prenotazioneQuery = `
-        SELECT 
-          p.*,
-          l.prodotto, l.quantita, l.unita_misura, l.data_scadenza,
-          co.nome AS centro_origine_nome, co.latitudine AS origine_lat, co.longitudine AS origine_lng,
-          cr.nome AS centro_ricevente_nome, cr.latitudine AS dest_lat, cr.longitudine AS dest_lng,
-          t.distanza_km, t.emissioni_co2, t.stato AS stato_trasporto
+        SELECT p.*, l.prodotto
         FROM Prenotazioni p
         JOIN Lotti l ON p.lotto_id = l.id
-        JOIN Tipo_Utente co ON l.tipo_utente_origine_id = co.id
-        JOIN Tipo_Utente cr ON p.tipo_utente_ricevente_id = cr.id
-        LEFT JOIN Trasporti t ON p.id = t.prenotazione_id
         WHERE p.id = ?
       `;
       
       const prenotazione = await db.get(prenotazioneQuery, [prenotazioneId]);
       
+      // Invia la risposta
       res.status(201).json({
+        status: 'success',
         message: 'Prenotazione creata con successo',
-        prenotazione: prenotazione,
-        percorso: percorso
+        data: prenotazione
       });
-      
-      // Invia notifiche push agli amministratori del centro di origine (asincrono, dopo la risposta)
-      try {
-        await notificaAmministratoriTipoUtenteOrigine(
-          prenotazioneId, 
-          lotto, 
-          centro, 
-          data_ritiro, 
-          note
-        );
-      } catch (notifyError) {
-        console.error('Errore durante l\'invio delle notifiche push:', notifyError);
-        // Non propaga l'errore poiché la prenotazione è stata comunque creata con successo
-      }
     } catch (error) {
-      // In caso di errore, annulla la transazione
+      // Rollback in caso di errore
       await db.exec('ROLLBACK');
       throw error;
     }
@@ -493,7 +400,7 @@ const updatePrenotazione = async (req, res, next) => {
     
     // Verifica che la prenotazione esista
     const prenotazione = await db.get(
-      `SELECT p.*, l.prodotto, l.tipo_utente_origine_id, c.nome as centro_nome
+      `SELECT p.*, l.prodotto, l.tipo_utente_origine_id, c.tipo as centro_nome
        FROM Prenotazioni p
        JOIN Lotti l ON p.lotto_id = l.id
        JOIN Tipo_Utente c ON p.tipo_utente_destinazione_id = c.id
@@ -521,7 +428,7 @@ const updatePrenotazione = async (req, res, next) => {
     
     // Recupera la prenotazione aggiornata
     const prenotazioneAggiornata = await db.get(
-      `SELECT p.*, l.prodotto, l.tipo_utente_origine_id, c.nome as centro_nome
+      `SELECT p.*, l.prodotto, l.tipo_utente_origine_id, c.tipo as centro_nome
        FROM Prenotazioni p
        JOIN Lotti l ON p.lotto_id = l.id
        JOIN Tipo_Utente c ON p.tipo_utente_destinazione_id = c.id
@@ -541,7 +448,7 @@ const updatePrenotazione = async (req, res, next) => {
       const operatoriOrigine = await db.all(
         `SELECT u.id
          FROM Attori u
-         JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+         JOIN AttoriTipoUtente uc ON u.id = uc.attore_id
          WHERE uc.tipo_utente_id = ?`,
         [prenotazione.tipo_utente_origine_id]
       );
@@ -555,7 +462,7 @@ const updatePrenotazione = async (req, res, next) => {
     const operatoriDestinazione = await db.all(
       `SELECT u.id
        FROM Attori u
-       JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+       JOIN AttoriTipoUtente uc ON u.id = uc.attore_id
        WHERE uc.tipo_utente_id = ?`,
       [prenotazione.tipo_utente_destinazione_id]
     );
@@ -712,7 +619,7 @@ const addTrasporto = async (req, res, next) => {
         INSERT INTO Notifiche (tipo, messaggio, destinatario_id, creato_il)
         SELECT 'Prenotazione', ?, u.id, CURRENT_TIMESTAMP
         FROM Attori u
-        JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+        JOIN AttoriTipoUtente uc ON u.id = uc.attore_id
         WHERE uc.tipo_utente_id = ?
       `;
       
@@ -787,7 +694,7 @@ const cancelPrenotazione = async (req, res, next) => {
       INSERT INTO Notifiche (tipo, messaggio, destinatario_id, creato_il)
       SELECT 'Prenotazione', ?, u.id, CURRENT_TIMESTAMP
       FROM Attori u
-      JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+      JOIN AttoriTipoUtente uc ON u.id = uc.attore_id
       WHERE uc.tipo_utente_id IN (?, ?)
     `;
     
@@ -831,8 +738,8 @@ const getPrenotazioniByTipoUtente = async (req, res, next) => {
       SELECT 
         p.*,
         l.prodotto, l.quantita, l.unita_misura, l.data_scadenza, l.stato AS stato_lotto,
-        co.nome AS centro_origine_nome,
-        cr.nome AS centro_ricevente_nome
+        co.tipo AS centro_origine_nome,
+        cr.tipo AS centro_ricevente_nome
       FROM Prenotazioni p
       JOIN Lotti l ON p.lotto_id = l.id
       JOIN Tipo_Utente co ON l.tipo_utente_origine_id = co.id
@@ -894,7 +801,7 @@ const accettaPrenotazione = async (req, res, next) => {
         SELECT 
           p.*,
           l.prodotto, l.tipo_utente_origine_id,
-          cr.nome AS centro_ricevente_nome
+          cr.tipo AS centro_ricevente_nome
         FROM Prenotazioni p
         JOIN Lotti l ON p.lotto_id = l.id
         JOIN Tipo_Utente cr ON p.tipo_utente_ricevente_id = cr.id
@@ -910,7 +817,7 @@ const accettaPrenotazione = async (req, res, next) => {
       // Verifica che l'attore abbia i permessi necessari (deve appartenere al centro origine)
       if (req.user.ruolo !== 'Amministratore') {
         const userTipo_UtenteQuery = `
-          SELECT 1 FROM AttoriTipo_Utente 
+          SELECT 1 FROM AttoriTipoUtente 
           WHERE attore_id = ? AND tipo_utente_id = ?
         `;
         
@@ -963,7 +870,7 @@ const accettaPrenotazione = async (req, res, next) => {
           0,
           CURRENT_TIMESTAMP
         FROM Attori u
-        JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+        JOIN AttoriTipoUtente uc ON u.id = uc.attore_id
         WHERE uc.tipo_utente_id = ?
       `;
       
@@ -982,8 +889,8 @@ const accettaPrenotazione = async (req, res, next) => {
         SELECT 
           p.*,
           l.prodotto, l.quantita, l.unita_misura, l.data_scadenza,
-          co.nome AS centro_origine_nome,
-          cr.nome AS centro_ricevente_nome
+          co.tipo AS centro_origine_nome,
+          cr.tipo AS centro_ricevente_nome
         FROM Prenotazioni p
         JOIN Lotti l ON p.lotto_id = l.id
         JOIN Tipo_Utente co ON l.tipo_utente_origine_id = co.id
@@ -1028,7 +935,7 @@ const rifiutaPrenotazione = async (req, res, next) => {
         SELECT 
           p.*,
           l.prodotto, l.tipo_utente_origine_id,
-          cr.nome AS centro_ricevente_nome
+          cr.tipo AS centro_ricevente_nome
         FROM Prenotazioni p
         JOIN Lotti l ON p.lotto_id = l.id
         JOIN Tipo_Utente cr ON p.tipo_utente_ricevente_id = cr.id
@@ -1044,7 +951,7 @@ const rifiutaPrenotazione = async (req, res, next) => {
       // Verifica che l'attore abbia i permessi necessari (deve appartenere al centro origine)
       if (req.user.ruolo !== 'Amministratore') {
         const userTipo_UtenteQuery = `
-          SELECT 1 FROM AttoriTipo_Utente 
+          SELECT 1 FROM AttoriTipoUtente 
           WHERE attore_id = ? AND tipo_utente_id = ?
         `;
         
@@ -1098,7 +1005,7 @@ const rifiutaPrenotazione = async (req, res, next) => {
           0,
           CURRENT_TIMESTAMP
         FROM Attori u
-        JOIN AttoriTipo_Utente uc ON u.id = uc.attore_id
+        JOIN AttoriTipoUtente uc ON u.id = uc.attore_id
         WHERE uc.tipo_utente_id = ?
       `;
       
@@ -1126,8 +1033,8 @@ const rifiutaPrenotazione = async (req, res, next) => {
         SELECT 
           p.*,
           l.prodotto, l.quantita, l.unita_misura, l.data_scadenza,
-          co.nome AS centro_origine_nome,
-          cr.nome AS centro_ricevente_nome
+          co.tipo AS centro_origine_nome,
+          cr.tipo AS centro_ricevente_nome
         FROM Prenotazioni p
         JOIN Lotti l ON p.lotto_id = l.id
         JOIN Tipo_Utente co ON l.tipo_utente_origine_id = co.id
