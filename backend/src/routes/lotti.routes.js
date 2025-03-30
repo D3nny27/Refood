@@ -374,6 +374,9 @@ router.get('/', authenticate, lottiController.getLotti);
  *                 type: array
  *                 items:
  *                   type: integer
+ *               prezzo:
+ *                 type: number
+ *                 description: Prezzo del lotto (solo per lotti verdi)
  *     responses:
  *       201:
  *         description: Lotto creato con successo
@@ -390,6 +393,7 @@ router.post('/', [
   body('giorni_permanenza').isInt({ min: 1 }).withMessage('Giorni di permanenza deve essere un numero intero positivo'),
   body('categorie_ids').optional().isArray().withMessage('Categorie deve essere un array di ID'),
   body('categorie_ids.*').optional().isInt().withMessage('ID categoria deve essere un numero intero'),
+  body('prezzo').optional().isFloat({ min: 0 }).withMessage('Prezzo deve essere un numero positivo o zero'),
   validator.validate
 ], lottiController.createLotto);
 
@@ -487,7 +491,6 @@ router.get('/:id/impatto', [
  *         required: true
  *         schema:
  *           type: integer
- *         description: ID del lotto
  *     requestBody:
  *       required: true
  *       content:
@@ -509,10 +512,9 @@ router.get('/:id/impatto', [
  *               stato:
  *                 type: string
  *                 enum: [Verde, Arancione, Rosso]
- *               categorie_ids:
- *                 type: array
- *                 items:
- *                   type: integer
+ *               prezzo:
+ *                 type: number
+ *                 description: Prezzo del lotto (solo per lotti verdi)
  *     responses:
  *       200:
  *         description: Lotto aggiornato con successo
@@ -529,8 +531,7 @@ router.put('/:id', [
   body('data_scadenza').optional().isDate().withMessage('Data di scadenza non valida'),
   body('giorni_permanenza').optional().isInt({ min: 1 }).withMessage('Giorni di permanenza deve essere un numero intero positivo'),
   body('stato').optional().isString().isIn(['Verde', 'Arancione', 'Rosso']).withMessage('Stato non valido'),
-  body('categorie_ids').optional().isArray().withMessage('Categorie deve essere un array di ID'),
-  body('categorie_ids.*').optional().isInt().withMessage('ID categoria deve essere un numero intero'),
+  body('prezzo').optional().isFloat({ min: 0 }).withMessage('Prezzo deve essere un numero positivo o zero'),
   validator.validate
 ], lottiController.updateLotto);
 
@@ -561,6 +562,52 @@ router.delete('/:id', [
   param('id').isInt().withMessage('ID lotto deve essere un numero intero'),
   validator.validate
 ], lottiController.deleteLotto);
+
+// Endpoint temporaneo per aggiornare direttamente il prezzo di un lotto
+router.put('/:id/prezzo', [
+  authenticate,
+  authorize(['Operatore', 'Amministratore']),
+  param('id').isInt().withMessage('ID lotto deve essere un numero intero'),
+  body('prezzo').isFloat({ min: 0 }).withMessage('Prezzo deve essere un numero positivo o zero'),
+  validator.validate
+], async (req, res, next) => {
+  try {
+    const lottoId = req.params.id;
+    const { prezzo } = req.body;
+    
+    // Verifica che il lotto esista
+    const lotto = await db.get('SELECT * FROM Lotti WHERE id = ?', [lottoId]);
+    if (!lotto) {
+      return res.status(404).json({ status: 'error', message: 'Lotto non trovato' });
+    }
+    
+    // Verifica che il lotto sia verde (solo i lotti verdi possono avere un prezzo diverso da 0)
+    if (lotto.stato !== 'Verde' && prezzo > 0) {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: 'Solo i lotti verdi possono avere un prezzo. I lotti arancioni o rossi hanno automaticamente prezzo 0.'
+      });
+    }
+    
+    // Il prezzo effettivo da impostare
+    const prezzoEffettivo = lotto.stato === 'Verde' ? prezzo : 0;
+    
+    // Aggiorna direttamente solo il prezzo
+    await db.run('UPDATE Lotti SET prezzo = ? WHERE id = ?', [prezzoEffettivo, lottoId]);
+    
+    // Ottieni il lotto aggiornato
+    const lottoAggiornato = await db.get('SELECT * FROM Lotti WHERE id = ?', [lottoId]);
+    
+    return res.json({
+      status: 'success',
+      message: 'Prezzo del lotto aggiornato con successo',
+      data: lottoAggiornato
+    });
+  } catch (error) {
+    console.error('Errore nell\'aggiornamento del prezzo del lotto:', error);
+    return next(error);
+  }
+});
 
 // Middleware di autenticazione per le rotte successive
 router.use(authenticate);

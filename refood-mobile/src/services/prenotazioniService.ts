@@ -34,6 +34,9 @@ export interface Prenotazione {
   centro_ricevente_nome?: string;
   data_ritiro?: string;
   data_consegna?: string;
+  prezzo?: number | null; // Prezzo del lotto associato
+  tipo_pagamento?: 'contanti' | 'bonifico' | null; // Metodo di pagamento scelto
+  stato_lotto?: string; // Stato del lotto (Verde, Arancione, Rosso)
 }
 
 // Tipo per gli stati di prenotazione, usato per parametri tipizzati
@@ -124,7 +127,8 @@ export const getAuthHeader = async () => {
 export const prenotaLotto = async (
   lotto_id: number, 
   data_ritiro_prevista: string | null = null, 
-  note: string | null = null
+  note: string | null = null,
+  tipo_pagamento: 'contanti' | 'bonifico' | null = null
 ): Promise<PrenotazioneResponse> => {
   try {
     console.log(`Prenotazione del lotto ${lotto_id} in corso...`);
@@ -220,7 +224,8 @@ export const prenotaLotto = async (
     const payload = {
       lotto_id,
       data_ritiro: data_ritiro_prevista,
-      note: note || '' // Garantisce che note sia sempre una stringa, anche quando è vuoto o null
+      note: note || '', // Garantisce che note sia sempre una stringa, anche quando è vuoto o null
+      tipo_pagamento: tipo_pagamento || null // Aggiungiamo il tipo di pagamento
     };
     
     console.log('Invio richiesta di prenotazione con payload:', payload);

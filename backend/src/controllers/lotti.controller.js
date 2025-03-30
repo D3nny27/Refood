@@ -64,6 +64,35 @@ exports.getLotti = async (req, res, next) => {
       params.push(scadenza_entro);
     }
     
+    // Per gli utenti normali, escludi i lotti prenotati
+    // Per admin e operatori, mostra tutti i lotti ma aggiungi info prenotazione
+    let joinPrenotazioni = '';
+    if (userRuolo === 'Amministratore' || userRuolo === 'Operatore') {
+      // Per admin e operatori, facciamo un LEFT JOIN con le prenotazioni
+      // per includere informazioni sulla prenotazione
+      joinPrenotazioni = `
+        LEFT JOIN (
+          SELECT lotto_id, 'Prenotato' AS stato_prenotazione
+          FROM Prenotazioni 
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
+        ) p ON l.id = p.lotto_id
+      `;
+      
+      // Aggiungiamo il join alla query
+      query = query.replace('FROM Lotti l', `FROM Lotti l ${joinPrenotazioni}`);
+      
+      // Modifichiamo il SELECT per includere stato_prenotazione
+      query = query.replace('SELECT l.*', 'SELECT l.*, p.stato_prenotazione');
+    } else {
+      // Per utenti normali, filtra i lotti prenotati
+      whereConditions.push(`
+        l.id NOT IN (
+          SELECT lotto_id FROM Prenotazioni 
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
+        )
+      `);
+    }
+    
     // Filtro per ruolo utente e tipo utente (come in getLottiDisponibili)
     if (userRuolo === 'Utente' && !bypassFiltriTipoUtente) {
       const tipoUtenteUpper = userTipoUtente ? userTipoUtente.toUpperCase() : '';
@@ -120,6 +149,32 @@ exports.getLotti = async (req, res, next) => {
     
     logger.info(`Lotti recuperati: ${lotti.length}`);
     
+    // Per admin e operatori, verifichiamo quali lotti sono prenotati
+    if (userRuolo === 'Amministratore' || userRuolo === 'Operatore') {
+      // Ottieni tutte le prenotazioni attive
+      const prenotazioniQuery = `
+        SELECT lotto_id
+        FROM Prenotazioni
+        WHERE stato IN ('Prenotato', 'InTransito', 'Consegnato')
+      `;
+      
+      const prenotazioni = await db.all(prenotazioniQuery);
+      
+      if (prenotazioni && prenotazioni.length > 0) {
+        // Crea un set di IDs dei lotti prenotati per ricerca veloce
+        const lottiPrenotatiIds = new Set(prenotazioni.map(p => p.lotto_id));
+        logger.info(`Trovati ${lottiPrenotatiIds.size} lotti con prenotazioni attive`);
+        
+        // Aggiungi lo stato_prenotazione a ciascun lotto che ha prenotazioni
+        lotti.forEach(lotto => {
+          if (lottiPrenotatiIds.has(lotto.id)) {
+            lotto.stato_prenotazione = 'Prenotato';
+            logger.debug(`[FORZATO] Stato prenotazione per lotto ${lotto.id}`);
+          }
+        });
+      }
+    }
+    
     // Formatta le categorie da stringa a array
     const formattedLotti = lotti.map(lotto => ({
       ...lotto,
@@ -148,6 +203,13 @@ exports.getLottoById = async (req, res, next) => {
     const lottoId = req.params.id;
     logger.info(`Richiesta GET /lotti/${lottoId} ricevuta`);
     
+    // Utente autenticato
+    const userId = req.user.id;
+    const userRuolo = req.user.ruolo;
+    const userTipoUtente = req.user.tipo_utente;
+    
+    logger.debug(`Utente ${userId} con ruolo ${userRuolo}, tipo ${userTipoUtente} richiede dettagli lotto ${lottoId}`);
+    
     // Verifica se la tabella Categorie esiste
     let hasCategorieTable = false;
     try {
@@ -160,15 +222,41 @@ exports.getLottoById = async (req, res, next) => {
     }
     
     // Query per i dettagli del lotto
-    const query = `
-      SELECT l.*
-      ${hasCategorieTable ? ', GROUP_CONCAT(DISTINCT cat.nome) as categorie' : ', NULL as categorie'}
-      FROM Lotti l
-      ${hasCategorieTable ? 'LEFT JOIN LottiCategorie lc ON l.id = lc.lotto_id' : ''}
-      ${hasCategorieTable ? 'LEFT JOIN Categorie cat ON lc.categoria_id = cat.id' : ''}
-      WHERE l.id = ?
-      GROUP BY l.id
-    `;
+    let query;
+    
+    if (userRuolo === 'Amministratore' || userRuolo === 'Operatore') {
+      // Per admin e operatori, includono info prenotazione
+      query = `
+        SELECT l.*
+        ${hasCategorieTable ? ', GROUP_CONCAT(DISTINCT cat.nome) as categorie' : ', NULL as categorie'},
+        p.stato_prenotazione
+        FROM Lotti l
+        ${hasCategorieTable ? 'LEFT JOIN LottiCategorie lc ON l.id = lc.lotto_id' : ''}
+        ${hasCategorieTable ? 'LEFT JOIN Categorie cat ON lc.categoria_id = cat.id' : ''}
+        LEFT JOIN (
+          SELECT lotto_id, 'Prenotato' AS stato_prenotazione
+          FROM Prenotazioni 
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
+        ) p ON l.id = p.lotto_id
+        WHERE l.id = ?
+        GROUP BY l.id
+      `;
+    } else {
+      // Per utenti normali, filtra i lotti prenotati
+      query = `
+        SELECT l.*
+        ${hasCategorieTable ? ', GROUP_CONCAT(DISTINCT cat.nome) as categorie' : ', NULL as categorie'}
+        FROM Lotti l
+        ${hasCategorieTable ? 'LEFT JOIN LottiCategorie lc ON l.id = lc.lotto_id' : ''}
+        ${hasCategorieTable ? 'LEFT JOIN Categorie cat ON lc.categoria_id = cat.id' : ''}
+        WHERE l.id = ?
+        AND l.id NOT IN (
+          SELECT lotto_id FROM Prenotazioni 
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
+        )
+        GROUP BY l.id
+      `;
+    }
     
     const lotto = await db.get(query, [lottoId]);
     
@@ -180,7 +268,25 @@ exports.getLottoById = async (req, res, next) => {
     // Formatta le categorie da stringa a array
     lotto.categorie = lotto.categorie ? lotto.categorie.split(',') : [];
     
-    // Recupera le prenotazioni attive per questo lotto
+    // Per admin e operatori, verifica esplicitamente se il lotto è prenotato
+    if (userRuolo === 'Amministratore' || userRuolo === 'Operatore') {
+      // Controlla se ci sono prenotazioni attive per questo lotto
+      const prenotazioniAttualiQuery = `
+        SELECT COUNT(*) as count 
+        FROM Prenotazioni 
+        WHERE lotto_id = ? AND stato IN ('Prenotato', 'InTransito', 'Consegnato')
+      `;
+      
+      const prenotazioniAttuali = await db.get(prenotazioniAttualiQuery, [lottoId]);
+      
+      if (prenotazioniAttuali && prenotazioniAttuali.count > 0) {
+        // Se ci sono prenotazioni, aggiungi manualmente stato_prenotazione
+        lotto.stato_prenotazione = 'Prenotato';
+        logger.info(`[FORZATO] Stato prenotazione a "Prenotato" per lotto ${lottoId} perché ha ${prenotazioniAttuali.count} prenotazioni attive`);
+      }
+    }
+    
+    // Recupera le prenotazioni attive per questo lotto (per compatibilità)
     const prenotazioniQuery = `
       SELECT COUNT(*) as count
       FROM Prenotazioni
@@ -189,6 +295,11 @@ exports.getLottoById = async (req, res, next) => {
     
     const prenotazioniResult = await db.get(prenotazioniQuery, [lottoId]);
     lotto.prenotazioni_attive = prenotazioniResult?.count || 0;
+    
+    // Log dettagliato per debug
+    logger.info(`[DEBUG] Lotto ${lottoId} pronto per risposta con i seguenti dati:`);
+    logger.info(`[DEBUG] stato_prenotazione: ${lotto.stato_prenotazione || 'NON PRESENTE'}`);
+    logger.info(`[DEBUG] Lotto completo: ${JSON.stringify(lotto)}`);
     
     logger.info(`Dettagli del lotto ${lottoId} inviati con successo`);
     res.json(lotto);
@@ -220,7 +331,8 @@ exports.createLotto = async (req, res, next) => {
       unita_misura,
       data_scadenza,
       giorni_permanenza = 7,
-      categorie_ids = []
+      categorie_ids = [],
+      prezzo = null
     } = req.body;
     
     if (!prodotto || !quantita || !unita_misura || !data_scadenza) {
@@ -260,8 +372,9 @@ exports.createLotto = async (req, res, next) => {
           giorni_permanenza, 
           stato, 
           inserito_da, 
-          creato_il
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+          creato_il,
+          prezzo
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
       `;
       
       const insertParams = [
@@ -271,7 +384,8 @@ exports.createLotto = async (req, res, next) => {
         data_scadenza,
         giorni_permanenza,
         stato,
-        req.user.id
+        req.user.id,
+        prezzo
       ];
       
       logger.debug(`Query inserimento lotto: ${insertQuery}`);
@@ -495,7 +609,8 @@ exports.updateLotto = async (req, res, next) => {
       data_scadenza,
       giorni_permanenza,
       stato,
-      categorie_ids
+      categorie_ids,
+      prezzo
     } = req.body;
     
     // Costruisci oggetto con i campi da aggiornare
@@ -506,6 +621,12 @@ exports.updateLotto = async (req, res, next) => {
     if (data_scadenza !== undefined) updateFields.data_scadenza = data_scadenza;
     if (giorni_permanenza !== undefined) updateFields.giorni_permanenza = giorni_permanenza;
     if (stato !== undefined) updateFields.stato = stato;
+    if (prezzo !== undefined) {
+      updateFields.prezzo = prezzo;
+      logger.info(`Campo prezzo presente nel payload: ${prezzo}`);
+    } else {
+      logger.info(`Campo prezzo non presente nel payload`);
+    }
     
     // Log dei campi da aggiornare
     logger.info(`Campi da aggiornare: ${JSON.stringify(updateFields)}`);
@@ -601,6 +722,12 @@ exports.updateLotto = async (req, res, next) => {
           if (updateFields.data_scadenza) {
             const lottoAggiornato = await db.get('SELECT data_scadenza FROM Lotti WHERE id = ?', [lottoId]);
             logger.info(`Verifica dell'aggiornamento della data: data precedente=${lotto.data_scadenza}, nuova data=${lottoAggiornato.data_scadenza}`);
+          }
+          
+          // Verifica esplicita se il prezzo è stato aggiornato nel database
+          if (updateFields.prezzo !== undefined) {
+            const lottoAggiornato = await db.get('SELECT prezzo FROM Lotti WHERE id = ?', [lottoId]);
+            logger.info(`Verifica dell'aggiornamento del prezzo: prezzo precedente=${lotto.prezzo}, nuovo prezzo=${lottoAggiornato.prezzo}`);
           }
         } catch (dbError) {
           logger.error(`Errore nell'aggiornamento del lotto nel DB: ${dbError.message}`);
@@ -978,14 +1105,33 @@ exports.getLottiDisponibili = async (req, res, next) => {
     const params = [];
     const whereConditions = [];
     
-    // Filtro base: lotti che non sono stati prenotati da nessun altro attore
-    // Nota: utilizziamo UPPER() per fare un confronto case-insensitive
-    whereConditions.push(`
-      l.id NOT IN (
-        SELECT lotto_id FROM Prenotazioni 
-        WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
-      )
-    `);
+    // Per gli utenti normali, escludi i lotti prenotati
+    // Per admin e operatori, mostra tutti i lotti ma aggiungi info prenotazione
+    if (userRuolo === 'Amministratore' || userRuolo === 'Operatore') {
+      // Per admin e operatori, facciamo un LEFT JOIN con le prenotazioni
+      // per includere informazioni sulla prenotazione
+      const joinPrenotazioni = `
+        LEFT JOIN (
+          SELECT lotto_id, 'Prenotato' AS stato_prenotazione
+          FROM Prenotazioni 
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
+        ) p ON l.id = p.lotto_id
+      `;
+      
+      // Aggiungiamo il join alla query
+      query = query.replace('FROM Lotti l', `FROM Lotti l ${joinPrenotazioni}`);
+      
+      // Modifichiamo il SELECT per includere stato_prenotazione
+      query = query.replace('SELECT l.*', 'SELECT l.*, p.stato_prenotazione');
+    } else {
+      // Per utenti normali, filtra i lotti prenotati
+      whereConditions.push(`
+        l.id NOT IN (
+          SELECT lotto_id FROM Prenotazioni 
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
+        )
+      `);
+    }
     
     // Filtro per ruolo utente e tipo utente
     if (userRuolo === 'Utente' && !bypassFiltriTipoUtente) {
@@ -1069,6 +1215,32 @@ exports.getLottiDisponibili = async (req, res, next) => {
     const lotti = await db.all(query, params);
     
     logger.info(`Lotti disponibili recuperati: ${lotti.length}`);
+    
+    // Per admin e operatori, verifichiamo quali lotti sono prenotati
+    if (userRuolo === 'Amministratore' || userRuolo === 'Operatore') {
+      // Ottieni tutte le prenotazioni attive
+      const prenotazioniQuery = `
+        SELECT lotto_id
+        FROM Prenotazioni
+        WHERE stato IN ('Prenotato', 'InTransito', 'Consegnato')
+      `;
+      
+      const prenotazioni = await db.all(prenotazioniQuery);
+      
+      if (prenotazioni && prenotazioni.length > 0) {
+        // Crea un set di IDs dei lotti prenotati per ricerca veloce
+        const lottiPrenotatiIds = new Set(prenotazioni.map(p => p.lotto_id));
+        logger.info(`Trovati ${lottiPrenotatiIds.size} lotti con prenotazioni attive`);
+        
+        // Aggiungi lo stato_prenotazione a ciascun lotto che ha prenotazioni
+        lotti.forEach(lotto => {
+          if (lottiPrenotatiIds.has(lotto.id)) {
+            lotto.stato_prenotazione = 'Prenotato';
+            logger.debug(`[FORZATO] Stato prenotazione per lotto ${lotto.id}`);
+          }
+        });
+      }
+    }
     
     // Formatta le categorie da stringa a array
     const formattedLotti = lotti.map(lotto => ({

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, FlatList, Pressable, RefreshControl, Platform } from 'react-native';
-import { Text, Button, Surface, Searchbar, IconButton, Divider, Badge, Chip, Modal, Portal, TextInput as PaperTextInput } from 'react-native-paper';
+import { Text, Button, Surface, Searchbar, IconButton, Divider, Badge, Chip, Modal, Portal, TextInput as PaperTextInput, RadioButton, useTheme } from 'react-native-paper';
 import { Link } from 'expo-router';
 import Animated from 'react-native-reanimated';
 import { useAuth } from '../../src/context/AuthContext';
@@ -53,6 +53,7 @@ export default function LottiScreen() {
   const [notePrenotazione, setNotePrenotazione] = useState('');
   const [isPrenotazioneLoading, setIsPrenotazioneLoading] = useState(false);
   const [showCustomDatePicker, setShowCustomDatePicker] = useState(false);
+  const [tipoPagamento, setTipoPagamento] = useState<'contanti' | 'bonifico' | null>(null);
   
   // Ottieni l'utente autenticato
   const { user } = useAuth();
@@ -60,6 +61,9 @@ export default function LottiScreen() {
   // Ripristino le variabili di stato ma non saranno usate attivamente
   const [manualCentroId, setManualCentroId] = useState<string>('');
   const [showCentroIdInput, setShowCentroIdInput] = useState(false);
+  
+  // Ottieni il tema
+  const theme = useTheme();
   
   // Costruisce i filtri da applicare alla richiesta
   const buildFiltri = (): LottoFiltri => {
@@ -312,18 +316,35 @@ export default function LottiScreen() {
         ? format(dataRitiroPrevista, 'yyyy-MM-dd')
         : undefined;
       
-      // Prepara l'oggetto prenotazione senza centro_id (sarà determinato dal backend)
+      // Verifica se è richiesto il tipo di pagamento (lotto verde e utente privato)
+      const isLottoVerde = selectedLotto.stato?.toUpperCase() === 'VERDE';
+      const isUtenteTipoPrivato = user?.tipo_utente?.toUpperCase() === 'PRIVATO';
+      
+      // Se è richiesto ma non è stato selezionato, mostra un errore
+      if (isLottoVerde && isUtenteTipoPrivato && !tipoPagamento) {
+        Toast.show({
+          type: 'error',
+          text1: 'Metodo di pagamento richiesto',
+          text2: 'Per i lotti verdi è necessario selezionare un metodo di pagamento',
+        });
+        setIsPrenotazioneLoading(false);
+        return;
+      }
+      
+      // Prepara l'oggetto prenotazione
       const prenotazione = {
         lottoId: selectedLotto.id,
         note: notePrenotazione,
-        dataPrelievo: dataRitiro
+        dataPrelievo: dataRitiro,
+        tipoPagamento: isLottoVerde && isUtenteTipoPrivato ? tipoPagamento : null
       };
       
       // Chiama il servizio di prenotazione
       const result = await prenotaLotto(
         selectedLotto.id,
         dataRitiro,
-        notePrenotazione || null
+        notePrenotazione || null,
+        isLottoVerde && isUtenteTipoPrivato ? tipoPagamento : null
       );
       
       if (result.success) {
@@ -378,6 +399,7 @@ export default function LottiScreen() {
       });
     } finally {
       setIsPrenotazioneLoading(false);
+      setTipoPagamento(null); // Resetta il tipo di pagamento
     }
   };
   
@@ -400,8 +422,36 @@ export default function LottiScreen() {
     }
   };
 
-  const getStatusColor = (stato: string) => {
-    return getStateColor(stato);
+  const getStateColor = (stato: string) => {
+    switch (stato.toUpperCase()) {
+      case 'VERDE':
+        return STATUS_COLORS.SUCCESS;
+      case 'ARANCIONE':
+        return STATUS_COLORS.WARNING;
+      case 'ROSSO':
+        return STATUS_COLORS.ERROR;
+      default:
+        return STATUS_COLORS.INFO;
+    }
+  };
+
+  const getStatusColor = (item: Lotto | string) => {
+    // Se è una stringa, usa direttamente getStateColor
+    if (typeof item === 'string') {
+      return getStateColor(item);
+    }
+    
+    // Debug stato_prenotazione
+    console.log(`getStatusColor - lotto ID:${item.id}, nome:${item.nome}, stato_prenotazione:`, item.stato_prenotazione);
+    
+    // Se il lotto è prenotato, usa un colore specifico per prenotato
+    if (item.stato_prenotazione === 'Prenotato') {
+      console.log(`Lotto ${item.id} (${item.nome}) È PRENOTATO! Uso colore speciale.`);
+      return STATUS_COLORS.INFO; // Usa un colore diverso per i lotti prenotati
+    }
+    
+    // Altrimenti usa il colore in base allo stato
+    return getStateColor(item.stato);
   };
 
   const getStatusColorLight = (stato: string) => {
@@ -415,6 +465,25 @@ export default function LottiScreen() {
       default:
         return 'rgba(33, 150, 243, 0.2)';
     }
+  };
+
+  const getStatusText = (item: Lotto | string) => {
+    // Se è una stringa, restituisci direttamente
+    if (typeof item === 'string') {
+      return item;
+    }
+    
+    // Debug stato_prenotazione
+    console.log(`getStatusText - lotto ID:${item.id}, nome:${item.nome}, stato_prenotazione:`, item.stato_prenotazione);
+    
+    // Se il lotto è prenotato, mostra "Prenotato" invece del colore
+    if (item.stato_prenotazione === 'Prenotato') {
+      console.log(`Lotto ${item.id} (${item.nome}) È PRENOTATO! Mostro etichetta "Prenotato".`);
+      return 'Prenotato';
+    }
+    
+    // Altrimenti mostra il colore normale
+    return item.stato;
   };
 
   return (
@@ -621,9 +690,9 @@ export default function LottiScreen() {
                     </Text>
                     <Chip 
                       style={[styles.statusChip, { backgroundColor: getStatusColorLight(selectedLotto.stato) }]} 
-                      textStyle={{ color: getStatusColor(selectedLotto.stato) }}
+                      textStyle={{ color: getStatusColor(selectedLotto) }}
                     >
-                      {getStatusName(selectedLotto.stato)}
+                      {getStatusText(selectedLotto)}
                     </Chip>
                   </View>
 
@@ -735,6 +804,33 @@ export default function LottiScreen() {
                 <Text style={styles.selectedDateText}>
                   Data selezionata: {dataRitiroPrevista ? format(dataRitiroPrevista, 'dd/MM/yyyy', { locale: it }) : 'Non selezionata'}
                 </Text>
+                
+                {/* Selezione metodo di pagamento per lotti verdi e utenti privati */}
+                {selectedLotto.stato?.toUpperCase() === 'VERDE' && user?.tipo_utente?.toUpperCase() === 'PRIVATO' && (
+                  <>
+                    <Text style={styles.notesSectionTitle}>Metodo di pagamento</Text>
+                    <View style={styles.paymentMethodContainer}>
+                      <View style={styles.radioButtonRow}>
+                        <RadioButton
+                          value="contanti"
+                          status={tipoPagamento === 'contanti' ? 'checked' : 'unchecked'}
+                          onPress={() => setTipoPagamento('contanti')}
+                          color={theme.colors.primary}
+                        />
+                        <Text style={styles.radioButtonLabel} onPress={() => setTipoPagamento('contanti')}>Contanti</Text>
+                      </View>
+                      <View style={styles.radioButtonRow}>
+                        <RadioButton
+                          value="bonifico"
+                          status={tipoPagamento === 'bonifico' ? 'checked' : 'unchecked'}
+                          onPress={() => setTipoPagamento('bonifico')}
+                          color={theme.colors.primary}
+                        />
+                        <Text style={styles.radioButtonLabel} onPress={() => setTipoPagamento('bonifico')}>Bonifico</Text>
+                      </View>
+                    </View>
+                  </>
+                )}
                 
                 <Text style={styles.notesSectionTitle}>Note (opzionale)</Text>
                 <PaperTextInput
@@ -937,20 +1033,6 @@ export default function LottiScreen() {
     </View>
   );
 }
-
-// Funzione di utilità per determinare il colore in base allo stato
-const getStateColor = (stato: string) => {
-  switch (stato) {
-    case STATI_LOTTI.VERDE:
-      return STATUS_COLORS.SUCCESS;
-    case STATI_LOTTI.ARANCIONE:
-      return STATUS_COLORS.WARNING;
-    case STATI_LOTTI.ROSSO:
-      return STATUS_COLORS.ERROR;
-    default:
-      return STATUS_COLORS.INFO;
-  }
-};
 
 const styles = StyleSheet.create({
   container: {
@@ -1440,5 +1522,18 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: 'bold',
     fontSize: 12,
+  },
+  paymentMethodContainer: {
+    marginBottom: 16,
+  },
+  radioButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  radioButtonLabel: {
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#333',
   },
 }); 

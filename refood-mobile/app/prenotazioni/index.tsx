@@ -431,6 +431,26 @@ export default function PrenotazioniScreen() {
                 </Text>
               </View>
             )}
+            
+            {/* Mostra prezzo se disponibile - per tutti gli utenti che possono vedere le prenotazioni */}
+            {(item.prezzo !== undefined && item.prezzo !== null || item.lotto?.prezzo !== undefined && item.lotto?.prezzo !== null) && (
+              <View style={styles.dettaglioItem}>
+                <Ionicons name="pricetag-outline" size={16} color="#555" />
+                <Text style={styles.dettaglioText}>
+                  Prezzo: {parseFloat(String(item.prezzo ?? item.lotto?.prezzo ?? 0)).toFixed(2)} €
+                </Text>
+              </View>
+            )}
+            
+            {/* Mostra tipo pagamento per tutti gli utenti autorizzati */}
+            {(item.tipo_pagamento || item.lotto?.tipo_pagamento) && (
+              <View style={styles.dettaglioItem}>
+                <Ionicons name="card-outline" size={16} color="#555" />
+                <Text style={styles.dettaglioText}>
+                  Pagamento: {(item.tipo_pagamento ?? item.lotto?.tipo_pagamento) === 'contanti' ? 'Contanti' : 'Bonifico'}
+                </Text>
+              </View>
+            )}
           </View>
         </Card.Content>
         

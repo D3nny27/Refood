@@ -73,6 +73,7 @@ const NuovoLottoScreen = () => {
   const [dataScadenza, setDataScadenza] = useState<Date | null>(addDays(new Date(), 7));
   const [giorniPermanenza, setGiorniPermanenza] = useState('7');
   const [categorieSelezionate, setCategorieSelezionate] = useState<string[]>([]);
+  const [prezzo, setPrezzo] = useState('');
   
   // Stati per gestire i modal
   const [showUnitaPicker, setShowUnitaPicker] = useState(false);
@@ -84,6 +85,7 @@ const NuovoLottoScreen = () => {
     nome: false,
     quantita: false,
     dataScadenza: false,
+    prezzo: false,
   });
   
   const [saving, setSaving] = useState(false);
@@ -185,6 +187,10 @@ const NuovoLottoScreen = () => {
           });
         }
         break;
+      case 'prezzo':
+        // Prezzo può essere vuoto (null) o un numero positivo
+        isValid = value === '' || (!isNaN(parseFloat(value)) && parseFloat(value) >= 0);
+        break;
     }
 
     setErrors(prev => ({ ...prev, [field]: !isValid }));
@@ -196,8 +202,9 @@ const NuovoLottoScreen = () => {
     const nomeValid = validateField('nome', nome);
     const quantitaValid = validateField('quantita', quantita);
     const dataValid = validateField('dataScadenza', dataScadenza);
+    const prezzoValid = validateField('prezzo', prezzo);
     
-    return nomeValid && quantitaValid && dataValid;
+    return nomeValid && quantitaValid && dataValid && prezzoValid;
   };
 
   // Invia il form per creare un nuovo lotto
@@ -224,6 +231,7 @@ const NuovoLottoScreen = () => {
         unita_misura: unitaMisura,
         data_scadenza: dataScadenza.toISOString().split('T')[0] as string,
         centro_id: 1, // ID predefinito dato che il sistema non è più centralizzato
+        prezzo: prezzo ? parseFloat(prezzo) : null,
       };
       
       console.log('Dati lotto preparati:', JSON.stringify(lottoData, null, 2));
@@ -244,69 +252,62 @@ const NuovoLottoScreen = () => {
         visibilityTime: 2000,
       });
       
-      // Gestione notifiche
-      try {
-        // Ottieni info sull'utente corrente
-        const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-        const user = userData ? JSON.parse(userData) : null;
-        const userNomeCompleto = user ? `${user.nome} ${user.cognome}` : 'Operatore';
-        
-        // Invia notifica agli amministratori del centro e crea notifica locale per l'operatore
-        if (result.lotto?.id) {
-          await notificheService.addNotificaToAmministratori(
-            result.lotto.id,
-            'Nuovo lotto creato',
-            `Hai creato un nuovo lotto: ${nome} (${quantita} ${unitaMisura}), con scadenza: ${formatDate(dataScadenza)}`,
-            userNomeCompleto
-          );
+      // Gestione notifiche in background per non bloccare l'utente
+      setTimeout(async () => {
+        try {
+          // Ottieni info sull'utente corrente
+          const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+          const user = userData ? JSON.parse(userData) : null;
+          const userNomeCompleto = user ? `${user.nome} ${user.cognome}` : 'Operatore';
           
-          logger.log(`Notifica inviata agli amministratori del lotto ${result.lotto.id}`);
-        } else {
-          logger.warn('Impossibile inviare notifica agli amministratori: lotto_id mancante');
-        }
-        
-        // Invia anche la notifica push locale
-        await pushNotificationService.sendLocalNotification(
-          'Nuovo lotto creato',
-          `Hai creato un nuovo lotto: ${nome} (${quantita} ${unitaMisura})`,
-          {
-            type: 'notifica',
-            subtype: 'lotto_creato',
-            lottoId: result.lotto?.id || 0
+          // Invia notifica agli amministratori del centro e crea notifica locale per l'operatore
+          if (result.lotto?.id) {
+            await notificheService.addNotificaToAmministratori(
+              result.lotto.id,
+              'Nuovo lotto creato',
+              `Hai creato un nuovo lotto: ${nome} (${quantita} ${unitaMisura}), con scadenza: ${formatDate(dataScadenza)}`,
+              userNomeCompleto
+            );
+            
+            logger.log(`Notifica inviata agli amministratori del lotto ${result.lotto.id}`);
+          } else {
+            logger.warn('Impossibile inviare notifica agli amministratori: lotto_id mancante');
           }
-        );
-        logger.log('Notifica push locale inviata per il nuovo lotto');
-        
-        // Aspetta un po' più a lungo per il refresh delle notifiche
-        // per assicurarsi che il contesto venga aggiornato
-        if (refreshNotifiche) {
-          logger.log('Forzo aggiornamento notifiche...');
-          setTimeout(() => {
+          
+          // Invia anche la notifica push locale
+          await pushNotificationService.sendLocalNotification(
+            'Nuovo lotto creato',
+            `Hai creato un nuovo lotto: ${nome} (${quantita} ${unitaMisura})`,
+            {
+              type: 'notifica',
+              subtype: 'lotto_creato',
+              lottoId: result.lotto?.id || 0
+            }
+          );
+          logger.log('Notifica push locale inviata per il nuovo lotto');
+          
+          // Aggiorna le notifiche
+          if (refreshNotifiche) {
             refreshNotifiche();
-            logger.log('Aggiornamento notifiche completato');
-          }, 2000);
+          }
+        } catch (notificationError) {
+          logger.error('Errore nell\'invio della notifica:', notificationError);
         }
-        
-      } catch (notificationError) {
-        logger.error('Errore nell\'invio della notifica:', notificationError);
-      }
+      }, 0);
       
-      // Reindirizzamento diretto e immediato - senza alert
+      // Imposta loading a false prima di navigare
+      setLoading(false);
+      
+      // Reindirizzamento diretto e immediato
+      console.log('Reindirizzamento alla lista lotti...');
+      
+      // Naviga alla schermata dei lotti
+      router.navigate('/(tabs)');
+      
+      // Piccola pausa e poi vai specificamente alla tab lotti
       setTimeout(() => {
-        // Riduciamo il loading qui prima di navigare
-        setLoading(false);
-        
-        console.log('Reindirizzamento alla lista lotti...');
-        
-        // Naviga alla schermata dei lotti. 
-        // Il percorso deve corrispondere esattamente al file nella struttura
-        router.navigate('/(tabs)');
-        
-        // Piccola pausa e poi vai specificamente alla tab lotti
-        setTimeout(() => {
-          router.navigate('/(tabs)/lotti');
-        }, 100);
-      }, 500);
+        router.navigate('/(tabs)/lotti');
+      }, 100);
       
     } catch (error: any) {
       console.error('Errore completo nella creazione del lotto:', error);
@@ -482,6 +483,23 @@ const NuovoLottoScreen = () => {
               </Pressable>
             </View>
             {errors.quantita && <HelperText type="error">Inserisci una quantità valida</HelperText>}
+            
+            {/* Campo Prezzo */}
+            <TextInput
+              label="Prezzo (€)"
+              value={prezzo}
+              onChangeText={(text) => {
+                setPrezzo(text);
+                validateField('prezzo', text);
+              }}
+              keyboardType="numeric"
+              style={styles.input}
+              error={errors.prezzo}
+              mode="outlined"
+              left={<TextInput.Icon icon="currency-eur" />}
+              placeholder="Prezzo (opzionale)"
+            />
+            {errors.prezzo && <HelperText type="error">Il prezzo deve essere un numero positivo o vuoto</HelperText>}
           </Card.Content>
         </Card>
         

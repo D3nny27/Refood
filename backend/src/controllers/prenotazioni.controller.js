@@ -288,7 +288,7 @@ const createPrenotazione = async (req, res, next) => {
     })}`);
     console.log(`🔍 DEBUG PRENOTAZIONE - Body request: ${JSON.stringify(req.body)}`);
     
-    const { lotto_id, data_ritiro, note } = req.body;
+    const { lotto_id, data_ritiro, note, tipo_pagamento } = req.body;
     const utente_id = req.user.id;
     
     // PROBLEMA IDENTIFICATO: req.user.centro_id è undefined
@@ -437,8 +437,9 @@ const createPrenotazione = async (req, res, next) => {
           tipo_utente_ricevente_id, 
           stato,
           data_ritiro,
-          note
-        ) VALUES (?, ?, ?, ?, ?)
+          note,
+          tipo_pagamento
+        ) VALUES (?, ?, ?, ?, ?, ?)
       `;
       
       let params = [
@@ -446,7 +447,8 @@ const createPrenotazione = async (req, res, next) => {
         centro_id, 
         'Prenotato',  // Lo stato iniziale è "Prenotato"
         data_ritiro || null,
-        note || null
+        note || null,
+        tipo_pagamento || null
       ];
       
       console.log(`Creazione nuova prenotazione con parametri: ${JSON.stringify(params)}`);
@@ -468,7 +470,7 @@ const createPrenotazione = async (req, res, next) => {
       const prenotazione = await db.get(
         `SELECT 
           p.id, p.lotto_id, p.tipo_utente_ricevente_id, p.stato, 
-          p.data_prenotazione, p.data_ritiro, p.note,
+          p.data_prenotazione, p.data_ritiro, p.note, p.tipo_pagamento,
           l.prodotto, l.quantita, l.unita_misura, l.data_scadenza
          FROM Prenotazioni p
          JOIN Lotti l ON p.lotto_id = l.id

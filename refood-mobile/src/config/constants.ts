@@ -8,7 +8,7 @@ import { Platform } from 'react-native';
 
 // Imposta qui l'IP del tuo computer nella rete locale per i test su dispositivi fisici
 // Ad esempio: 192.168.1.5 o 10.0.0.4 ecc.
-const LOCAL_IP = '192.168.123.160'; // Indirizzo IP aggiornato
+const LOCAL_IP = '192.168.22.160'; // Indirizzo IP aggiornato (slash rimosso)
 
 // Porta del server backend
 const SERVER_PORT = '3000';

@@ -27,7 +27,27 @@ const formatDate = (dateString: string | undefined) => {
 };
 
 // Funzione di utilità per determinare il colore in base allo stato
-const getStatusColor = (stato: string | undefined) => {
+const getStatusColor = (lotto: Lotto | string) => {
+  // Gestione degli oggetti Lotto
+  if (typeof lotto !== 'string') {
+    console.log(`[LottoCard] getStatusColor per lotto ID:${lotto.id} - stato_prenotazione:`, lotto.stato_prenotazione);
+    
+    // Se è prenotato, restituisce il colore per prenotato (blu)
+    if (lotto.stato_prenotazione === 'Prenotato') {
+      console.log(`[LottoCard] Lotto ${lotto.id} è PRENOTATO, uso colore INFO`);
+      return STATUS_COLORS.INFO;
+    }
+    
+    // Altrimenti usa il colore normale
+    return getStatusColorByState(lotto.stato);
+  }
+  
+  // Gestione delle stringhe
+  return getStatusColorByState(lotto);
+};
+
+// Funzione ausiliaria per ottenere il colore in base allo stato come stringa
+const getStatusColorByState = (stato: string | undefined) => {
   switch (stato) {
     case 'Verde':
       return STATUS_COLORS.SUCCESS;
@@ -41,6 +61,26 @@ const getStatusColor = (stato: string | undefined) => {
 };
 
 // Funzione per ottenere il testo descrittivo per lo stato
+const getStatusText = (lotto: Lotto | string) => {
+  // Gestione degli oggetti Lotto
+  if (typeof lotto !== 'string') {
+    console.log(`[LottoCard] getStatusText per lotto ID:${lotto.id} - stato_prenotazione:`, lotto.stato_prenotazione);
+    
+    // Se è prenotato, restituisce "Prenotato"
+    if (lotto.stato_prenotazione === 'Prenotato') {
+      console.log(`[LottoCard] Lotto ${lotto.id} è PRENOTATO, mostro etichetta "Prenotato"`);
+      return 'Prenotato';
+    }
+    
+    // Altrimenti restituisce lo stato normale
+    return lotto.stato;
+  }
+  
+  // Gestione delle stringhe
+  return lotto;
+};
+
+// Funzione per ottenere il testo descrittivo per lo stato
 const getStatusDescription = (stato: string | undefined) => {
   switch (stato) {
     case 'Verde':
@@ -49,6 +89,8 @@ const getStatusDescription = (stato: string | undefined) => {
       return 'Vicino alla scadenza';
     case 'Rosso':
       return 'Molto vicino/scaduto';
+    case 'Prenotato':
+      return 'Lotto già prenotato';
     default:
       return 'Stato sconosciuto';
   }
@@ -65,7 +107,12 @@ const LottoCard: React.FC<LottoCardProps> = ({ lotto, onPress, onPrenota }) => {
   const quantita = isNaN(Number(lotto.quantita)) ? '0' : lotto.quantita.toString();
   const unitaMisura = lotto.unita_misura || 'pz';
   const descrizione = lotto.descrizione || 'Nessuna descrizione disponibile';
-  const stato = lotto.stato || 'Verde';
+  
+  // Determina lo stato e il colore da mostrare
+  const displayState = getStatusText(lotto);
+  const stateColor = getStatusColor(lotto);
+  
+  console.log(`[RENDER] LottoCard ${lotto.id}: stato=${lotto.stato}, stato_prenotazione=${lotto.stato_prenotazione}, displayState=${displayState}`);
   
   // Gestisci il click sul pulsante di prenotazione
   const handlePrenotaClick = (e: React.MouseEvent<HTMLElement> | React.TouchEvent<HTMLElement>) => {
@@ -82,7 +129,7 @@ const LottoCard: React.FC<LottoCardProps> = ({ lotto, onPress, onPrenota }) => {
         <View style={styles.statusBadge}>
           <Badge
             size={12}
-            style={{ backgroundColor: getStatusColor(stato) }}
+            style={{ backgroundColor: stateColor }}
           />
         </View>
         <Card.Content>
@@ -108,16 +155,24 @@ const LottoCard: React.FC<LottoCardProps> = ({ lotto, onPress, onPrenota }) => {
             
             <View style={styles.statusContainer}>
               <Chip 
-                style={[styles.statusChip, { backgroundColor: getStatusColor(stato) + '30' }]} 
-                textStyle={[styles.statusChipText, { color: getStatusColor(stato) }]}
+                style={[styles.statusChip, { backgroundColor: stateColor + '30' }]} 
+                textStyle={[styles.statusChipText, { color: stateColor }]}
               >
-                {stato}
+                {displayState}
               </Chip>
             </View>
           </View>
           
-          {/* Pulsante di prenotazione */}
-          {canPrenotareLotto && onPrenota && (
+          {/* Mostra il prezzo se disponibile */}
+          {lotto.prezzo !== undefined && lotto.prezzo !== null && (
+            <View style={styles.priceContainer}>
+              <Ionicons name="pricetag-outline" size={16} color="#666" />
+              <Text style={styles.price}>Prezzo: {lotto.prezzo.toFixed(2)} €</Text>
+            </View>
+          )}
+          
+          {/* Pulsante di prenotazione (nascosto per lotti prenotati) */}
+          {canPrenotareLotto && onPrenota && lotto.stato_prenotazione !== 'Prenotato' && (
             <View style={styles.buttonContainer}>
               <Button 
                 mode="contained" 
@@ -127,6 +182,22 @@ const LottoCard: React.FC<LottoCardProps> = ({ lotto, onPress, onPrenota }) => {
               >
                 Prenota
               </Button>
+            </View>
+          )}
+          
+          {/* Informazione per lotti prenotati */}
+          {lotto.stato_prenotazione === 'Prenotato' && (user?.ruolo === 'Amministratore' || user?.ruolo === 'Operatore') && (
+            <View style={styles.prenotatoContainer}>
+              <Text style={styles.prenotatoText}>
+                <Ionicons name="information-circle" size={16} color={STATUS_COLORS.INFO} /> Questo lotto è già stato prenotato
+              </Text>
+              
+              {/* Mostra prezzo se disponibile per lotti verdi */}
+              {lotto.stato === 'Verde' && lotto.prezzo !== undefined && lotto.prezzo !== null && (
+                <Text style={styles.prenotatoText}>
+                  <Ionicons name="pricetag-outline" size={16} color={STATUS_COLORS.INFO} /> Prezzo: {lotto.prezzo.toFixed(2)} €
+                </Text>
+              )}
             </View>
           )}
         </Card.Content>
@@ -217,6 +288,17 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     textAlign: 'center',
   },
+  priceContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  price: {
+    marginLeft: 4,
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#666',
+  },
   buttonContainer: {
     marginTop: 12,
     flexDirection: 'row',
@@ -225,6 +307,18 @@ const styles = StyleSheet.create({
   prenotaButton: {
     backgroundColor: PRIMARY_COLOR,
     borderRadius: 8,
+  },
+  prenotatoContainer: {
+    marginTop: 12,
+    padding: 8,
+    backgroundColor: `${STATUS_COLORS.INFO}15`, 
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: STATUS_COLORS.INFO,
+  },
+  prenotatoText: {
+    fontSize: 12,
+    color: '#444',
   },
 });
 

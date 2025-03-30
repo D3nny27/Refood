@@ -21,6 +21,8 @@ export interface Lotto {
   stato: 'Verde' | 'Arancione' | 'Rosso';
   categorie?: string[];
   origine?: string;
+  stato_prenotazione?: string; // Indica se il lotto è già prenotato
+  prezzo?: number | null; // Prezzo del lotto (solo per lotti verdi)
 }
 
 export interface LottoFiltri {
@@ -76,6 +78,8 @@ export const normalizeLotto = (lotto: any): Lotto => {
     centro_nome: lotto.centro_nome || '',
     stato: lotto.stato || 'Verde',
     categorie: Array.isArray(lotto.categorie) ? lotto.categorie : [],
+    stato_prenotazione: lotto.stato_prenotazione || null,
+    prezzo: lotto.prezzo !== undefined ? parseFloat(lotto.prezzo) : null,
   };
 };
 
@@ -256,10 +260,20 @@ export const getLottoById = async (id: number) => {
       timeout: 10000
     });
     
-    console.log(`Dettagli lotto ${id} ricevuti:`, JSON.stringify(response.data));
+    console.log(`Dettagli lotto ${id} ricevuti (raw):`, JSON.stringify(response.data));
+    console.log(`Campo stato_prenotazione presente:`, response.data.stato_prenotazione ? 'SI' : 'NO');
+    
+    if (response.data.stato_prenotazione) {
+      console.log(`VALORE stato_prenotazione:`, response.data.stato_prenotazione);
+    }
     
     // Normalizza il lotto ricevuto
-    return normalizeLotto(response.data);
+    const lottoNormalizzato = normalizeLotto(response.data);
+    
+    // Verifica stato_prenotazione dopo normalizzazione
+    console.log(`Lotto normalizzato - stato_prenotazione:`, lottoNormalizzato.stato_prenotazione ? 'SI' : 'NO');
+    
+    return lottoNormalizzato;
   } catch (error: any) {
     console.error(`Errore nel recupero del lotto ${id}:`, error);
     
@@ -283,6 +297,26 @@ export const createLotto = async (lotto: Omit<Lotto, 'id' | 'stato'>) => {
     // Ottieni gli header di autenticazione
     const headers = await getAuthHeader();
     
+    // Determina lo stato del lotto in base alla data di scadenza
+    // Questa è solo una simulazione locale per capire se il lotto sarà verde
+    // Il backend farà la sua valutazione in base ai suoi criteri
+    let isVerde = true;
+    try {
+      const oggi = new Date();
+      const dataScadenza = new Date(lotto.data_scadenza);
+      
+      // Se la data di scadenza è nel passato o molto vicina (meno di 5 giorni)
+      // il lotto probabilmente non sarà verde
+      const diffTime = dataScadenza.getTime() - oggi.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      
+      isVerde = diffDays > 5;
+      console.log(`Stima stato lotto: ${isVerde ? 'Verde' : 'Non Verde'} (${diffDays} giorni alla scadenza)`);
+    } catch (err) {
+      console.error('Errore nel calcolo predittivo dello stato:', err);
+      // In caso di errore, assumiamo che il lotto sia verde come valore predefinito
+    }
+    
     // Adatta i nomi dei campi a quelli attesi dal backend
     const payload = {
       prodotto: lotto.nome,
@@ -291,7 +325,8 @@ export const createLotto = async (lotto: Omit<Lotto, 'id' | 'stato'>) => {
       data_scadenza: lotto.data_scadenza,
       descrizione: lotto.descrizione || '',
       centro_origine_id: lotto.centro_id,
-      giorni_permanenza: 7 // Valore predefinito
+      giorni_permanenza: 7, // Valore predefinito
+      prezzo: isVerde ? lotto.prezzo : 0 // Imposta il prezzo a 0 se il lotto non è verde
     };
     
     console.log('Payload per creazione lotto:', JSON.stringify(payload));
@@ -365,8 +400,8 @@ export const updateLotto = async (lottoId: number, lottoData: Partial<Lotto>, no
       let dataScadenza = lottoData.data_scadenza;
       
       // Se è un oggetto Date, formattalo come stringa
-      if (typeof dataScadenza === 'object' && dataScadenza instanceof Date) {
-        dataScadenza = dataScadenza.toISOString().split('T')[0];
+      if (typeof dataScadenza === 'object' && dataScadenza !== null && 'toISOString' in dataScadenza) {
+        dataScadenza = (dataScadenza as Date).toISOString().split('T')[0];
       } else if (typeof dataScadenza === 'string') {
         // Se è già una stringa, assicuriamoci che sia nel formato corretto YYYY-MM-DD
         // Prova a convertirla in Date e poi di nuovo in stringa per normalizzarla
@@ -385,7 +420,34 @@ export const updateLotto = async (lottoId: number, lottoData: Partial<Lotto>, no
       console.log(`Data scadenza normalizzata: ${payload.data_scadenza}`);
     }
     if (lottoData.descrizione !== undefined) payload.descrizione = lottoData.descrizione;
-    if (lottoData.stato !== undefined) payload.stato = lottoData.stato;
+    
+    // Se lottoData.stato è definito e non è "Verde", imposta il prezzo a 0
+    if (lottoData.stato !== undefined) {
+      payload.stato = lottoData.stato;
+      if (lottoData.stato !== 'Verde') {
+        console.log(`Stato lotto non è Verde, imposto automaticamente prezzo a 0`);
+        payload.prezzo = 0;
+      } else if (lottoData.prezzo !== undefined) {
+        // Se il lotto è Verde e il prezzo è definito, usa il prezzo fornito
+        payload.prezzo = lottoData.prezzo;
+      }
+    } else if (lottoData.prezzo !== undefined) {
+      // Se stiamo aggiornando solo il prezzo senza cambiare lo stato
+      // Dobbiamo verificare prima lo stato attuale
+      try {
+        const lottoAttuale = await getLottoById(lottoId);
+        if (lottoAttuale.stato !== 'Verde') {
+          console.log(`Lotto ${lottoId} non è Verde (è ${lottoAttuale.stato}), imposto prezzo a 0`);
+          payload.prezzo = 0;
+        } else {
+          payload.prezzo = lottoData.prezzo;
+        }
+      } catch (error) {
+        console.error(`Errore nel recupero dello stato del lotto ${lottoId}:`, error);
+        // In caso di errore, procedi comunque con l'aggiornamento
+        payload.prezzo = lottoData.prezzo;
+      }
+    }
     
     console.log('Payload per aggiornamento lotto:', JSON.stringify(payload));
     
@@ -423,6 +485,7 @@ export const updateLotto = async (lottoId: number, lottoData: Partial<Lotto>, no
           if (lottoData.unita_misura) descrizioneModifiche += 'unità di misura, ';
           if (lottoData.data_scadenza) descrizioneModifiche += 'data scadenza, ';
           if (lottoData.stato) descrizioneModifiche += 'stato, ';
+          if (lottoData.prezzo !== undefined) descrizioneModifiche += 'prezzo, ';
           // Rimuovi l'ultima virgola e spazio
           descrizioneModifiche = descrizioneModifiche.replace(/, $/, '');
           
@@ -616,4 +679,78 @@ export default {
   createLotto,
   getLottiDisponibili,
   invalidateCache
+};
+
+// Funzione specifica per aggiornare solo il prezzo di un lotto
+export const updateLottoPrezzo = async (lottoId: number, prezzo: number | null): Promise<any> => {
+  try {
+    console.log(`Aggiornamento prezzo lotto ID ${lottoId} a ${prezzo}`);
+    
+    // Verifica se l'utente ha i permessi per aggiornare i lotti
+    const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+    const user = userData ? JSON.parse(userData) : null;
+    
+    if (!user || (user.ruolo !== 'Operatore' && user.ruolo !== 'Amministratore')) {
+      throw new Error('Non hai i permessi per modificare questo lotto');
+    }
+    
+    // Ottieni lo stato attuale del lotto
+    const lottoAttuale = await getLottoById(lottoId);
+    
+    // Verifica se il lotto è verde (solo i lotti verdi possono avere un prezzo diverso da 0)
+    if (lottoAttuale.stato !== 'Verde') {
+      console.log(`Lotto ${lottoId} non è Verde (è ${lottoAttuale.stato}), impedisco l'aggiornamento del prezzo`);
+      return {
+        success: false,
+        message: 'Solo i lotti verdi possono avere un prezzo. I lotti arancioni o rossi hanno automaticamente prezzo 0.',
+        lotto: lottoAttuale
+      };
+    }
+    
+    // Ottieni gli header di autenticazione
+    const headers = await getAuthHeader();
+    
+    // Effettua la richiesta all'endpoint specifico per l'aggiornamento del prezzo
+    const response = await axios.put(`${API_URL}/lotti/${lottoId}/prezzo`, 
+      { prezzo: prezzo }, 
+      {
+        headers: {
+          ...headers,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        timeout: 30000
+      }
+    );
+    
+    console.log('Risposta aggiornamento prezzo lotto:', JSON.stringify(response.data));
+    
+    // Invalida la cache
+    invalidateCache();
+    
+    // Normalizza e restituisci il lotto aggiornato
+    return {
+      success: true,
+      message: 'Prezzo del lotto aggiornato con successo',
+      lotto: normalizeLotto(response.data.data || response.data)
+    };
+  } catch (error: any) {
+    console.error('Errore nell\'aggiornamento del prezzo del lotto:', error);
+    
+    // Se l'errore proviene dalla risposta, mostra il messaggio
+    if (error.response) {
+      return {
+        success: false,
+        message: error.response.data?.message || 'Errore nell\'aggiornamento del prezzo',
+        error: error.response.data
+      };
+    }
+    
+    // Altrimenti mostra un messaggio generico
+    return {
+      success: false,
+      message: error.message || 'Errore nell\'aggiornamento del prezzo',
+      error
+    };
+  }
 }; 

@@ -6,8 +6,9 @@ import { AuthProvider } from './src/context/AuthContext';
 import { LogBox } from 'react-native';
 import { expo } from './app.json';
 
-// Sopprime il warning su pointerEvents
-LogBox.ignoreLogs(['Warning: props.pointerEvents is deprecated. Use style.pointerEvents']);
+// Disabilita completamente i log di errore e warning in React Native
+// Questo rimuoverà tutti i messaggi di errore e warning dall'interfaccia utente
+LogBox.ignoreAllLogs();
 
 // Tema personalizzato per react-native-paper
 const theme = {

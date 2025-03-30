@@ -25,11 +25,12 @@ import {
   useTheme,
   Title,
   FAB,
-  Chip
+  Chip,
+  RadioButton
 } from 'react-native-paper';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../../src/context/AuthContext';
-import { getLottoById, updateLotto, invalidateCache } from '../../../src/services/lottiService';
+import { getLottoById, updateLotto, invalidateCache, updateLottoPrezzo } from '../../../src/services/lottiService';
 import { prenotaLotto } from '../../../src/services/prenotazioniService';
 import { PRIMARY_COLOR, RUOLI, STORAGE_KEYS, API_URL } from '../../../src/config/constants';
 import { router } from 'expo-router';
@@ -121,6 +122,7 @@ const DettaglioLottoScreen = () => {
   const [quantita, setQuantita] = useState('');
   const [unitaMisura, setUnitaMisura] = useState('kg');
   const [dataScadenza, setDataScadenza] = useState<Date | null>(new Date());
+  const [prezzo, setPrezzo] = useState('');
   
   // Stati dei modali
   const [showUnitaPicker, setShowUnitaPicker] = useState(false);
@@ -131,6 +133,7 @@ const DettaglioLottoScreen = () => {
     nome: false,
     quantita: false,
     dataScadenza: false,
+    prezzo: false,
   });
 
   // Stati per la prenotazione
@@ -138,6 +141,7 @@ const DettaglioLottoScreen = () => {
   const [dataRitiroPrevista, setDataRitiroPrevista] = useState(addDays(new Date(), 1));
   const [notePrenotazione, setNotePrenotazione] = useState('');
   const [prenotazioneInCorso, setPrenotazioneInCorso] = useState(false);
+  const [tipoPagamento, setTipoPagamento] = useState<'contanti' | 'bonifico' | null>(null);
   
   // Determina se l'utente può prenotare il lotto (solo utenti normali, non amministratori/operatori)
   const canPrenotareLotto = useMemo(() => {
@@ -269,6 +273,7 @@ const DettaglioLottoScreen = () => {
         setDescrizione(lottoData.descrizione || '');
         setQuantita(lottoData.quantita.toString());
         setUnitaMisura(lottoData.unita_misura);
+        setPrezzo(lottoData.prezzo !== undefined && lottoData.prezzo !== null ? lottoData.prezzo.toString() : '');
         
         // Assicurati che la data di scadenza sia valida
         try {
@@ -315,6 +320,10 @@ const DettaglioLottoScreen = () => {
       case 'dataScadenza':
         setErrors(prev => ({ ...prev, dataScadenza: !value }));
         break;
+      case 'prezzo':
+        // Prezzo può essere vuoto (null) o un numero positivo
+        setErrors(prev => ({ ...prev, prezzo: value !== '' && (isNaN(parseFloat(value)) || parseFloat(value) < 0) }));
+        break;
       default:
         break;
     }
@@ -325,6 +334,7 @@ const DettaglioLottoScreen = () => {
       nome: !nome.trim(),
       quantita: isNaN(parseFloat(quantita)) || parseFloat(quantita) <= 0,
       dataScadenza: !dataScadenza,
+      prezzo: prezzo !== '' && (isNaN(parseFloat(prezzo)) || parseFloat(prezzo) < 0),
     };
     
     setErrors(newErrors);
@@ -358,6 +368,7 @@ const DettaglioLottoScreen = () => {
         quantita: parseFloat(quantita),
         unita_misura: unitaMisura,
         data_scadenza: formattedDate, // Formato YYYY-MM-DD per il backend
+        prezzo: prezzo !== '' ? parseFloat(prezzo) : null,
         notifyAdmin: true, // Notifica gli amministratori delle modifiche
       };
       
@@ -388,6 +399,7 @@ const DettaglioLottoScreen = () => {
       setDescrizione(refreshedLotto.descrizione || '');
       setQuantita(refreshedLotto.quantita.toString());
       setUnitaMisura(refreshedLotto.unita_misura);
+      setPrezzo(refreshedLotto.prezzo !== undefined && refreshedLotto.prezzo !== null ? refreshedLotto.prezzo.toString() : '');
       
       // Parsing sicuro della data di scadenza
       if (refreshedLotto.data_scadenza) {
@@ -423,6 +435,7 @@ const DettaglioLottoScreen = () => {
     setDescrizione(lotto.descrizione || '');
     setQuantita(lotto.quantita.toString());
     setUnitaMisura(lotto.unita_misura);
+    setPrezzo(lotto.prezzo !== undefined && lotto.prezzo !== null ? lotto.prezzo.toString() : '');
     
     // Usa la funzione safeParseDate per il parsing sicuro
     const parsedDate = safeParseDate(lotto.data_scadenza);
@@ -442,6 +455,13 @@ const DettaglioLottoScreen = () => {
     if (!lotto) return { label: 'In caricamento', color: '#666', bgColor: '#f5f5f5' };
     
     try {
+      // Verifica se il lotto è prenotato e l'utente è un amministratore o operatore
+      if (lotto.stato_prenotazione === 'Prenotato' && 
+          (user?.ruolo === 'Amministratore' || user?.ruolo === 'Operatore')) {
+        console.log('Lotto prenotato visualizzato da Admin/Operatore. Mostro etichetta "Prenotato"');
+        return { label: 'Prenotato', color: '#2196F3', bgColor: '#E3F2FD' };
+      }
+      
       // Usa direttamente lo stato calcolato dal backend
       console.log('Stato del lotto dal backend:', lotto.stato);
       
@@ -554,16 +574,33 @@ const DettaglioLottoScreen = () => {
       // Formatta la data nel formato YYYY-MM-DD
       const dataRitiroFormatted = format(dataRitiroPrevista, 'yyyy-MM-dd');
       
+      // Verifica se è richiesto il tipo di pagamento (lotto verde e utente privato)
+      const isLottoVerde = lotto.stato?.toUpperCase() === 'VERDE';
+      const isUtenteTipoPrivato = user?.tipo_utente?.toUpperCase() === 'PRIVATO';
+      
+      // Se è richiesto ma non è stato selezionato, mostra un errore
+      if (isLottoVerde && isUtenteTipoPrivato && !tipoPagamento) {
+        Toast.show({
+          type: 'error',
+          text1: 'Metodo di pagamento richiesto',
+          text2: 'Per i lotti verdi è necessario selezionare un metodo di pagamento',
+        });
+        setPrenotazioneInCorso(false);
+        return;
+      }
+      
       // Effettua la prenotazione
       const result = await prenotaLotto(
         lotto?.id || 0,
         dataRitiroFormatted,
-        notePrenotazione || null
+        notePrenotazione || null,
+        isLottoVerde && isUtenteTipoPrivato ? tipoPagamento : null
       );
       
       if (result.success) {
         // Aggiorna lo stato
         setPrenotazioneModalVisible(false);
+        setTipoPagamento(null); // Reset del tipo di pagamento
         
         // Messaggio di conferma
         Toast.show({
@@ -682,6 +719,28 @@ const DettaglioLottoScreen = () => {
                   </Text>
                 </View>
                 
+                {/* Visualizzazione prezzo solo se presente */}
+                {lotto.prezzo !== undefined && lotto.prezzo !== null && (
+                  <View style={styles.infoRow}>
+                    <MaterialCommunityIcons name="currency-eur" size={20} color="#666" />
+                    <Text style={styles.infoText}>
+                      Prezzo: <Text style={styles.infoValue}>{lotto.prezzo.toFixed(2)} €</Text>
+                    </Text>
+                  </View>
+                )}
+                
+                {/* Visualizzazione tipo pagamento se disponibile */}
+                {lotto.tipo_pagamento && (
+                  <View style={styles.infoRow}>
+                    <MaterialCommunityIcons name="credit-card" size={20} color="#666" />
+                    <Text style={styles.infoText}>
+                      Tipo pagamento: <Text style={styles.infoValue}>
+                        {lotto.tipo_pagamento === 'contanti' ? 'Contanti' : 'Bonifico'}
+                      </Text>
+                    </Text>
+                  </View>
+                )}
+                
                 <View style={styles.infoRow}>
                   <Ionicons name="calendar" size={20} color="#666" />
                   <Text style={styles.infoText}>
@@ -788,6 +847,22 @@ const DettaglioLottoScreen = () => {
                   </Pressable>
                 </View>
                 {errors.quantita && <HelperText type="error">Inserisci una quantità valida</HelperText>}
+                
+                <TextInput
+                  label="Prezzo (€)"
+                  value={prezzo}
+                  onChangeText={(text) => {
+                    setPrezzo(text);
+                    validateField('prezzo', text);
+                  }}
+                  keyboardType="numeric"
+                  style={styles.input}
+                  error={errors.prezzo}
+                  mode="outlined"
+                  left={<TextInput.Icon icon="currency-eur" />}
+                  placeholder="Prezzo (opzionale)"
+                />
+                {errors.prezzo && <HelperText type="error">Il prezzo deve essere un numero positivo o vuoto</HelperText>}
                 
                 <Pressable 
                   onPress={() => setShowDatePicker(true)}
@@ -1007,6 +1082,33 @@ const DettaglioLottoScreen = () => {
                   <MaterialCommunityIcons name="chevron-right" size={24} color="#aaa" />
                 </Surface>
               </Pressable>
+              
+              {/* Selezione metodo di pagamento per lotti verdi e utenti privati */}
+              {lotto?.stato?.toUpperCase() === 'VERDE' && user?.tipo_utente?.toUpperCase() === 'PRIVATO' && (
+                <>
+                  <Text style={styles.prenotazioneLabel}>Metodo di pagamento:</Text>
+                  <View style={styles.paymentMethodContainer}>
+                    <View style={styles.radioButtonRow}>
+                      <RadioButton
+                        value="contanti"
+                        status={tipoPagamento === 'contanti' ? 'checked' : 'unchecked'}
+                        onPress={() => setTipoPagamento('contanti')}
+                        color={theme.colors.primary}
+                      />
+                      <Text style={styles.radioButtonLabel} onPress={() => setTipoPagamento('contanti')}>Contanti</Text>
+                    </View>
+                    <View style={styles.radioButtonRow}>
+                      <RadioButton
+                        value="bonifico"
+                        status={tipoPagamento === 'bonifico' ? 'checked' : 'unchecked'}
+                        onPress={() => setTipoPagamento('bonifico')}
+                        color={theme.colors.primary}
+                      />
+                      <Text style={styles.radioButtonLabel} onPress={() => setTipoPagamento('bonifico')}>Bonifico</Text>
+                    </View>
+                  </View>
+                </>
+              )}
               
               <Text style={styles.prenotazioneLabel}>Note (opzionale):</Text>
               <TextInput
@@ -1365,6 +1467,18 @@ const styles = StyleSheet.create({
   },
   infoLabel: {
     fontWeight: 'bold',
+  },
+  paymentMethodContainer: {
+    marginBottom: 16,
+  },
+  radioButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  radioButtonLabel: {
+    marginLeft: 8,
+    fontSize: 16,
   },
 });
 

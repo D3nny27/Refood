@@ -139,6 +139,7 @@ router.post('/', [
   body('lotto_id').isInt().withMessage('ID lotto deve essere un numero intero'),
   body('note').optional().isString().withMessage('Note deve essere una stringa'),
   body('data_ritiro').optional().isISO8601().withMessage('Data ritiro deve essere una data valida'),
+  body('tipo_pagamento').optional().isIn(['contanti', 'bonifico']).withMessage('Tipo pagamento deve essere "contanti" o "bonifico"'),
   validator.validate
 ], prenotazioniController.createPrenotazione);
 

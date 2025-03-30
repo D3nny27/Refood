@@ -83,10 +83,13 @@ global.handleJwtExpired = handleExpiredToken;
 api.interceptors.response.use(
   response => response,
   error => {
+    // Disabilitiamo tutti i log di errore, ma gestiamo comunque l'errore internamente
     if (error.code === 'ECONNABORTED') {
-      console.error('Timeout della richiesta API');
+      // Silenziosamente ignoriamo il timeout
+      // console.error('Timeout della richiesta API');
     } else if (!error.response) {
-      console.error('Errore di rete durante la richiesta API');
+      // Silenziosamente ignoriamo l'errore di rete
+      // console.error('Errore di rete durante la richiesta API');
     } else if (error.response.status === 401) {
       // Verifica se l'errore è dovuto a un token scaduto
       const errorMessage = (error.response.data?.message || '').toLowerCase();
@@ -105,12 +108,13 @@ api.interceptors.response.use(
         // Aggiungi controllo generico per i 401 senza dettagli specifici
         (errorMessage === '' && errorDesc === '' && error.response.status === 401)
       ) {
-        logger.warn('Rilevato errore di token scaduto:', errorMessage || errorDesc || 'Errore 401 generico');
+        // logger.warn rimosso per evitare log
+        // logger.warn('Rilevato errore di token scaduto:', errorMessage || errorDesc || 'Errore 401 generico');
         handleExpiredToken();
       }
     } else if (error.response.status === 403) {
-      // Gestisci errori di permessi
-      logger.warn('Accesso non autorizzato (403):', error.response.data?.message || 'Permessi insufficienti');
+      // Gestisci errori di permessi senza generare log
+      // logger.warn('Accesso non autorizzato (403):', error.response.data?.message || 'Permessi insufficienti');
       Toast.show({
         type: 'error',
         text1: 'Accesso negato',
