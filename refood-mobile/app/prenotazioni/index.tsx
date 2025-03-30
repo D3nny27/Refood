@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, FlatList, RefreshControl, TouchableOpacity, ScrollView } from 'react-native';
+import { View, StyleSheet, FlatList, RefreshControl, TouchableOpacity, Platform, ScrollView } from 'react-native';
 import { Text, Button, Card, Title, Paragraph, Badge, Chip, Searchbar, IconButton, ActivityIndicator, Portal, Dialog, TextInput, Divider } from 'react-native-paper';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
+import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { format, parseISO, differenceInDays, addDays } from 'date-fns';
 import { it } from 'date-fns/locale';
@@ -27,8 +28,7 @@ interface Filtri {
 }
 
 export default function PrenotazioniScreen() {
-  const { user } = useAuth();
-  const router = useRouter();
+  const { user, refreshToken } = useAuth();
   
   const [prenotazioni, setPrenotazioni] = useState<Prenotazione[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,60 +56,74 @@ export default function PrenotazioniScreen() {
   const [eliminazioneModalVisible, setEliminazioneModalVisible] = useState(false);
   const [eliminazioneInCorso, setEliminazioneInCorso] = useState(false);
 
-  // Funzione per caricare le prenotazioni
+  // Funzione per gestire gli errori di autenticazione
+  const handleAuthError = async () => {
+    try {
+      console.log('Tentativo di aggiornare l\'autenticazione...');
+      
+      // Verifica se la funzione refreshToken è disponibile
+      if (refreshToken) {
+        console.log('Tentativo di refresh del token...');
+        const refreshSuccess = await refreshToken();
+        
+        if (refreshSuccess) {
+          Toast.show({
+            type: 'info',
+            text1: 'Autenticazione aggiornata',
+            text2: 'Riprova l\'operazione',
+            visibilityTime: 3000,
+          });
+          
+          // Ricarica le prenotazioni dopo il refresh del token
+          loadPrenotazioni(true);
+          return;
+        }
+      }
+      
+      // Se non c'è refreshToken o il refresh fallisce, mostra l'errore
+      Toast.show({
+        type: 'error',
+        text1: 'Errore di autenticazione',
+        text2: 'Accedi nuovamente per continuare',
+        visibilityTime: 4000,
+      });
+      
+      // Ridireziona alla pagina di login
+      router.push('/login');
+    } catch (err) {
+      console.error('Errore nell\'aggiornamento dell\'autenticazione:', err);
+      Toast.show({
+        type: 'error',
+        text1: 'Errore di autenticazione',
+        text2: 'Accedi nuovamente per continuare',
+      });
+      router.push('/login');
+    }
+  };
+  
+  // Modifica la funzione loadPrenotazioni per gestire errori di autenticazione
   const loadPrenotazioni = async (forceRefresh = false) => {
     try {
       setLoading(true);
       setError(null);
       
-      console.log('Caricamento prenotazioni con filtri:', JSON.stringify(filtri));
+      const result = await getPrenotazioni(filtri, forceRefresh);
+      setPrenotazioni(result.prenotazioni || []);
+    } catch (error: any) {
+      console.error('Errore nel caricamento delle prenotazioni:', error);
       
-      // Aggiungi il filtro per centro in base al ruolo dell'utente
-      let filtriRuolo = { ...filtri };
-      
-      if (user) {        
-        // Per i centri sociali, mostra solo le proprie prenotazioni
-        if (user.ruolo === RUOLI.CENTRO_SOCIALE || user.ruolo === RUOLI.CENTRO_RICICLAGGIO) {
-          // Usa il centro_id dell'utente se disponibile
-          if (user.centro_id) {
-            filtriRuolo.centro_id = user.centro_id;
-          }
-        }
-        // Per operatori e amministratori, il backend filtrerà in base ai centri associati
-      }
-      
-      console.log('Recupero prenotazioni dal server con filtri:', JSON.stringify(filtriRuolo));
-      const result = await getPrenotazioni(filtriRuolo, forceRefresh);
-      
-      console.log('Risultato della chiamata getPrenotazioni:', JSON.stringify(result, null, 2));
-      
-      if (!result.prenotazioni || result.prenotazioni.length === 0) {
-        console.log('Nessuna prenotazione restituita dal server');
-        setPrenotazioni([]);
+      // Verifica se è un errore di autorizzazione
+      if (error.message?.includes('token') || error.message?.includes('Unauthorized') || 
+          error?.response?.status === 401 || error?.response?.status === 403) {
+        handleAuthError();
       } else {
-        console.log(`Ricevute ${result.prenotazioni.length} prenotazioni dal server`);
-        
-        // Ordina le prenotazioni (le più recenti prima)
-        const prenotazioniOrdinate = result.prenotazioni.sort((a: Prenotazione, b: Prenotazione) => {
-          return new Date(b.data_prenotazione).getTime() - new Date(a.data_prenotazione).getTime();
+        setError('Impossibile caricare le prenotazioni');
+        Toast.show({
+          type: 'error',
+          text1: 'Errore',
+          text2: 'Si è verificato un errore durante il caricamento delle prenotazioni',
         });
-        
-        // Log dettagliato delle prenotazioni ricevute
-        prenotazioniOrdinate.forEach((p: Prenotazione, index: number) => {
-          console.log(`Prenotazione ${index+1}: ID=${p.id}, Stato=${p.stato}, Lotto=${p.lotto?.nome || 'N/A'}`);
-        });
-        
-        setPrenotazioni(prenotazioniOrdinate);
-        console.log('Prenotazioni caricate con successo');
       }
-    } catch (err: any) {
-      console.error('Errore nel caricamento delle prenotazioni:', err);
-      setError(err.message || 'Errore nel caricamento delle prenotazioni');
-      Toast.show({
-        type: 'error',
-        text1: 'Errore',
-        text2: err.message || 'Impossibile caricare le prenotazioni',
-      });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -259,39 +273,41 @@ export default function PrenotazioniScreen() {
     
     try {
       setAnnullamentoInCorso(true);
-      
-      const result = await annullaPrenotazione(
-        prenotazioneSelezionata.id,
-        motivoAnnullamento
-      );
+      const result = await annullaPrenotazione(prenotazioneSelezionata.id, motivoAnnullamento);
       
       if (result.success) {
+        setAnnullamentoModalVisible(false);
+        setPrenotazioneSelezionata(null);
+        setMotivoAnnullamento('');
+        
         Toast.show({
           type: 'success',
           text1: 'Prenotazione annullata',
-          text2: result.message,
-          visibilityTime: 4000,
+          text2: 'La prenotazione è stata annullata con successo'
         });
         
-        // Chiudi il modale e ricarica le prenotazioni
-        setAnnullamentoModalVisible(false);
-        loadPrenotazioni(true);
+        await loadPrenotazioni(true);
       } else {
         Toast.show({
           type: 'error',
           text1: 'Errore',
-          text2: result.message,
-          visibilityTime: 4000,
+          text2: result.message || 'Impossibile annullare la prenotazione'
         });
       }
-    } catch (err: any) {
-      console.error('Errore nell\'annullamento della prenotazione:', err);
-      Toast.show({
-        type: 'error',
-        text1: 'Errore',
-        text2: err.message || 'Impossibile annullare la prenotazione',
-        visibilityTime: 4000,
-      });
+    } catch (error: any) {
+      console.error('Errore durante l\'annullamento della prenotazione:', error);
+      
+      // Verifica se è un errore di autorizzazione
+      if (error.message?.includes('token') || error.message?.includes('Unauthorized') || 
+          error?.response?.status === 401 || error?.response?.status === 403) {
+        handleAuthError();
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Errore',
+          text2: 'Si è verificato un errore durante l\'annullamento'
+        });
+      }
     } finally {
       setAnnullamentoInCorso(false);
     }
@@ -884,10 +900,12 @@ export default function PrenotazioniScreen() {
             )}
           </Dialog.Content>
           
-          <Dialog.Actions>
+          <Dialog.Actions style={styles.dialogActions}>
             <Button 
               onPress={() => setAnnullamentoModalVisible(false)}
               disabled={annullamentoInCorso}
+              style={styles.dialogCancelButton}
+              labelStyle={styles.dialogButtonLabel}
             >
               Annulla
             </Button>
@@ -897,8 +915,10 @@ export default function PrenotazioniScreen() {
               loading={annullamentoInCorso}
               disabled={annullamentoInCorso}
               color="#F44336"
+              style={styles.dialogConfirmButton}
+              labelStyle={styles.dialogButtonLabel}
             >
-              Conferma annullamento
+              Conferma
             </Button>
           </Dialog.Actions>
         </Dialog>
@@ -937,10 +957,12 @@ export default function PrenotazioniScreen() {
               Accettando la prenotazione, il centro che ha fatto la richiesta riceverà una notifica.
             </Text>
           </Dialog.Content>
-          <Dialog.Actions>
+          <Dialog.Actions style={styles.dialogActions}>
             <Button 
               onPress={() => !accettazioneInCorso && setAccettazioneModalVisible(false)}
               disabled={accettazioneInCorso}
+              style={styles.dialogCancelButton}
+              labelStyle={styles.dialogButtonLabel}
             >
               Annulla
             </Button>
@@ -949,6 +971,8 @@ export default function PrenotazioniScreen() {
               onPress={confermaAccettazione}
               loading={accettazioneInCorso}
               disabled={accettazioneInCorso || !dataRitiroPrevista}
+              style={styles.dialogConfirmButton}
+              labelStyle={styles.dialogButtonLabel}
             >
               Conferma
             </Button>
@@ -1314,5 +1338,29 @@ const styles = StyleSheet.create({
   },
   deleteDialogButton: {
     backgroundColor: '#F44336',
+  },
+  dialogActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    marginTop: 8,
+  },
+  dialogCancelButton: {
+    flex: 1,
+    marginRight: 8,
+    borderColor: '#ccc',
+    borderWidth: 1,
+    height: 50,
+  },
+  dialogConfirmButton: {
+    flex: 1,
+    marginLeft: 8,
+    height: 50,
+  },
+  dialogButtonLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
   },
 }); 

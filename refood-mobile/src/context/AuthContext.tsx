@@ -1,21 +1,23 @@
 import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { 
-  loginUser, 
-  logoutUser, 
-  checkUserAuth, 
-  registerUser, 
-  getActiveToken, 
-  saveUserSession 
-} from '../services/authService';
-import { setAuthToken } from '../services/api';
-import { STORAGE_KEYS } from '../config/constants';
 import { Platform, AppState, AppStateStatus } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
+import { STORAGE_KEYS, API_URL } from '../config/constants';
+import { setAuthToken } from '../services/api';
+import { checkUserAuth, loginUser, logoutUser, getRefreshToken, registerUser, getActiveToken } from '../services/authService';
 import { Utente } from '../types/user';
 import logger from '../utils/logger';
+import { listenEvent, emitEvent, APP_EVENTS } from '../utils/events';
 import Toast from 'react-native-toast-message';
-import { listenEvent, APP_EVENTS } from '../utils/events';
 import toastHelper from '../utils/toastHelper';
+
+// Estendi l'interfaccia di LoginResponse per includere refreshToken
+interface ExtendedLoginResponse {
+  token: string;
+  utente: Utente;
+  refreshToken?: string;
+  error?: string;
+}
 
 // Definisci il tipo di resetAuthState nel global namespace
 declare global {
@@ -43,6 +45,7 @@ interface AuthContextType {
   clearError: () => void;
   refreshUserStatus: () => Promise<void>;
   loginWithCredentials: (email: string, password: string) => Promise<boolean>;
+  refreshToken: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -53,6 +56,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [initialCheckDone, setInitialCheckDone] = useState<boolean>(false);
+  const [appState, setAppState] = useState<string>(AppState.currentState);
+  // Aggiungiamo un flag per tracciare se è in corso un logout
+  const [isLoggingOut, setIsLoggingOut] = useState<boolean>(false);
   
   // Log di stato per aiutare il debug
   useEffect(() => {
@@ -63,6 +69,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const checkState = async () => {
       const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
       const userDataString = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+      
+      console.log('AuthProvider - Token in storage:', token ? 'presente' : 'assente');
+      console.log('AuthProvider - UserData in storage:', userDataString ? 'presente' : 'assente');
       
       // Se abbiamo token e dati utente in storage ma isAuthenticated è false, ripristiniamo
       if (token && userDataString && !isAuthenticated) {
@@ -125,9 +134,92 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [resetAuthentication]);
 
+  // Aggiungiamo un listener per i cambiamenti di stato dell'app (app in primo piano, in background, etc.)
+  useEffect(() => {
+    // Funzione per gestire i cambiamenti di stato dell'app
+    const handleAppStateChange = async (nextAppState: AppStateStatus) => {
+      console.log(`App stato precedente: ${appState}, nuovo stato: ${nextAppState}`);
+      
+      // Se l'app passa da background a foreground (attiva)
+      if (appState.match(/inactive|background/) && nextAppState === 'active') {
+        console.log('App tornata in primo piano, verifico la sessione utente');
+        
+        // Non eseguire controlli se è in corso un logout
+        if (isLoggingOut) {
+          console.log('Ignorata verifica sessione al ritorno in primo piano durante logout');
+          setAppState(nextAppState);
+          return;
+        }
+        
+        // Verifica se c'è un token salvato nel localStorage
+        const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
+        
+        if (token) {
+          console.log('Token trovato in storage, verifico validità');
+          // Imposta il token per le chiamate API
+          setAuthToken(token);
+          
+          try {
+            // Tentativo di refresh dello stato utente
+            const userData = await checkUserAuth();
+            if (!userData) {
+              // Se checkUserAuth ritorna null, il token potrebbe essere scaduto
+              const refreshSuccessful = await refreshToken();
+              if (!refreshSuccessful) {
+                // Se il refresh fallisce, notifica l'utente della sessione scaduta
+                setUser(null);
+                setIsAuthenticated(false);
+                // Notifica all'utente
+                Toast.show({
+                  type: 'info',
+                  text1: 'Sessione scaduta',
+                  text2: 'Effettua nuovamente il login per continuare',
+                  visibilityTime: 4000,
+                });
+                // Rimuovi i dati di sessione
+                await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
+                await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
+                await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+                // Emetti l'evento di JWT scaduto
+                emitEvent(APP_EVENTS.JWT_EXPIRED);
+              }
+            }
+          } catch (error) {
+            console.error('Errore nel refresh dello stato utente:', error);
+            // Notifica all'utente
+            Toast.show({
+              type: 'error',
+              text1: 'Errore di autenticazione',
+              text2: 'Si è verificato un problema con la tua sessione',
+              visibilityTime: 4000,
+            });
+          }
+        } else {
+          console.log('Nessun token trovato in storage, utente non autenticato');
+        }
+      }
+      
+      setAppState(nextAppState);
+    };
+    
+    // Aggiungi il listener per i cambiamenti di stato dell'app
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    
+    // Cleanup: rimuovi il listener quando il componente si smonta
+    return () => {
+      subscription.remove();
+    };
+  }, [appState, isLoggingOut]);
+
   // Funzione per aggiornare lo stato dell'autenticazione
   const refreshUserStatus = useCallback(async () => {
     try {
+      // Se stiamo facendo logout, non eseguire il refresh
+      if (isLoggingOut) {
+        console.log('Ignorata richiesta di refreshUserStatus durante logout');
+        return;
+      }
+      
       setIsLoading(true);
       console.log('AuthProvider - Inizio refresh dello stato utente');
       
@@ -176,6 +268,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               console.log('Dati utente aggiornati in AsyncStorage dopo verifica server');
             }
           } else {
+            console.log('Server non ha confermato l\'autenticazione');
+            
             // Solo se non abbiamo ripristinato dati locali, considera l'utente non autenticato
             if (!localDataRestored) {
               console.log('Server non conferma autenticazione e nessun dato locale valido');
@@ -187,61 +281,139 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
                 await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
                 await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+                // Notifica all'utente che la sessione è scaduta
+                Toast.show({
+                  type: 'info',
+                  text1: 'Sessione scaduta',
+                  text2: 'Effettua nuovamente il login per continuare',
+                  visibilityTime: 4000,
+                });
               }
             } else {
               console.log('Server non conferma autenticazione ma manteniamo i dati locali');
+              
+              // Tentativo di refresh del token se abbiamo un refresh token
+              const refreshTokenVal = await AsyncStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
+              if (refreshTokenVal) {
+                try {
+                  console.log('Tentativo di refresh del token...');
+                  const refreshSuccess = await refreshToken();
+                  
+                  if (!refreshSuccess) {
+                    // Se il refresh fallisce, notifica l'utente
+                    setUser(null);
+                    setIsAuthenticated(false);
+                    await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
+                    await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
+                    await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+                    Toast.show({
+                      type: 'info',
+                      text1: 'Sessione scaduta',
+                      text2: 'Effettua nuovamente il login per continuare',
+                      visibilityTime: 4000,
+                    });
+                    // Emetti l'evento di JWT scaduto
+                    emitEvent(APP_EVENTS.JWT_EXPIRED);
+                  }
+                } catch (refreshError) {
+                  console.error('Errore durante il refresh del token:', refreshError);
+                  // Notifica all'utente
+                  Toast.show({
+                    type: 'error',
+                    text1: 'Errore di autenticazione',
+                    text2: 'Si è verificato un problema con il refresh della sessione',
+                    visibilityTime: 4000,
+                  });
+                }
+              }
             }
           }
-        } catch (apiError) {
-          console.error('Errore API durante checkUserAuth:', apiError);
-          // Se il server non è raggiungibile, manteniamo comunque i dati locali
-          if (!localDataRestored) {
-            try {
-              const userDataString = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-              if (userDataString) {
-                console.log('Server non raggiungibile, uso dati locali come fallback');
-                setUser(JSON.parse(userDataString));
-                setIsAuthenticated(true);
+        } catch (serverError) {
+          console.error('Errore nella verifica col server:', serverError);
+          
+          // Non tentare refresh o altre operazioni se è in corso un logout
+          if (isLoggingOut) {
+            console.log('Ignorato tentativo di refresh dopo errore server durante logout');
+            return;
+          }
+          
+          // Se c'è un errore 401, prova a fare il refresh del token
+          if (axios.isAxiosError(serverError) && serverError.response?.status === 401) {
+            const refreshToken = await AsyncStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
+            if (refreshToken) {
+              try {
+                console.log('Errore 401, tentativo di refresh del token...');
+                const response = await axios.post(`${API_URL}/auth/refresh-token`, { refresh_token: refreshToken });
+                
+                if (response.status === 200 && response.data.access_token) {
+                  console.log('Token refreshato con successo dopo 401');
+                  
+                  // Salva il nuovo token
+                  await AsyncStorage.setItem(STORAGE_KEYS.USER_TOKEN, response.data.access_token);
+                  setAuthToken(response.data.access_token);
+                  
+                  // Se c'è un nuovo refresh token, salvalo
+                  if (response.data.refresh_token) {
+                    await AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, response.data.refresh_token);
+                  }
+                  
+                  // Riprova la verifica dell'autenticazione
+                  const userData = await checkUserAuth();
+                  if (userData) {
+                    console.log('Autenticazione confermata dopo refresh token');
+                    setUser(userData);
+                    setIsAuthenticated(true);
+                    await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(userData));
+                  }
+                }
+              } catch (refreshError) {
+                console.error('Errore durante il refresh del token dopo 401:', refreshError);
+                
+                // Se il refresh fallisce, considera l'utente non autenticato
+                if (!localDataRestored) {
+                  setUser(null);
+                  setIsAuthenticated(false);
+                  
+                  await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
+                  await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
+                  await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+                }
               }
-            } catch (storageError) {
-              console.error('Errore nel fallback a dati locali:', storageError);
             }
           }
         }
-      } else if (!localDataRestored) {
-        console.log('Nessun token trovato e nessun dato locale valido');
+      } else {
+        // Se non abbiamo un token, l'utente non è autenticato
+        if (!localDataRestored) {
+          console.log('Nessun token trovato e nessun dato locale, utente non autenticato');
+          setUser(null);
+          setIsAuthenticated(false);
+        }
+      }
+    } catch (error) {
+      console.error('Errore durante il refresh dello stato utente:', error);
+      
+      // Se è in corso un logout, non eseguire altre operazioni
+      if (isLoggingOut) {
+        console.log('Ignorato tentativo di ripristino dati dopo errore generico durante logout');
+        return;
+      }
+      
+      // In caso di errore non gestito, manteniamo i dati locali se disponibili
+      if (!user) {
         setUser(null);
         setIsAuthenticated(false);
-      }
-    } catch (err: any) {
-      console.error('Errore critico durante il refresh dello stato utente:', err);
-      setError(err.message || 'Errore durante la verifica dell\'autenticazione');
-      
-      // Tentativo finale di ripristino da dati locali in caso di errore critico
-      try {
-        const userDataString = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-        const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
-        
-        if (userDataString && token) {
-          console.log('Ripristino di emergenza dai dati locali');
-          setUser(JSON.parse(userDataString));
-          setIsAuthenticated(true);
-          setAuthToken(token);
-        }
-      } catch (finalError) {
-        console.error('Fallimento ripristino di emergenza:', finalError);
       }
     } finally {
       setIsLoading(false);
       setInitialCheckDone(true);
-      console.log('AuthProvider - Fine refresh dello stato utente, autenticato:', isAuthenticated);
     }
-  }, []);
+  }, [isLoggingOut]);
 
   // Verifica iniziale dell'autenticazione quando l'app viene caricata
   useEffect(() => {
-    // Evita controlli multipli
-    if (initialCheckDone) return;
+    // Evita controlli multipli o durante il logout
+    if (initialCheckDone || isLoggingOut) return;
     
     console.log('Avvio controllo autenticazione iniziale...');
     
@@ -282,7 +454,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     
     checkAuthWithTimeout();
-  }, [refreshUserStatus, initialCheckDone]);
+  }, [refreshUserStatus, initialCheckDone, isLoggingOut]);
 
   // Effetto per ripristinare dall'AsyncStorage
   useEffect(() => {
@@ -290,6 +462,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         // Solo se l'utente non è già caricato e non siamo in SSR
         if (!user && !isLoading && !Platform.isTV && typeof window !== 'undefined') {
+          // Non tentare di ripristinare se è in corso un logout
+          if (isLoggingOut) {
+            console.log('Ignorato tentativo di ripristino utente durante logout');
+            return;
+          }
           // Prima ottieni il token
           const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
           if (token) {
@@ -323,80 +500,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     
     restoreUserFromStorage();
-  }, [user, isLoading, refreshUserStatus]);
+  }, [user, isLoading, refreshUserStatus, isLoggingOut]);
   
-  // Effetto per gestire cambiamenti di stato dell'app
-  useEffect(() => {
-    const handleAppStateChange = (nextAppState: AppStateStatus) => {
-      if (nextAppState === 'active') {
-        // L'app è tornata in primo piano, aggiorna lo stato dell'utente
-        console.log('App tornata attiva, verifico autenticazione...');
-        refreshUserStatus().catch(err => {
-          console.error('Errore durante il refresh al ritorno attivo:', err);
-        });
-      }
-    };
-    
-    // Aggiungi listener per i cambiamenti di stato dell'app
-    const subscription = AppState.addEventListener('change', handleAppStateChange);
-    
-    // Pulizia al dismount
-    return () => {
-      subscription.remove();
-    };
-  }, [refreshUserStatus]);
-
   // Funzione di login
   const login = async (email: string, password: string): Promise<boolean> => {
-    setIsLoading(true);
-    setError(null);
-    
     try {
-      const response = await loginUser(email, password);
+      setIsLoading(true);
+      setError(null);
       
-      if (response.token && response.utente) {
-        // Salva sia il token che i dati utente in modo sincrono
-        await saveUserSession(response.token, response.utente);
-        
-        // Imposta i dati nella sessione e nello stato
-        setUser(response.utente);
+      console.log(`Tentativo di login per: ${email}`);
+      const result = await loginUser(email, password);
+      
+      if (result && result.token) {
+        setUser(result.utente);
         setIsAuthenticated(true);
-        console.log('Login completato con successo per:', email);
-        console.log('Stato autenticazione aggiornato - isAuthenticated:', true);
-        console.log('Stato autenticazione aggiornato - user:', JSON.stringify(response.utente));
         
-        // Notifica il sistema del login completato usando il global object
+        // Assicuriamoci di salvare correttamente tutti i dati in AsyncStorage
         try {
-          // Utilizziamo un approccio alternativo all'emissione di eventi
-          if (typeof global !== 'undefined' && global.setTimeout) {
-            global.setTimeout(() => {
-              logger.log('Notifica del login completato - Tentativo di aggiornamento vista');
-            }, 100);
+          if (result.token) {
+            await AsyncStorage.setItem(STORAGE_KEYS.USER_TOKEN, result.token);
+            console.log('Token salvato in AsyncStorage');
+            
+            // Imposta il token per le chiamate API
+            setAuthToken(result.token);
           }
-        } catch (eventError) {
-          console.error('Errore durante la notifica di login completato:', eventError);
+          
+          if (result.utente) {
+            await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.utente));
+            console.log('Dati utente salvati in AsyncStorage');
+          }
+          
+          if (result.refreshToken) {
+            await AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, result.refreshToken);
+            console.log('Refresh token salvato in AsyncStorage');
+          }
+        } catch (storageError) {
+          console.error('Errore nel salvataggio dei dati in AsyncStorage:', storageError);
         }
         
         return true;
       } else {
-        throw new Error('Credenziali non valide');
+        setError(result?.error || 'Credenziali non valide');
+        return false;
       }
-    } catch (err: any) {
-      console.error('Errore durante il login:', err);
-      
-      // Gestione migliorata degli errori
-      if (err.response && err.response.status === 401) {
-        setError('Email o password non corretti. Riprova.');
-      } else if (err.message && err.message.includes('Network Error')) {
-        setError('Impossibile connettersi al server. Verifica la tua connessione internet.');
-      } else if (err.code === 'ECONNABORTED') {
-        setError('La richiesta è scaduta. Il server potrebbe essere sovraccarico.');
-      } else if (err.message && err.message.toLowerCase().includes('credenziali')) {
-        setError('Email o password non corretti. Riprova.');
-      } else {
-        setError('Si è verificato un errore durante il login. Riprova più tardi.');
-      }
-      
+    } catch (error: any) {
+      console.error('Errore durante il login:', error);
+      setError(error.message || 'Errore durante il login');
       return false;
     } finally {
       setIsLoading(false);
@@ -448,78 +597,87 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Funzione di logout
-  const logout = async (): Promise<void> => {
-    logger.log('AuthContext - Avvio processo di logout...');
-    setIsLoading(true);
+  const logout = useCallback(async () => {
+    // Imposta il flag di logout immediatamente e prima di qualsiasi altra operazione
+    setIsLoggingOut(true);
     
     try {
-      // Usa la funzione centralizzata di reset autenticazione
-      resetAuthentication();
-      logger.log('Stato di autenticazione resettato');
+      setIsLoading(true);
+      console.log('Esecuzione logout...');
       
-      // Pulizia dello storage in modo protetto
+      // Cancella tutti i listener o abboni attivi che potrebbero scatenare chiamate API
+      // (ad esempio, qui potresti annullare eventuali polling o interval)
+      
+      // Pulisci prima lo stato interno per evitare refresh dello stato
+      setUser(null);
+      setIsAuthenticated(false);
+      setAuthToken(null);
+      
+      // Pulisci AsyncStorage
       if (!Platform.isTV && typeof window !== 'undefined') {
-        try {
-          // Pulizia sincronizzata per assicurarsi che venga completata
-          await Promise.all([
-            AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN),
-            AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA),
-            AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN)
-          ]);
-          logger.log('Token e dati utente rimossi da AsyncStorage');
-        } catch (storageErr) {
-          logger.error('Errore durante la pulizia di AsyncStorage:', storageErr);
-        }
+        console.log('Rimozione dati utente da AsyncStorage');
+        await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
+        await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
+        await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+        await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
       }
       
-      // Chiama il servizio di logout (in modo sicuro, catturo errori)
+      // Chiamata API per il logout (deregistrazione sul backend)
+      // Esegui questa chiamata dopo aver rimosso i dati per evitare race conditions
       try {
         await logoutUser();
-        logger.log('Richiesta di logout al server completata');
-      } catch (err) {
-        logger.error('Errore durante la chiamata al servizio di logout:', err);
-        // Continuiamo con il logout locale anche se il server dà errore
+        console.log('Logout API completato con successo');
+      } catch (apiError) {
+        // Se fallisce la chiamata API, log ma continua
+        console.log('Errore nella chiamata API di logout, ma continuiamo:', apiError);
       }
       
-      // Semplicemente impostiamo user a null e isAuthenticated sarà impostato a false
+      // Notifica utente del logout avvenuto con successo
+      Toast.show({
+        type: 'success',
+        text1: 'Logout completato',
+        text2: 'Hai effettuato il logout con successo',
+        visibilityTime: 3000,
+      });
+      
+      console.log('Logout completato con successo');
+    } catch (error) {
+      console.error('Errore durante il logout:', error);
+      
+      // Anche in caso di errore, assicurati che l'utente sia considerato disconnesso
       setUser(null);
+      setIsAuthenticated(false);
+      setAuthToken(null);
       
-      // Usa la nostra utility per mostrare toast in modo sicuro
-      try {
-        toastHelper.showSuccessToast(
-          'Logout completato',
-          'Hai effettuato il logout con successo'
-        );
-      } catch (err) {
-        logger.error('Errore durante la visualizzazione del toast:', err);
-      }
-      
-      logger.log('Logout completato con successo');
-    } catch (err) {
-      logger.error('Errore critico durante il logout:', err);
-      
-      // Forza comunque il reset in caso di errore
-      resetAuthentication();
-      
-      // Tenta nuovamente la pulizia dello storage
+      // Pulisci comunque AsyncStorage anche in caso di errore
       try {
         if (!Platform.isTV && typeof window !== 'undefined') {
           await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
           await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
           await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+          await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
         }
-      } catch (storageErr) {
-        logger.error('Errore durante la pulizia di emergenza di AsyncStorage:', storageErr);
+      } catch (storageError) {
+        console.error('Errore nella pulizia AsyncStorage durante logout fallito:', storageError);
       }
       
-      // Semplicemente impostiamo user a null per assicurarci che isAuthenticated sia false
-      setUser(null);
-      
-      setError('Si è verificato un errore durante il logout, ma la sessione è stata chiusa correttamente.');
+      // Notifica utente che il logout è stato completato nonostante errori
+      Toast.show({
+        type: 'info',
+        text1: 'Logout completato',
+        text2: 'Sei stato disconnesso dal sistema',
+        visibilityTime: 3000,
+      });
     } finally {
       setIsLoading(false);
+      // Rimuovi il flag di logout solo dopo che tutto è completato
+      // Aumentiamo il ritardo per essere ancora più sicuri
+      setTimeout(() => {
+        setIsLoggingOut(false);
+        console.log('Flag di logout rimosso');
+      }, 2000); // Ritardo più lungo per assicurarsi che eventuali operazioni pendenti siano terminate
     }
-  };
+  }, []);
 
   // Funzione per registrare un nuovo utente
   const register = async (
@@ -645,6 +803,103 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setError(null);
   };
 
+  // Aggiungiamo una funzione per refresh del token
+  const refreshToken = async (): Promise<boolean> => {
+    try {
+      // Ottieni il refresh token
+      const refreshToken = await getRefreshToken();
+      if (!refreshToken) {
+        console.log('Nessun refresh token disponibile');
+        return false;
+      }
+      
+      console.log('Tentativo di refresh del token...');
+      
+      // Prima prova con il nuovo endpoint
+      try {
+        const response = await axios.post(`${API_URL}/auth/refresh-token`, { refresh_token: refreshToken });
+        
+        if (response.status === 200 && (response.data.access_token || response.data.token)) {
+          console.log('Token rinnovato con successo');
+          const newToken = response.data.access_token || response.data.token;
+          
+          // Salva il nuovo token
+          await AsyncStorage.setItem(STORAGE_KEYS.USER_TOKEN, newToken);
+          setAuthToken(newToken);
+          
+          // Se c'è un nuovo refresh token, salvalo
+          if (response.data.refresh_token) {
+            await AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, response.data.refresh_token);
+          }
+          
+          // Verifica lo stato dell'utente dopo il refresh
+          const userData = await checkUserAuth();
+          if (userData) {
+            setUser(userData);
+            setIsAuthenticated(true);
+            await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(userData));
+            // Notifica che la sessione è stata ripristinata
+            Toast.show({
+              type: 'success',
+              text1: 'Sessione ripristinata',
+              text2: 'La tua sessione è stata aggiornata con successo',
+              visibilityTime: 3000,
+            });
+          }
+          
+          return true;
+        }
+      } catch (err) {
+        console.log('Errore con nuovo endpoint, provo con /auth/refresh');
+        
+        // Se fallisce, prova con il vecchio endpoint
+        try {
+          const fallbackResponse = await axios.post(`${API_URL}/auth/refresh`, { refresh_token: refreshToken });
+          
+          if (fallbackResponse.status === 200 && (fallbackResponse.data.access_token || fallbackResponse.data.token)) {
+            console.log('Token rinnovato con successo (endpoint fallback)');
+            const newToken = fallbackResponse.data.access_token || fallbackResponse.data.token;
+            
+            // Salva il nuovo token
+            await AsyncStorage.setItem(STORAGE_KEYS.USER_TOKEN, newToken);
+            setAuthToken(newToken);
+            
+            // Se c'è un nuovo refresh token, salvalo
+            if (fallbackResponse.data.refresh_token) {
+              await AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, fallbackResponse.data.refresh_token);
+            }
+            
+            // Verifica lo stato dell'utente dopo il refresh
+            const userData = await checkUserAuth();
+            if (userData) {
+              setUser(userData);
+              setIsAuthenticated(true);
+              await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(userData));
+              // Notifica che la sessione è stata ripristinata
+              Toast.show({
+                type: 'success',
+                text1: 'Sessione ripristinata',
+                text2: 'La tua sessione è stata aggiornata con successo',
+                visibilityTime: 3000,
+              });
+            }
+            
+            return true;
+          }
+        } catch (fallbackErr) {
+          console.error('Errore anche con endpoint fallback:', fallbackErr);
+        }
+      }
+      
+      // Se arriviamo qui, entrambi i tentativi sono falliti
+      console.log('Tutti i tentativi di refresh del token sono falliti');
+      return false;
+    } catch (error) {
+      console.error('Errore durante il refresh del token:', error);
+      return false;
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -657,7 +912,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         clearError,
         refreshUserStatus,
         register,
-        loginWithCredentials
+        loginWithCredentials,
+        refreshToken
       }}
     >
       {children}

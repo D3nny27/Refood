@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, Alert, TouchableOpacity, Platform } from 'react-native';
 import { Text, Button, Card, Title, Paragraph, ProgressBar, Badge, Chip, Searchbar, FAB, IconButton, ActivityIndicator, Modal, Portal, Dialog, TextInput, Surface, Divider } from 'react-native-paper';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
+import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { format, isAfter, isBefore, addDays, parseISO } from 'date-fns';
 import { it } from 'date-fns/locale';
@@ -30,8 +31,7 @@ interface LottoWithCategoria extends Lotto {
 }
 
 export default function LottiDisponibiliScreen() {
-  const { user } = useAuth();
-  const router = useRouter();
+  const { user, refreshToken } = useAuth();
   
   const [lotti, setLotti] = useState<LottoWithCategoria[]>([]);
   const [lottiNonFiltrati, setLottiNonFiltrati] = useState<LottoWithCategoria[]>([]);
@@ -51,6 +51,7 @@ export default function LottiDisponibiliScreen() {
   const [prenotazioneInCorso, setPrenotazioneInCorso] = useState(false);
   const [showCentroIdInput, setShowCentroIdInput] = useState(false);
   const [manualCentroId, setManualCentroId] = useState('');
+  const [tipoPagamento, setTipoPagamento] = useState<'contanti' | 'bonifico' | null>(null);
 
   // IMPLEMENTAZIONE FILTRO LOCALE PER LA RICERCA CON DEBOUNCE
   const [debounceTimeout, setDebounceTimeout] = useState<NodeJS.Timeout | null>(null);
@@ -445,6 +446,51 @@ export default function LottiDisponibiliScreen() {
     setPrenotazioneModalVisible(true);
   };
   
+  // Funzione migliorata per gestire gli errori di autenticazione
+  const handleAuthError = async () => {
+    try {
+      console.log('Tentativo di aggiornare l\'autenticazione...');
+      
+      // Verifica se la funzione refreshToken è disponibile
+      if (refreshToken) {
+        console.log('Tentativo di refresh del token...');
+        const refreshSuccess = await refreshToken();
+        
+        if (refreshSuccess) {
+          Toast.show({
+            type: 'info',
+            text1: 'Autenticazione aggiornata',
+            text2: 'Riprova l\'operazione',
+            visibilityTime: 3000,
+          });
+          
+          // Ricarica i lotti dopo il refresh del token
+          loadLottiDisponibili(true);
+          return;
+        }
+      }
+      
+      // Se non c'è refreshToken o il refresh fallisce, mostra l'errore
+      Toast.show({
+        type: 'error',
+        text1: 'Errore di autenticazione',
+        text2: 'Accedi nuovamente per continuare',
+        visibilityTime: 4000,
+      });
+      
+      // Ridireziona alla pagina di login
+      router.push('/login');
+    } catch (err) {
+      console.error('Errore nell\'aggiornamento dell\'autenticazione:', err);
+      Toast.show({
+        type: 'error',
+        text1: 'Errore di autenticazione',
+        text2: 'Accedi nuovamente per continuare',
+      });
+      router.push('/login');
+    }
+  };
+  
   // Funzione per confermare la prenotazione
   const confermaPrenotazione = async () => {
     if (!lottoSelezionato) {
@@ -484,19 +530,33 @@ export default function LottiDisponibiliScreen() {
         lottoSelezionato.id,
         dataRitiro,
         notePrenotazione || null,
-        overrideCentroId
+        null // Passiamo null invece di overrideCentroId
       );
       
       if (result.success) {
         // Chiudi il modale e mostra conferma
         setPrenotazioneModalVisible(false);
         
-        Toast.show({
-          type: 'success',
-          text1: 'Prenotazione effettuata',
-          text2: 'La tua prenotazione è stata registrata con successo!',
-          visibilityTime: 3000,
-        });
+        // Verifica se è un utente privato che prenota un lotto verde con pagamento bonifico
+        const isLottoVerde = lottoSelezionato.stato?.toUpperCase() === 'VERDE';
+        const isUtenteTipoPrivato = user?.tipo_utente?.toUpperCase() === 'PRIVATO';
+        const isBonifico = tipoPagamento === 'bonifico';
+        
+        if (isUtenteTipoPrivato && isLottoVerde && isBonifico) {
+          Toast.show({
+            type: 'success',
+            text1: 'Prenotazione effettuata',
+            text2: 'La tua richiesta è stata presa in carico, controllare la mail per le istruzioni del bonifico',
+            visibilityTime: 4000,
+          });
+        } else {
+          Toast.show({
+            type: 'success',
+            text1: 'Prenotazione effettuata',
+            text2: 'La tua prenotazione è stata registrata con successo!',
+            visibilityTime: 3000,
+          });
+        }
         
         // Ricarica i lotti dopo la prenotazione
         await loadLottiDisponibili(true);
@@ -524,6 +584,9 @@ export default function LottiDisponibiliScreen() {
           
           // Ricarica i lotti per rimuoverlo dalla lista
           await loadLottiDisponibili(true);
+        } else if (result.error?.message === 'Unauthorized' || result.error?.message?.includes('token')) {
+          // Gestione errore di autorizzazione
+          handleAuthError();
         } else if (result.missingCentroId) {
           // Caso di centro_id mancante
           setShowCentroIdInput(true);
@@ -543,14 +606,21 @@ export default function LottiDisponibiliScreen() {
           });
         }
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Errore durante la prenotazione:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Errore',
-        text2: 'Si è verificato un errore. Riprova più tardi.',
-        visibilityTime: 3000,
-      });
+      
+      // Verifica se è un errore di autorizzazione
+      if (error.message?.includes('token') || error.message?.includes('Unauthorized') || 
+          error?.response?.status === 401 || error?.response?.status === 403) {
+        handleAuthError();
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Errore',
+          text2: 'Si è verificato un errore. Riprova più tardi.',
+          visibilityTime: 3000,
+        });
+      }
     } finally {
       setPrenotazioneInCorso(false);
     }
@@ -656,114 +726,129 @@ export default function LottiDisponibiliScreen() {
     );
   };
   
+  // Modifica completa del renderDialog per rendere i pulsanti più evidenti
   const renderDialog = () => (
     <Portal>
       <Dialog
         visible={prenotazioneModalVisible}
         onDismiss={() => setPrenotazioneModalVisible(false)}
         style={styles.prenotazioneDialog}
+        dismissable={!prenotazioneInCorso} // Impedisci chiusura durante il caricamento
       >
-        <Dialog.Title>Prenota Lotto</Dialog.Title>
-        <Dialog.Content>
-          <Text style={styles.dialogText}>
-            Stai prenotando il lotto:
-          </Text>
-          <Text style={styles.dialogProdotto}>
-            {lottoSelezionato?.nome}
-          </Text>
-          <Text style={styles.dialogText}>
-            Seleziona la data di prelievo:
-          </Text>
-          
-          <View style={styles.dateButtonsContainer}>
-            <Button 
-              mode="outlined"
-              onPress={() => setDataRitiroPrevista(addDays(new Date(), 1))}
-              style={[
-                styles.dateButton,
-                format(dataRitiroPrevista, 'yyyy-MM-dd') === format(addDays(new Date(), 1), 'yyyy-MM-dd') ? styles.dateButtonSelected : null
-              ]}
-            >
-              Domani
-            </Button>
-            <Button 
-              mode="outlined"
-              onPress={() => setDataRitiroPrevista(addDays(new Date(), 2))}
-              style={[
-                styles.dateButton,
-                format(dataRitiroPrevista, 'yyyy-MM-dd') === format(addDays(new Date(), 2), 'yyyy-MM-dd') ? styles.dateButtonSelected : null
-              ]}
-            >
-              Dopodomani
-            </Button>
-            <Button 
-              mode="outlined"
-              onPress={() => setDataRitiroPrevista(addDays(new Date(), 3))}
-              style={[
-                styles.dateButton,
-                format(dataRitiroPrevista, 'yyyy-MM-dd') === format(addDays(new Date(), 3), 'yyyy-MM-dd') ? styles.dateButtonSelected : null
-              ]}
-            >
-              Tra 3 giorni
-            </Button>
-          </View>
-          
-          <View style={styles.datePickerContainer}>
-            {Platform.OS === 'web' ? (
-              <input
-                type="date"
-                style={styles.webDatePicker}
-                min={new Date().toISOString().split('T')[0]}
-                value={dataRitiroPrevista.toISOString().split('T')[0]}
-                onChange={(e) => {
-                  try {
-                    console.log('Input web datestring:', e.target.value);
-                    if (e.target.value) {
-                      const date = new Date(e.target.value);
-                      if (!isNaN(date.getTime())) {
-                        setDataRitiroPrevista(date);
-                      }
-                    }
-                  } catch (error) {
-                    console.error('Errore nel date picker web:', error);
-                  }
-                }}
-              />
-            ) : (
-              <Button
+        <Dialog.Title style={styles.dialogTitle}>Prenota Lotto</Dialog.Title>
+        <Dialog.ScrollArea style={styles.dialogScrollArea}>
+          <View style={styles.dialogContent}>
+            <Text style={styles.dialogText}>
+              Stai prenotando il lotto:
+            </Text>
+            <Text style={styles.dialogProdotto}>
+              {lottoSelezionato?.nome}
+            </Text>
+            <Text style={styles.dialogText}>
+              Seleziona la data di prelievo:
+            </Text>
+            
+            <View style={styles.dateButtonsContainer}>
+              <Button 
                 mode="outlined"
-                icon="calendar"
-                onPress={() => setShowDatePicker(true)}
-                style={styles.datePickerButton}
+                onPress={() => setDataRitiroPrevista(addDays(new Date(), 1))}
+                style={[
+                  styles.dateButton,
+                  format(dataRitiroPrevista, 'yyyy-MM-dd') === format(addDays(new Date(), 1), 'yyyy-MM-dd') ? styles.dateButtonSelected : null
+                ]}
               >
-                Seleziona un'altra data
+                Domani
               </Button>
-            )}
+              <Button 
+                mode="outlined"
+                onPress={() => setDataRitiroPrevista(addDays(new Date(), 2))}
+                style={[
+                  styles.dateButton,
+                  format(dataRitiroPrevista, 'yyyy-MM-dd') === format(addDays(new Date(), 2), 'yyyy-MM-dd') ? styles.dateButtonSelected : null
+                ]}
+              >
+                Dopodomani
+              </Button>
+              <Button 
+                mode="outlined"
+                onPress={() => setDataRitiroPrevista(addDays(new Date(), 3))}
+                style={[
+                  styles.dateButton,
+                  format(dataRitiroPrevista, 'yyyy-MM-dd') === format(addDays(new Date(), 3), 'yyyy-MM-dd') ? styles.dateButtonSelected : null
+                ]}
+              >
+                Tra 3 giorni
+              </Button>
+            </View>
+            
+            <View style={styles.datePickerContainer}>
+              {Platform.OS === 'web' ? (
+                <input
+                  type="date"
+                  style={styles.webDatePicker}
+                  min={new Date().toISOString().split('T')[0]}
+                  value={dataRitiroPrevista.toISOString().split('T')[0]}
+                  onChange={(e) => {
+                    try {
+                      console.log('Input web datestring:', e.target.value);
+                      if (e.target.value) {
+                        const date = new Date(e.target.value);
+                        if (!isNaN(date.getTime())) {
+                          setDataRitiroPrevista(date);
+                        }
+                      }
+                    } catch (error) {
+                      console.error('Errore nel date picker web:', error);
+                    }
+                  }}
+                />
+              ) : (
+                <Button
+                  mode="outlined"
+                  icon="calendar"
+                  onPress={() => setShowDatePicker(true)}
+                  style={styles.datePickerButton}
+                >
+                  Seleziona un'altra data
+                </Button>
+              )}
+            </View>
+            
+            <Text style={styles.selectedDateText}>
+              Data selezionata: {format(dataRitiroPrevista, 'dd/MM/yyyy', { locale: it })}
+            </Text>
+            
+            <TextInput
+              label="Note (opzionale)"
+              value={notePrenotazione}
+              onChangeText={setNotePrenotazione}
+              multiline
+              style={styles.noteInput}
+            />
           </View>
-          
-          <Text style={styles.selectedDateText}>
-            Data selezionata: {format(dataRitiroPrevista, 'dd/MM/yyyy', { locale: it })}
-          </Text>
-          
-          <TextInput
-            label="Note (opzionale)"
-            value={notePrenotazione}
-            onChangeText={setNotePrenotazione}
-            multiline
-            style={styles.noteInput}
-          />
-        </Dialog.Content>
-        <Dialog.Actions>
-          <Button onPress={() => setPrenotazioneModalVisible(false)}>Annulla</Button>
+        </Dialog.ScrollArea>
+        <View style={styles.dialogBottomBar}>
+          <Button 
+            onPress={() => setPrenotazioneModalVisible(false)}
+            style={styles.dialogCancelButton}
+            labelStyle={styles.dialogButtonLabel}
+            contentStyle={styles.dialogButtonContent}
+            disabled={prenotazioneInCorso}
+          >
+            ANNULLA
+          </Button>
           <Button 
             mode="contained" 
             onPress={confermaPrenotazione}
             loading={prenotazioneInCorso}
             disabled={prenotazioneInCorso}
+            style={styles.dialogConfirmButton}
+            labelStyle={styles.dialogButtonLabel}
+            contentStyle={styles.dialogButtonContent}
           >
-            Conferma
+            CONFERMA
           </Button>
-        </Dialog.Actions>
+        </View>
       </Dialog>
     </Portal>
   );
@@ -1322,6 +1407,53 @@ const styles = StyleSheet.create({
   prenotazioneDialog: {
     backgroundColor: 'white',
     borderRadius: 8,
+    margin: 0,
+    padding: 0,
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? 500 : '95%',
+  },
+  dialogTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    paddingVertical: 16,
+  },
+  dialogScrollArea: {
+    paddingHorizontal: 0,
+    maxHeight: 400,
+  },
+  dialogContent: {
+    padding: 16,
+  },
+  dialogBottomBar: {
+    flexDirection: 'row',
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+    backgroundColor: '#f9f9f9',
+  },
+  dialogCancelButton: {
+    flex: 1,
+    marginRight: 10,
+    borderColor: '#aaa',
+    borderWidth: 1,
+    backgroundColor: '#f5f5f5',
+    height: 50,
+  },
+  dialogConfirmButton: {
+    flex: 1,
+    marginLeft: 10,
+    backgroundColor: PRIMARY_COLOR,
+    height: 50,
+  },
+  dialogButtonLabel: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: Platform.OS === 'ios' ? (PRIMARY_COLOR) : undefined,
+  },
+  dialogButtonContent: {
+    height: 50,
+    paddingVertical: 8,
   },
   dialogText: {
     fontSize: 16,
@@ -1332,6 +1464,12 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: '#555',
+    marginBottom: 16,
+    backgroundColor: '#f5f5f5',
+    padding: 12,
+    borderRadius: 4,
+    borderLeftWidth: 4,
+    borderLeftColor: PRIMARY_COLOR,
   },
   dateButtonsContainer: {
     flexDirection: 'row',
@@ -1500,5 +1638,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginVertical: 4,
+  },
+  dialogActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 16,
+    marginTop: 8,
   },
 }); 

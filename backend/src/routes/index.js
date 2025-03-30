@@ -131,6 +131,14 @@ router.use('/auth', authRoutes);
 // Rotte attori
 router.use('/attori', attoreRoutes);
 
+// Compatibilità retroattiva con le vecchie app che usano /users/profile
+router.get('/users/profile', (req, res) => {
+  console.log('Richiesta a /users/profile, reindirizzamento a /attori/profile');
+  // Invece di restituire un 404, reindirizzamo la richiesta all'endpoint corretto
+  req.url = '/profile';
+  attoreRoutes(req, res);
+});
+
 // Rotte tipi utente (precedentemente centri)
 router.use('/tipi-utente', tipoUtenteRoutes);
 
