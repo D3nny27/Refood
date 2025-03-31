@@ -128,35 +128,6 @@ export default function ProfiloScreen() {
         </Card.Content>
       </Card>
 
-      {/* Sezione Amministrazione (visibile solo agli admin) */}
-      {isAdmin && (
-        <Card style={styles.sectionCard}>
-          <Card.Title 
-            title="Amministrazione" 
-            left={(props) => <MaterialCommunityIcons name="shield-account" size={24} color={theme.colors.primary} />} 
-          />
-          <Card.Content>
-            <List.Item
-              title="Gestione Centri"
-              description="Aggiungi, modifica e assegna centri agli operatori"
-              left={props => <List.Icon {...props} icon="domain" />}
-              right={props => <List.Icon {...props} icon="chevron-right" />}
-              onPress={() => router.push('/admin/centri')}
-              style={styles.listItem}
-            />
-            <Divider />
-            <List.Item
-              title="Gestione Utenti"
-              description="Amministra gli account utente"
-              left={props => <List.Icon {...props} icon="account-group" />}
-              right={props => <List.Icon {...props} icon="chevron-right" />}
-              onPress={() => router.push('/admin/utenti')}
-              style={styles.listItem}
-            />
-          </Card.Content>
-        </Card>
-      )}
-
       {/* Impostazioni account */}
       <Card style={styles.sectionCard}>
         <Card.Title 

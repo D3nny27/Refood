@@ -399,7 +399,7 @@ export default function PrenotazioniScreen() {
               <Badge 
                 style={[styles.statoBadge, { backgroundColor: statoColor }]}
               >
-                {item.stato}
+                {item.stato.toLowerCase() === 'prenotato' ? 'In attesa' : item.stato}
               </Badge>
             </View>
           </View>

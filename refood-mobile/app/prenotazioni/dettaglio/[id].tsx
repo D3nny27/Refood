@@ -219,7 +219,7 @@ const DettaglioPrenotazioneScreen = () => {
                 style={{ backgroundColor: `${statoColor}20` }}
                 textStyle={{ color: statoColor }}
               >
-                {prenotazione.stato}
+                {prenotazione.stato.toLowerCase() === 'prenotato' ? 'In attesa' : prenotazione.stato}
               </Chip>
             </View>
             

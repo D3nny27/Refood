@@ -7,6 +7,9 @@ const logger = require('../utils/logger');
  */
 exports.getCounters = async (req, res, next) => {
   try {
+    // Controllo se è richiesta una versione dettagliata delle statistiche
+    const isDetailed = req.query.detailed === 'true';
+    
     // Esegui query per contare le entità principali
     const [
       lotti,
@@ -15,14 +18,33 @@ exports.getCounters = async (req, res, next) => {
       tipiUtente
     ] = await Promise.all([
       db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN stato = "Verde" THEN 1 END) as verdi, COUNT(CASE WHEN stato = "Arancione" THEN 1 END) as arancioni, COUNT(CASE WHEN stato = "Rosso" THEN 1 END) as rossi FROM Lotti'),
-      db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN stato = "Prenotato" THEN 1 END) as prenotate, COUNT(CASE WHEN stato = "InTransito" THEN 1 END) as in_transito, COUNT(CASE WHEN stato = "Consegnato" THEN 1 END) as consegnate, COUNT(CASE WHEN stato = "Annullato" THEN 1 END) as annullate FROM Prenotazioni'),
+      db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN stato = "Prenotato" THEN 1 END) as prenotate, COUNT(CASE WHEN stato = "Confermato" THEN 1 END) as confermate, COUNT(CASE WHEN stato = "ProntoPerRitiro" THEN 1 END) as pronte_per_ritiro, COUNT(CASE WHEN stato = "Consegnato" THEN 1 END) as consegnate, COUNT(CASE WHEN stato = "Annullato" THEN 1 END) as annullate FROM Prenotazioni'),
       db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN ruolo = "Operatore" THEN 1 END) as operatori, COUNT(CASE WHEN ruolo = "Amministratore" THEN 1 END) as amministratori, COUNT(CASE WHEN ruolo = "TipoUtenteSociale" THEN 1 END) as centri_sociali, COUNT(CASE WHEN ruolo = "TipoUtenteRiciclaggio" THEN 1 END) as centri_riciclaggio FROM Attori'),
       db.get('SELECT COUNT(*) as totale, COUNT(CASE WHEN tipo = "Privato" THEN 1 END) as privati, COUNT(CASE WHEN tipo = "Canale sociale" THEN 1 END) as canali_sociali, COUNT(CASE WHEN tipo = "centro riciclo" THEN 1 END) as centri_riciclo FROM Tipo_Utente')
     ]);
     
-    res.json({
+    // Calcola i lotti attivi, le prenotazioni attive
+    const lottiAttivi = lotti.verdi + lotti.arancioni + lotti.rossi;
+    // Assicurati che confermate sia un numero
+    const confermate = parseInt(prenotazioni.confermate || 0, 10);
+    const prenotazioniAttive = prenotazioni.prenotate + confermate + 
+                           (prenotazioni.pronte_per_ritiro || 0);
+    
+    // Ottieni i lotti in scadenza (che scadranno entro 3 giorni)
+    const lottiInScadenzaResult = await db.get(`
+      SELECT COUNT(*) as in_scadenza 
+      FROM Lotti 
+      WHERE julianday(data_scadenza) - julianday('now') <= 3 
+      AND stato IN ('Verde', 'Arancione', 'Rosso')
+    `);
+    const lottiInScadenza = lottiInScadenzaResult.in_scadenza || 0;
+    
+    // Costruisci la risposta di base che include le statistiche standard
+    const risposta = {
       lotti: {
         totale: lotti.totale,
+        attivi: lottiAttivi,
+        in_scadenza: lottiInScadenza,
         per_stato: {
           verde: lotti.verdi,
           arancione: lotti.arancioni,
@@ -31,12 +53,12 @@ exports.getCounters = async (req, res, next) => {
       },
       prenotazioni: {
         totale: prenotazioni.totale,
-        per_stato: {
-          prenotate: prenotazioni.prenotate,
-          in_transito: prenotazioni.in_transito,
-          consegnate: prenotazioni.consegnate,
-          annullate: prenotazioni.annullate
-        }
+        attive: prenotazioniAttive,
+        prenotate: prenotazioni.prenotate,
+        confermate: parseInt(prenotazioni.confermate || 0, 10),
+        pronte_per_ritiro: prenotazioni.pronte_per_ritiro || 0,
+        consegnate: prenotazioni.consegnate,
+        annullate: prenotazioni.annullate
       },
       utenti: {
         totale: utenti.totale,
@@ -55,7 +77,159 @@ exports.getCounters = async (req, res, next) => {
           centri_riciclo: tipiUtente.centri_riciclo
         }
       }
-    });
+    };
+
+    // Aggiungi dati dettagliati se richiesto
+    if (isDetailed) {
+      try {
+        // Query per dati di attività giornaliere
+        const today = new Date().toISOString().split('T')[0]; // Formato YYYY-MM-DD
+        
+        const [
+          lottiOggi,
+          prenotazioniOggi,
+          cambiStatoOggi,
+          impattoAmbientale
+        ] = await Promise.all([
+          db.get(`
+            SELECT COUNT(*) as count 
+            FROM Lotti 
+            WHERE date(creato_il) = date('${today}')
+          `),
+          db.get(`
+            SELECT COUNT(*) as count 
+            FROM Prenotazioni 
+            WHERE date(data_prenotazione) = date('${today}')
+          `),
+          db.get(`
+            SELECT COUNT(*) as count 
+            FROM LogCambioStato 
+            WHERE date(cambiato_il) = date('${today}')
+          `),
+          db.get(`
+            SELECT 
+              SUM(co2_risparmiata_kg) as co2_risparmiata, 
+              COUNT(*) as count_lotti
+            FROM ImpattoCO2
+          `)
+        ]);
+        
+        // Aggiunge dati di attività reali
+        risposta.attivita = {
+          oggi: (lottiOggi.count || 0) + (prenotazioniOggi.count || 0) + (cambiStatoOggi.count || 0),
+          lotti_inseriti_oggi: lottiOggi.count || 0,
+          prenotazioni_oggi: prenotazioniOggi.count || 0,
+          cambi_stato: cambiStatoOggi.count || 0
+        };
+        
+        // Aggiunge dati di impatto ambientale reali se disponibili
+        risposta.impatto = {
+          kg_cibo_salvato: Math.round((lottiAttivi * 2.5) || 0), // Stima basata sui lotti attivi
+          kg_co2_risparmiata: impattoAmbientale.co2_risparmiata || 0
+        };
+        
+        // Dati operatore (se l'utente che fa la richiesta è un operatore)
+        // Nota: in un sistema reale, dovresti ottenere l'ID dell'operatore dalla sessione
+        const operatoreId = req.user?.id; // Assumiamo che req.user contenga l'ID dell'utente
+        if (operatoreId) {
+          const operatoreStats = await db.get(`
+            SELECT 
+              COUNT(*) as lotti_inseriti,
+              COUNT(CASE WHEN stato IN ('Verde', 'Arancione', 'Rosso') THEN 1 END) as lotti_attivi,
+              COUNT(CASE WHEN date(creato_il) >= date('now', '-7 days') THEN 1 END) as lotti_della_settimana,
+              SUM(CASE 
+                WHEN unita_misura = 'kg' THEN quantita 
+                WHEN unita_misura = 'g' THEN quantita / 1000
+                ELSE 0 
+              END) as kg_salvati
+            FROM Lotti 
+            WHERE inserito_da = ?
+          `, [operatoreId]);
+          
+          risposta.operatore = {
+            lotti_inseriti: operatoreStats.lotti_inseriti || 0,
+            lotti_attivi: operatoreStats.lotti_attivi || 0,
+            lotti_della_settimana: operatoreStats.lotti_della_settimana || 0,
+            kg_salvati: Math.round(operatoreStats.kg_salvati || 0)
+          };
+        } else {
+          // Dati di esempio se non abbiamo l'ID dell'operatore
+          risposta.operatore = {
+            lotti_inseriti: 0,
+            lotti_attivi: 0,
+            lotti_della_settimana: 0,
+            kg_salvati: 0
+          };
+        }
+        
+        // Dati per il centro (se l'utente è associato a un centro)
+        // Nota: anche qui, in un sistema reale, otterresti l'ID del centro dalla sessione
+        const centroId = req.user?.centroId; // Assumiamo che req.user contenga l'ID del centro
+        if (centroId) {
+          const centroStats = await db.get(`
+            SELECT 
+              COUNT(CASE WHEN p.stato IN ('Prenotato', 'Confermato', 'ProntoPerRitiro') THEN 1 END) as prenotazioni_attive,
+              COUNT(CASE WHEN p.stato = 'Consegnato' THEN 1 END) as lotti_ricevuti,
+              COUNT(CASE WHEN l.stato = 'Rosso' AND p.stato = 'Consegnato' THEN 1 END) as lotti_riciclati,
+              SUM(CASE 
+                WHEN l.unita_misura = 'kg' AND p.stato = 'Consegnato' THEN l.quantita 
+                WHEN l.unita_misura = 'g' AND p.stato = 'Consegnato' THEN l.quantita / 1000
+                ELSE 0 
+              END) as kg_riciclati
+            FROM Prenotazioni p
+            JOIN Lotti l ON p.lotto_id = l.id
+            WHERE p.tipo_utente_ricevente_id = ?
+          `, [centroId]);
+          
+          risposta.centro = {
+            prenotazioni_attive: centroStats.prenotazioni_attive || 0,
+            lotti_ricevuti: centroStats.lotti_ricevuti || 0,
+            lotti_riciclati: centroStats.lotti_riciclati || 0,
+            kg_riciclati: Math.round(centroStats.kg_riciclati || 0)
+          };
+        } else {
+          // Dati di esempio se non abbiamo l'ID del centro
+          risposta.centro = {
+            prenotazioni_attive: 0,
+            lotti_ricevuti: 0,
+            lotti_riciclati: 0,
+            kg_riciclati: 0
+          };
+        }
+      } catch (detailError) {
+        // Se c'è un errore nel recupero dei dati dettagliati, logga ma non fallire l'intera richiesta
+        logger.error(`Errore nel recupero dei dati dettagliati: ${detailError.message}`);
+        
+        // Fornisci valori di default
+        risposta.attivita = {
+          oggi: 0,
+          lotti_inseriti_oggi: 0,
+          prenotazioni_oggi: 0,
+          cambi_stato: 0
+        };
+        
+        risposta.impatto = {
+          kg_cibo_salvato: 0,
+          kg_co2_risparmiata: 0
+        };
+        
+        risposta.operatore = {
+          lotti_inseriti: 0,
+          lotti_attivi: 0,
+          lotti_della_settimana: 0,
+          kg_salvati: 0
+        };
+        
+        risposta.centro = {
+          prenotazioni_attive: 0,
+          lotti_ricevuti: 0,
+          lotti_riciclati: 0,
+          kg_riciclati: 0
+        };
+      }
+    }
+    
+    res.json(risposta);
   } catch (err) {
     logger.error(`Errore nel recupero dei contatori: ${err.message}`);
     next(new ApiError(500, 'Errore nel recupero dei contatori'));
