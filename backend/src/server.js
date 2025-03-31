@@ -17,6 +17,9 @@ const { errorHandler } = require('./middlewares/errorHandler');
 const scheduler = require('./utils/scheduler');
 const websocket = require('./utils/websocket');
 
+// Importa il modulo di configurazione automatica del sistema di monitoraggio schema
+const schemaMonitor = require('./init/schema_autosetup');
+
 // Inizializzazione app Express
 const app = express();
 
@@ -70,20 +73,34 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 
-// Avvio del server
-server.listen(PORT, () => {
-  logger.info(`Server avviato sulla porta ${PORT} in modalità ${process.env.NODE_ENV || 'development'}`);
-  logger.info(`API disponibili su http://localhost:${PORT}${API_PREFIX}`);
-  logger.info(`Documentazione API su http://localhost:${PORT}/api-docs`);
-  
-  // Inizializza lo scheduler per le attività pianificate
-  scheduler.init();
-  
-  // Inizializza il servizio WebSocket
-  websocket.init(server);
-  
-  logger.info(`WebSocket disponibile su ws://localhost:${PORT}/api/notifications/ws`);
-});
+// Inizializzazione del server e database
+async function startServer() {
+  try {
+    // Verifica e configura automaticamente il sistema di monitoraggio schema
+    await schemaMonitor.configureMonitoringSystem();
+    
+    // Avvia il server
+    server.listen(PORT, () => {
+      logger.info(`Server avviato sulla porta ${PORT} in modalità ${process.env.NODE_ENV || 'development'}`);
+      logger.info(`API disponibili su http://localhost:${PORT}${API_PREFIX}`);
+      logger.info(`Documentazione API su http://localhost:${PORT}/api-docs`);
+      
+      // Inizializza lo scheduler per le attività pianificate
+      scheduler.init();
+      
+      // Inizializza il servizio WebSocket
+      websocket.init(server);
+      
+      logger.info(`WebSocket disponibile su ws://localhost:${PORT}/api/notifications/ws`);
+    });
+  } catch (error) {
+    console.error(`Errore durante l'avvio del server: ${error.message}`);
+    process.exit(1);
+  }
+}
+
+// Avvia il server
+startServer();
 
 // Gestione della chiusura graziosa
 process.on('SIGTERM', () => {

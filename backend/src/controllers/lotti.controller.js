@@ -74,7 +74,7 @@ exports.getLotti = async (req, res, next) => {
         LEFT JOIN (
           SELECT lotto_id, 'Prenotato' AS stato_prenotazione
           FROM Prenotazioni 
-          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO')
         ) p ON l.id = p.lotto_id
       `;
       
@@ -83,8 +83,16 @@ exports.getLotti = async (req, res, next) => {
       
       // Modifichiamo il SELECT per includere stato_prenotazione
       query = query.replace('SELECT l.*', 'SELECT l.*, p.stato_prenotazione');
+      
+      // Escludiamo sempre i lotti con prenotazioni consegnate, anche per admin e operatori
+      whereConditions.push(`
+        l.id NOT IN (
+          SELECT lotto_id FROM Prenotazioni 
+          WHERE UPPER(stato) = 'CONSEGNATO'
+        )
+      `);
     } else {
-      // Per utenti normali, filtra i lotti prenotati
+      // Per utenti normali, filtra i lotti prenotati o consegnati
       whereConditions.push(`
         l.id NOT IN (
           SELECT lotto_id FROM Prenotazioni 
@@ -151,11 +159,11 @@ exports.getLotti = async (req, res, next) => {
     
     // Per admin e operatori, verifichiamo quali lotti sono prenotati
     if (userRuolo === 'Amministratore' || userRuolo === 'Operatore') {
-      // Ottieni tutte le prenotazioni attive
+      // Ottieni tutte le prenotazioni attive (escludendo quelle consegnate)
       const prenotazioniQuery = `
         SELECT lotto_id
         FROM Prenotazioni
-        WHERE stato IN ('Prenotato', 'InTransito', 'Consegnato')
+        WHERE stato IN ('Prenotato', 'InTransito')
       `;
       
       const prenotazioni = await db.all(prenotazioniQuery);
@@ -236,7 +244,7 @@ exports.getLottoById = async (req, res, next) => {
         LEFT JOIN (
           SELECT lotto_id, 'Prenotato' AS stato_prenotazione
           FROM Prenotazioni 
-          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO')
         ) p ON l.id = p.lotto_id
         WHERE l.id = ?
         GROUP BY l.id
@@ -274,7 +282,7 @@ exports.getLottoById = async (req, res, next) => {
       const prenotazioniAttualiQuery = `
         SELECT COUNT(*) as count 
         FROM Prenotazioni 
-        WHERE lotto_id = ? AND stato IN ('Prenotato', 'InTransito', 'Consegnato')
+        WHERE lotto_id = ? AND stato IN ('Prenotato', 'InTransito')
       `;
       
       const prenotazioniAttuali = await db.get(prenotazioniAttualiQuery, [lottoId]);
@@ -1114,7 +1122,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
         LEFT JOIN (
           SELECT lotto_id, 'Prenotato' AS stato_prenotazione
           FROM Prenotazioni 
-          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO')
         ) p ON l.id = p.lotto_id
       `;
       
@@ -1123,8 +1131,16 @@ exports.getLottiDisponibili = async (req, res, next) => {
       
       // Modifichiamo il SELECT per includere stato_prenotazione
       query = query.replace('SELECT l.*', 'SELECT l.*, p.stato_prenotazione');
+      
+      // Escludiamo sempre i lotti con prenotazioni consegnate, anche per admin e operatori
+      whereConditions.push(`
+        l.id NOT IN (
+          SELECT lotto_id FROM Prenotazioni 
+          WHERE UPPER(stato) = 'CONSEGNATO'
+        )
+      `);
     } else {
-      // Per utenti normali, filtra i lotti prenotati
+      // Per utenti normali, filtra i lotti prenotati o consegnati
       whereConditions.push(`
         l.id NOT IN (
           SELECT lotto_id FROM Prenotazioni 
@@ -1154,16 +1170,6 @@ exports.getLottiDisponibili = async (req, res, next) => {
       } else {
         logger.warn(`Tipo utente non riconosciuto o mancante: "${tipoUtente}". Nessun lotto verrà mostrato.`);
         whereConditions.push(`1 = 0`); // nessun risultato
-      }
-    } else if (userRuolo !== 'Amministratore' && userRuolo !== 'Operatore' && !bypassFiltriTipoUtente) {
-      // Caso di default per ruoli non riconosciuti
-      whereConditions.push(`1 = 0`); // nessun risultato
-      logger.warn(`Ruolo non riconosciuto: ${userRuolo}. Nessun lotto verrà mostrato.`);
-    } else {
-      // Amministratori e Operatori possono filtrare per stato se lo specificano
-      if (stato) {
-        whereConditions.push('UPPER(l.stato) = UPPER(?)');
-        params.push(stato);
       }
     }
     
@@ -1218,11 +1224,11 @@ exports.getLottiDisponibili = async (req, res, next) => {
     
     // Per admin e operatori, verifichiamo quali lotti sono prenotati
     if (userRuolo === 'Amministratore' || userRuolo === 'Operatore') {
-      // Ottieni tutte le prenotazioni attive
+      // Ottieni tutte le prenotazioni attive (escludendo quelle consegnate)
       const prenotazioniQuery = `
         SELECT lotto_id
         FROM Prenotazioni
-        WHERE stato IN ('Prenotato', 'InTransito', 'Consegnato')
+        WHERE stato IN ('Prenotato', 'InTransito')
       `;
       
       const prenotazioni = await db.all(prenotazioniQuery);
