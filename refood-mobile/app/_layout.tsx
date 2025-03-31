@@ -67,6 +67,27 @@ const darkTheme = {
     formColor: '#000000',
     formText: '#000000',
     onBackground: '#000000',              // Testo sullo sfondo
+    
+    // ===== PROPRIETÀ SPECIFICHE PER LA PAGINA NOTIFICHE =====
+    notificationSurface: '#121212',       // Sfondo scuro per notifiche
+    notificationCard: '#1E1E1E',          // Sfondo card notifiche
+    notificationText: '#FFFFFF',          // Testo bianco per notifiche
+    notificationContainerBg: '#121212',   // Sfondo container notifiche
+    
+    // Proprietà per i componenti delle notifiche
+    elevation: {
+      level0: '#121212',                  // Base notifiche
+      level1: '#1E1E1E',                  // Card notifiche
+      level2: '#222222',                  // Dialog notifiche
+      level3: '#252525',                  // Menu notifiche
+      level4: '#272727',                  // Modal notifiche
+      level5: '#2C2C2C',                  // Extra elevazione
+    },
+    
+    // Proprietà per prenotazioni in dark mode
+    bookingContainerBg: '#121212',        // Sfondo container prenotazioni
+    bookingCardBg: '#1E1E1E',             // Sfondo card prenotazioni
+    bookingCardText: '#FFFFFF',           // Testo card prenotazioni
   },
 };
 
