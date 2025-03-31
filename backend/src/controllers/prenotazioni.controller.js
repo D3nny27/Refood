@@ -113,13 +113,15 @@ const getPrenotazioneById = async (req, res, next) => {
         u.id AS utente_id, u.nome AS utente_nome, u.cognome AS utente_cognome,
         u.email AS utente_email, u.ruolo AS utente_ruolo,
         tuo.tipo AS tipo_utente_origine_tipo, tuo.indirizzo AS tipo_utente_origine_indirizzo, 
-        tuo.telefono AS tipo_utente_origine_telefono, tuo.email AS tipo_utente_origine_email
+        tuo.telefono AS tipo_utente_origine_telefono, tuo.email AS tipo_utente_origine_email,
+        utu.tipo_utente_id AS utente_tipo_utente_id
       FROM Prenotazioni p
       JOIN Lotti l ON p.lotto_id = l.id
       JOIN Tipo_Utente cr ON p.tipo_utente_ricevente_id = cr.id
       LEFT JOIN Tipo_Utente tuo ON l.tipo_utente_origine_id = tuo.id
       LEFT JOIN Attori a ON l.inserito_da = a.id
       LEFT JOIN Attori u ON p.attore_id = u.id
+      LEFT JOIN AttoriTipoUtente utu ON u.id = utu.attore_id
       WHERE p.id = ?
     `;
     
@@ -160,8 +162,23 @@ const getPrenotazioneById = async (req, res, next) => {
       nome: prenotazione.utente_nome,
       cognome: prenotazione.utente_cognome,
       email: prenotazione.utente_email,
-      ruolo: prenotazione.utente_ruolo
+      ruolo: prenotazione.utente_ruolo,
+      tipo_utente_id: prenotazione.utente_tipo_utente_id
     } : null;
+
+    // Se abbiamo un utente con tipo_utente_id, recuperiamo i suoi dati completi
+    let utenteTipoUtente = null;
+    if (utente && utente.tipo_utente_id) {
+      const tipoUtenteQuery = `
+        SELECT * FROM Tipo_Utente WHERE id = ?
+      `;
+      
+      utenteTipoUtente = await db.get(tipoUtenteQuery, [utente.tipo_utente_id]);
+      
+      if (utenteTipoUtente) {
+        console.log(`Recuperati dati Tipo_Utente per l'utente ${utente.id}: ${JSON.stringify(utenteTipoUtente)}`);
+      }
+    }
     
     // Aggiungi informazioni più complete sul centro ricevente
     const centroRicevente = {
@@ -185,6 +202,7 @@ const getPrenotazioneById = async (req, res, next) => {
     const result = {
       ...prenotazione,
       utente,
+      utenteTipoUtente,  // Aggiungiamo l'oggetto con i dati completi del tipo utente dell'utente
       centroRicevente,
       tipo_utente_origine,
       trasporto: trasporto || null

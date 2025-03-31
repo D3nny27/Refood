@@ -93,12 +93,33 @@ const RegistraRitiroScreen = () => {
         console.log('--------- STRUTTURA OGGETTO UTENTE ---------');
         console.log('utente:', data.utente);
         console.log('attore_id:', data.attore_id);
+        console.log('--------- STRUTTURA OGGETTO TIPO_UTENTE DELL\'UTENTE ---------');
+        console.log('utenteTipoUtente:', data.utenteTipoUtente);
         console.log('--------- STRUTTURA OGGETTO TIPO_UTENTE_ORIGINE ---------');
         console.log('tipo_utente_origine:', data.tipo_utente_origine);
         console.log('tipo_utente_origine_id:', data.tipo_utente_origine_id);
         console.log('--------- STRUTTURA OGGETTO CENTRO_RICEVENTE ---------');
         console.log('centroRicevente:', data.centroRicevente);
         console.log('---------------------------------------------');
+        
+        // Debug specifico per i dati dell'utente
+        if (data.utente) {
+          console.log('DEBUG UTENTE:', {
+            id: data.utente.id,
+            nome: data.utente.nome,
+            cognome: data.utente.cognome,
+            ruolo: data.utente.ruolo
+          });
+        }
+        
+        // Debug specifico per i dati del tipo_utente_origine
+        if (data.tipo_utente_origine) {
+          console.log('DEBUG TIPO UTENTE ORIGINE:', {
+            tipo: data.tipo_utente_origine.tipo,
+            nome: data.tipo_utente_origine.nome,
+            cognome: data.tipo_utente_origine.cognome
+          });
+        }
         
         setPrenotazione(data);
         
@@ -111,13 +132,29 @@ const RegistraRitiroScreen = () => {
           if (data.utente) {
             const utente = data.utente;
             console.log(`Precompilazione con dati utente: ${utente.nome} ${utente.cognome || ''}`);
+            
             // Per il nome, usiamo nome + cognome per privati, solo nome per altri tipi
             setRitiroDa(utente.ruolo === 'Privato' 
               ? `${utente.nome || ''} ${utente.cognome || ''}`.trim() 
               : utente.nome || '');
-            setIndirizzo(data.tipo_utente_origine?.indirizzo || '');
-            setTelefono(data.tipo_utente_origine?.telefono || '');
-            setEmail(utente.email || '');
+            
+            // Utilizziamo i dati del tipo_utente dell'utente se disponibili
+            if (data.utenteTipoUtente) {
+              console.log(`Utilizzando dati completi tipo_utente dell'utente: ${JSON.stringify(data.utenteTipoUtente)}`);
+              setIndirizzo(data.utenteTipoUtente.indirizzo || '');
+              setTelefono(data.utenteTipoUtente.telefono || '');
+              // Preferiamo l'email dell'utente, fallback sull'email del tipo_utente
+              setEmail(utente.email || data.utenteTipoUtente.email || '');
+            } else if (data.tipo_utente_origine) {
+              // Fallback ai dati del tipo_utente_origine
+              setIndirizzo(data.tipo_utente_origine.indirizzo || '');
+              setTelefono(data.tipo_utente_origine.telefono || '');
+              setEmail(utente.email || data.tipo_utente_origine.email || '');
+            } else {
+              setIndirizzo('');
+              setTelefono('');
+              setEmail(utente.email || '');
+            }
           } else if (data.tipo_utente_origine) {
             const tipoUtente = data.tipo_utente_origine;
             console.log(`Precompilazione con dati tipo_utente_origine: ${tipoUtente.tipo}`);
@@ -281,22 +318,18 @@ const RegistraRitiroScreen = () => {
             <Surface style={[styles.prenotazioneInfo, { marginTop: 12 }]}>
               <Text style={styles.infoTitle}>Prenotato da:</Text>
               
-              {/* DEBUG - Mostra tutte le informazioni disponibili per il debug */}
-              <ScrollView style={{ maxHeight: 100, marginVertical: 4, display: 'none' }}>
-                <Text style={{ fontSize: 8 }}>
-                  {JSON.stringify(prenotazione, null, 2)}
-                </Text>
-              </ScrollView>
-              
               {/* Mostra le informazioni dell'utente che ha effettuato la prenotazione */}
               {prenotazione?.utente ? (
                 <>
                   <Text style={styles.infoText}>
                     <Text style={styles.infoBold}>
-                      {prenotazione.utente.ruolo === 'Privato' 
+                      {(prenotazione.utente.cognome && (prenotazione.utente.ruolo === 'Privato' || prenotazione.utente.ruolo === 'Utente'))
                         ? `${prenotazione.utente.nome || ''} ${prenotazione.utente.cognome || ''}`.trim()
                         : prenotazione.utente.nome || ''}
                     </Text>
+                    {prenotazione.utente.ruolo && (
+                      <Text style={styles.infoRole}> ({prenotazione.utente.ruolo})</Text>
+                    )}
                   </Text>
                   {prenotazione.utente.email && (
                     <Text style={styles.infoText}>
@@ -308,9 +341,9 @@ const RegistraRitiroScreen = () => {
                 <>
                   <Text style={styles.infoText}>
                     <Text style={styles.infoBold}>
-                      {prenotazione.tipo_utente_origine.tipo === 'Privato'
+                      {(prenotazione.tipo_utente_origine.cognome && prenotazione.tipo_utente_origine.tipo === 'Privato')
                         ? `${prenotazione.tipo_utente_origine.nome || ''} ${prenotazione.tipo_utente_origine.cognome || ''}`.trim()
-                        : prenotazione.tipo_utente_origine.tipo || ''}
+                        : (prenotazione.tipo_utente_origine.nome || prenotazione.tipo_utente_origine.tipo || '')}
                     </Text>
                   </Text>
                   {prenotazione.tipo_utente_origine.email && (
@@ -321,6 +354,11 @@ const RegistraRitiroScreen = () => {
                   {prenotazione.tipo_utente_origine.telefono && (
                     <Text style={styles.infoText}>
                       Telefono: <Text style={styles.infoBold}>{prenotazione.tipo_utente_origine.telefono}</Text>
+                    </Text>
+                  )}
+                  {prenotazione.tipo_utente_origine.indirizzo && (
+                    <Text style={styles.infoText}>
+                      Indirizzo: <Text style={styles.infoBold}>{prenotazione.tipo_utente_origine.indirizzo}</Text>
                     </Text>
                   )}
                 </>
