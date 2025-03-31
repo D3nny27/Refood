@@ -31,6 +31,42 @@ const darkTheme = {
     ...MD3DarkTheme.colors,
     primary: PRIMARY_COLOR,
     secondary: '#FF9800',
+    
+    // Proprietà essenziali per input con testo nero
+    surfaceVariant: '#FFFFFF',      // Superficie input BIANCA
+    onSurfaceVariant: '#000000',    // Testo NERO su input
+    inverseSurface: '#FFFFFF',      // Sfondo input BIANCO
+    inverseOnSurface: '#000000',    // Testo NERO su sfondo bianco
+    
+    // Proprietà per text input in dark mode
+    placeholder: '#000000',         // Placeholder NERO
+    outline: '#000000',             // Bordi NERI
+    
+    // Proprietà specifiche per rendere il testo degli input nero
+    inputText: '#000000',           // Input text nero
+    onPrimaryContainer: '#000000',  // Testo nero per container
+    
+    // ===== PROPRIETÀ AGGIUNTIVE PER TESTO UTENTE =====
+    // React Native Paper TextInput specifiche
+    text: '#000000',                      // Override generale per testo
+    onPrimary: '#000000',                 // Testo sugli elementi primari
+    onSurface: '#000000',                 // Testo su superfici
+    onTertiaryContainer: '#000000',       // Per le date
+    
+    // Altre proprietà specifiche che possono influenzare il testo nei campi input
+    textSelectionColor: '#000000',
+    cursorColor: '#000000',
+    textDecorationColor: '#000000',
+    
+    // Override per superfici di input
+    surface: '#FFFFFF',                   // Superficie base (BIANCA)
+    background: '#FFFFFF',                // Sfondo input (BIANCO)
+    
+    // Proprietà specifiche per textinput di React Native
+    textInput: '#000000',
+    formColor: '#000000',
+    formText: '#000000',
+    onBackground: '#000000',              // Testo sullo sfondo
   },
 };
 
