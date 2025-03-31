@@ -245,8 +245,8 @@ export default function PrenotazioniScreen() {
       return '#FFA000'; // arancione
     } else if (statoLower === 'confermata' || statoLower === 'confermato') {
       return '#4CAF50'; // verde
-    } else if (statoLower === 'intransito') {
-      return '#2196F3'; // blu
+    } else if (statoLower === 'prontoperritiro') {
+      return '#2196F3'; // blu - stesso colore che usavamo per intransito
     } else if (statoLower === 'completata' || statoLower === 'consegnato') {
       return '#673AB7'; // viola
     } else if (statoLower === 'annullata' || statoLower === 'annullato') {
@@ -320,8 +320,8 @@ export default function PrenotazioniScreen() {
       return 'In attesa di conferma';
     } else if (statoLower === 'confermata' || statoLower === 'confermato') {
       return 'Prenotazione confermata';
-    } else if (statoLower === 'intransito') {
-      return 'In transito verso la destinazione';
+    } else if (statoLower === 'prontoperritiro') {
+      return 'Pronta per essere ritirata';
     } else if (statoLower === 'completata' || statoLower === 'consegnato') {
       return 'Consegna completata';
     } else if (statoLower === 'annullata' || statoLower === 'annullato') {
@@ -349,8 +349,8 @@ export default function PrenotazioniScreen() {
           (statoLower === 'inattesa' && vLower === 'prenotato') ||
           (statoLower === 'confermato' && vLower === 'confermata') ||
           (statoLower === 'confermata' && vLower === 'confermato') ||
-          (statoLower === 'intransito' && vLower === 'confermata') ||
-          (statoLower === 'confermata' && vLower === 'intransito') ||
+          (statoLower === 'prontoperritiro' && vLower === 'confermata') ||
+          (statoLower === 'confermata' && vLower === 'prontoperritiro') ||
           (statoLower === 'consegnato' && vLower === 'completata') ||
           (statoLower === 'completata' && vLower === 'consegnato') ||
           (statoLower === 'annullato' && vLower === 'annullata') ||
@@ -751,13 +751,13 @@ export default function PrenotazioniScreen() {
             Confermate
           </Chip>
           <Chip
-            selected={filtri.stato === 'InTransito'}
-            onPress={() => applyStatusFilter('InTransito')}
+            selected={filtri.stato === 'ProntoPerRitiro'}
+            onPress={() => applyStatusFilter('ProntoPerRitiro')}
             style={styles.filterChip}
-            textStyle={{ color: filtri.stato === 'InTransito' ? '#fff' : '#000' }}
+            textStyle={{ color: filtri.stato === 'ProntoPerRitiro' ? '#fff' : '#000' }}
             selectedColor="#2196F3"
           >
-            In transito
+            Pronte per ritiro
           </Chip>
           <Chip
             selected={filtri.stato === 'Consegnato'}

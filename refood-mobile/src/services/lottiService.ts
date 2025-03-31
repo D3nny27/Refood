@@ -23,6 +23,7 @@ export interface Lotto {
   origine?: string;
   stato_prenotazione?: string; // Indica se il lotto è già prenotato
   prezzo?: number | null; // Prezzo del lotto (solo per lotti verdi)
+  tipo_pagamento?: 'contanti' | 'bonifico' | null; // Metodo di pagamento
 }
 
 export interface LottoFiltri {
@@ -80,6 +81,7 @@ export const normalizeLotto = (lotto: any): Lotto => {
     categorie: Array.isArray(lotto.categorie) ? lotto.categorie : [],
     stato_prenotazione: lotto.stato_prenotazione || null,
     prezzo: lotto.prezzo !== undefined ? parseFloat(lotto.prezzo) : null,
+    tipo_pagamento: lotto.tipo_pagamento || null,
   };
 };
 

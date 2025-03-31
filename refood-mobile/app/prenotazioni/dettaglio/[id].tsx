@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
-import { Text, Card, Title, Paragraph, Divider, Appbar, Button, Chip, Surface } from 'react-native-paper';
+import { Text, Card, Title, Paragraph, Divider, Appbar, Button, Chip, Surface, Portal, Dialog, TextInput } from 'react-native-paper';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useAuth } from '../../../src/context/AuthContext';
-import { getPrenotazioneById, annullaPrenotazione } from '../../../src/services/prenotazioniService';
+import { getPrenotazioneById, annullaPrenotazione, segnaComePromtaPerRitiro } from '../../../src/services/prenotazioniService';
 import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import Toast from 'react-native-toast-message';
@@ -19,6 +19,14 @@ const DettaglioPrenotazioneScreen = () => {
   const [loading, setLoading] = useState(true);
   const [prenotazione, setPrenotazione] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  
+  // Aggiungo state per gestire i dialoghi
+  const [dialogVisible, setDialogVisible] = useState(false);
+  const [dialogTitle, setDialogTitle] = useState('');
+  const [dialogMessage, setDialogMessage] = useState('');
+  const [dialogAction, setDialogAction] = useState<() => Promise<void>>(() => async () => {});
+  const [notePreparazione, setNotePreparazione] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
   
   // Formattazione della data
   const formatDate = (dateString: string | null | undefined) => {
@@ -97,6 +105,42 @@ const DettaglioPrenotazioneScreen = () => {
     
     fetchPrenotazione();
   }, [id]);
+  
+  // Funzione per segnare come pronta per il ritiro
+  const handleProntoPerRitiro = () => {
+    setDialogTitle('Conferma preparazione');
+    setDialogMessage('Sei sicuro di voler segnare questa prenotazione come pronta per il ritiro?');
+    setDialogAction(() => async () => {
+      try {
+        setIsProcessing(true);
+        setDialogVisible(false);
+        
+        const response = await segnaComePromtaPerRitiro(parseInt(id as string, 10), notePreparazione);
+        
+        Toast.show({
+          type: 'success',
+          text1: 'Pronta per il ritiro',
+          text2: 'La prenotazione è stata segnata come pronta per il ritiro',
+        });
+        
+        // Ricarica i dati della prenotazione
+        const updatedData = await getPrenotazioneById(parseInt(id as string, 10));
+        setPrenotazione(updatedData);
+        
+      } catch (error: any) {
+        console.error('Errore nel segnare come pronta per il ritiro:', error);
+        Toast.show({
+          type: 'error',
+          text1: 'Errore',
+          text2: error.message || 'Errore nel segnare come pronta per il ritiro',
+        });
+      } finally {
+        setIsProcessing(false);
+        setNotePreparazione('');
+      }
+    });
+    setDialogVisible(true);
+  };
   
   if (loading) {
     return (
@@ -340,6 +384,64 @@ const DettaglioPrenotazioneScreen = () => {
           </Card.Content>
         </Card>
       </ScrollView>
+
+      {/* Aggiungo il dialog per la conferma */}
+      <Portal>
+        <Dialog visible={dialogVisible} onDismiss={() => setDialogVisible(false)}>
+          <Dialog.Title>{dialogTitle}</Dialog.Title>
+          <Dialog.Content>
+            <Paragraph>{dialogMessage}</Paragraph>
+            {dialogTitle === 'Conferma preparazione' && (
+              <TextInput
+                label="Note (opzionale)"
+                value={notePreparazione}
+                onChangeText={setNotePreparazione}
+                mode="outlined"
+                style={{ marginTop: 16 }}
+                placeholder="Aggiungi note sulla preparazione"
+                multiline
+              />
+            )}
+          </Dialog.Content>
+          <Dialog.Actions style={styles.dialogActions}>
+            <Button onPress={() => setDialogVisible(false)} style={styles.dialogButton}>
+              Annulla
+            </Button>
+            <Button 
+              onPress={() => dialogAction()} 
+              loading={isProcessing}
+              disabled={isProcessing}
+              mode="contained" 
+              style={styles.dialogButton}
+            >
+              Conferma
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
+      {/* Aggiungo due pulsanti: uno per "Pronto per ritiro" e uno per "Registra ritiro" */}
+      {prenotazione.stato === 'Confermato' && (
+        <Button
+          mode="contained"
+          icon="check-circle"
+          style={[styles.actionButton, { bottom: 80 }]}
+          onPress={handleProntoPerRitiro}
+        >
+          Pronto per Ritiro
+        </Button>
+      )}
+
+      {(prenotazione.stato === 'ProntoPerRitiro' || prenotazione.stato === 'Confermato') && (
+        <Button
+          mode="contained"
+          icon="cart-arrow-down"
+          style={styles.actionButton}
+          onPress={() => router.push(`/prenotazioni/ritiro/${prenotazione.id}`)}
+        >
+          Registra Ritiro
+        </Button>
+      )}
     </View>
   );
 };
@@ -437,6 +539,23 @@ const styles = StyleSheet.create({
   notesText: {
     fontSize: 14,
     color: '#555',
+  },
+  actionButton: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    borderRadius: 28,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: PRIMARY_COLOR,
+    elevation: 4,
+  },
+  dialogActions: {
+    justifyContent: 'flex-end',
+    padding: 8,
+  },
+  dialogButton: {
+    marginLeft: 8,
   },
 });
 

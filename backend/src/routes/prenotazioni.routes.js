@@ -409,4 +409,90 @@ router.get('/centro/:tipo_utente_id', [
 // Questa rotta dovrebbe essere accessibile solo agli amministratori
 router.post('/cleanup-duplicates', authenticate, authorize(['Amministratore']), prenotazioniController.cleanupDuplicatePrenotazioni);
 
+/**
+ * @swagger
+ * /prenotazioni/{id}/pronto-per-ritiro:
+ *   put:
+ *     summary: Segna una prenotazione come pronta per il ritiro
+ *     tags: [Prenotazioni]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID della prenotazione
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               note:
+ *                 type: string
+ *                 description: Note aggiuntive per il ritiro
+ *     responses:
+ *       200:
+ *         description: Prenotazione segnata come pronta per il ritiro
+ *       400:
+ *         description: La prenotazione non può essere segnata come pronta nel suo stato attuale
+ *       401:
+ *         description: Non autorizzato
+ *       403:
+ *         description: Permessi insufficienti
+ *       404:
+ *         description: Prenotazione non trovata
+ */
+router.put('/:id/pronto-per-ritiro', authenticate, prenotazioniController.segnaComeProntoPerRitiro);
+
+/**
+ * @swagger
+ * /prenotazioni/{id}/registra-ritiro:
+ *   put:
+ *     summary: Registra il ritiro effettivo di un lotto prenotato
+ *     tags: [Prenotazioni]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID della prenotazione
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - ritirato_da
+ *             properties:
+ *               ritirato_da:
+ *                 type: string
+ *                 description: Nome della persona che ritira il lotto
+ *               documento_ritiro:
+ *                 type: string
+ *                 description: Informazioni sul documento di identità di chi ritira
+ *               note_ritiro:
+ *                 type: string
+ *                 description: Note aggiuntive sul ritiro
+ *     responses:
+ *       200:
+ *         description: Ritiro registrato con successo
+ *       400:
+ *         description: Dati mancanti o prenotazione non in stato valido per il ritiro
+ *       401:
+ *         description: Non autorizzato
+ *       403:
+ *         description: Permessi insufficienti
+ *       404:
+ *         description: Prenotazione non trovata
+ */
+router.put('/:id/registra-ritiro', authenticate, prenotazioniController.registraRitiro);
+
 module.exports = router; 

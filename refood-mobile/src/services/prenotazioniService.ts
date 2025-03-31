@@ -18,7 +18,7 @@ export interface Prenotazione {
   data_prenotazione: string;
   data_ritiro_prevista: string | null;
   data_ritiro_effettiva: string | null;
-  stato: 'Prenotato' | 'InAttesa' | 'Confermato' | 'Rifiutato' | 'InTransito' | 'Consegnato' | 'Annullato' | 'Eliminato';
+  stato: 'Prenotato' | 'InAttesa' | 'Confermato' | 'ProntoPerRitiro' | 'Rifiutato' | 'InTransito' | 'Consegnato' | 'Annullato' | 'Eliminato';
   note: string | null;
   created_at: string;
   updated_at: string;
@@ -37,10 +37,18 @@ export interface Prenotazione {
   prezzo?: number | null; // Prezzo del lotto associato
   tipo_pagamento?: 'contanti' | 'bonifico' | null; // Metodo di pagamento scelto
   stato_lotto?: string; // Stato del lotto (Verde, Arancione, Rosso)
+  
+  // Nuovi campi per tracciamento ritiro
+  ritirato_da?: string | null; // Nome di chi ritira fisicamente il lotto
+  documento_ritiro?: string | null; // Estremi documento identificativo di chi ritira
+  data_ritiro_effettivo?: string | null; // Timestamp effettivo del ritiro
+  note_ritiro?: string | null; // Note sul ritiro
+  operatore_ritiro?: number | null; // ID dell'operatore che ha gestito il ritiro
+  transizioni_stato?: string | null; // JSON con lo storico delle transizioni di stato
 }
 
 // Tipo per gli stati di prenotazione, usato per parametri tipizzati
-export type StatoPrenotazione = 'Prenotato' | 'InAttesa' | 'Confermato' | 'Rifiutato' | 'InTransito' | 'Consegnato' | 'Annullato' | 'Eliminato';
+export type StatoPrenotazione = 'Prenotato' | 'InAttesa' | 'Confermato' | 'ProntoPerRitiro' | 'Rifiutato' | 'InTransito' | 'Consegnato' | 'Annullato' | 'Eliminato';
 
 // Interfaccia per la risposta della prenotazione
 export interface PrenotazioneResponse {
@@ -1546,6 +1554,162 @@ export const eliminaPrenotazione = async (id: number): Promise<any> => {
   }
 };
 
+/**
+ * Segna una prenotazione come pronta per il ritiro
+ * @param id ID della prenotazione
+ * @param note Note opzionali per il ritiro
+ * @returns Risposta API
+ */
+export const segnaComePromtaPerRitiro = async (
+  id: number, 
+  note: string = ''
+): Promise<any> => {
+  try {
+    console.log(`Segnando prenotazione ${id} come pronta per il ritiro...`);
+    
+    const headers = await getAuthHeader();
+    if (!headers) {
+      throw new Error('Non autorizzato. Effettua il login per continuare.');
+    }
+    
+    const response = await axios.put(
+      `${API_URL}/prenotazioni/${id}/pronto-per-ritiro`,
+      { note },
+      { headers }
+    );
+    
+    // Invalida la cache
+    invalidateCache();
+    
+    // Genera una notifica locale
+    try {
+      const Toast = require('react-native-toast-message').default;
+      if (Toast) {
+        Toast.show({
+          type: 'success',
+          text1: 'Prenotazione pronta',
+          text2: 'La prenotazione è stata segnata come pronta per il ritiro',
+          visibilityTime: 3000,
+        });
+      }
+    } catch (e) {
+      console.error('Impossibile mostrare toast:', e);
+    }
+    
+    return response.data;
+  } catch (error) {
+    console.error('Errore nel segnare prenotazione come pronta per ritiro:', error);
+    
+    // Gestione errori specifici
+    if (axios.isAxiosError(error)) {
+      const response = error.response;
+      
+      // Mostra messaggio di errore dal server se disponibile
+      try {
+        const Toast = require('react-native-toast-message').default;
+        if (Toast) {
+          Toast.show({
+            type: 'error',
+            text1: 'Errore',
+            text2: response?.data?.message || 'Impossibile segnare la prenotazione come pronta per il ritiro',
+            visibilityTime: 4000,
+          });
+        }
+      } catch (e) {
+        console.error('Impossibile mostrare toast di errore:', e);
+      }
+      
+      throw new Error(response?.data?.message || 'Errore nel segnare la prenotazione come pronta per il ritiro');
+    }
+    
+    throw error;
+  }
+};
+
+/**
+ * Registra il ritiro effettivo di un lotto prenotato
+ * @param id ID della prenotazione
+ * @param ritiroDa Nome della persona che ritira il lotto
+ * @param documentoRitiro Documento di identità (opzionale)
+ * @param noteRitiro Note sul ritiro (opzionale)
+ * @returns Risposta API
+ */
+export const registraRitiro = async (
+  id: number,
+  ritiroDa: string,
+  documentoRitiro: string = '',
+  noteRitiro: string = ''
+): Promise<any> => {
+  try {
+    console.log(`Registrando ritiro per prenotazione ${id}...`);
+    
+    if (!ritiroDa) {
+      throw new Error('È necessario specificare chi ritira il lotto');
+    }
+    
+    const headers = await getAuthHeader();
+    if (!headers) {
+      throw new Error('Non autorizzato. Effettua il login per continuare.');
+    }
+    
+    const response = await axios.put(
+      `${API_URL}/prenotazioni/${id}/registra-ritiro`,
+      {
+        ritirato_da: ritiroDa,
+        documento_ritiro: documentoRitiro || null,
+        note_ritiro: noteRitiro || null
+      },
+      { headers }
+    );
+    
+    // Invalida la cache
+    invalidateCache();
+    
+    // Genera una notifica locale
+    try {
+      const Toast = require('react-native-toast-message').default;
+      if (Toast) {
+        Toast.show({
+          type: 'success',
+          text1: 'Ritiro registrato',
+          text2: 'Il ritiro del lotto è stato registrato con successo',
+          visibilityTime: 3000,
+        });
+      }
+    } catch (e) {
+      console.error('Impossibile mostrare toast:', e);
+    }
+    
+    return response.data;
+  } catch (error) {
+    console.error('Errore nella registrazione del ritiro:', error);
+    
+    // Gestione errori specifici
+    if (axios.isAxiosError(error)) {
+      const response = error.response;
+      
+      // Mostra messaggio di errore dal server se disponibile
+      try {
+        const Toast = require('react-native-toast-message').default;
+        if (Toast) {
+          Toast.show({
+            type: 'error',
+            text1: 'Errore',
+            text2: response?.data?.message || 'Impossibile registrare il ritiro',
+            visibilityTime: 4000,
+          });
+        }
+      } catch (e) {
+        console.error('Impossibile mostrare toast di errore:', e);
+      }
+      
+      throw new Error(response?.data?.message || 'Errore nella registrazione del ritiro');
+    }
+    
+    throw error;
+  }
+};
+
 export default {
   prenotaLotto,
   getPrenotazioni,
@@ -1556,5 +1720,7 @@ export default {
   eliminaPrenotazione,
   setStatoPrenotazione,
   marcaInTransito,
-  marcaConsegnata
+  marcaConsegnata,
+  segnaComePromtaPerRitiro,
+  registraRitiro
 }; 

@@ -101,17 +101,20 @@ const getPrenotazioneById = async (req, res, next) => {
   try {
     const { id } = req.params;
     
-    // Query principale per dati prenotazione
+    // Query principale per dati prenotazione, includendo informazioni utente
     const query = `
       SELECT 
         p.*,
         l.prodotto, l.quantita, l.unita_misura, l.data_scadenza, l.stato AS stato_lotto,
         cr.tipo AS centro_ricevente_nome, cr.indirizzo AS indirizzo_ricevente, cr.telefono AS telefono_ricevente,
-        a.nome AS creatore_nome, a.cognome AS creatore_cognome
+        a.nome AS creatore_nome, a.cognome AS creatore_cognome,
+        u.id AS utente_id, u.nome AS utente_nome, u.cognome AS utente_cognome,
+        u.email AS utente_email, u.ruolo AS utente_ruolo
       FROM Prenotazioni p
       JOIN Lotti l ON p.lotto_id = l.id
       JOIN Tipo_Utente cr ON p.tipo_utente_ricevente_id = cr.id
       LEFT JOIN Attori a ON l.inserito_da = a.id
+      LEFT JOIN Attori u ON p.attore_id = u.id
       WHERE p.id = ?
     `;
     
@@ -146,11 +149,30 @@ const getPrenotazioneById = async (req, res, next) => {
     
     const trasporto = await db.get(trasportoQuery, [id]);
     
+    // Crea un oggetto utente se abbiamo i dati dell'utente
+    const utente = prenotazione.utente_id ? {
+      id: prenotazione.utente_id,
+      nome: prenotazione.utente_nome,
+      cognome: prenotazione.utente_cognome,
+      email: prenotazione.utente_email,
+      ruolo: prenotazione.utente_ruolo
+    } : null;
+    
     // Unifica i risultati
     const result = {
       ...prenotazione,
+      utente,
       trasporto: trasporto || null
     };
+    
+    // Rimuovi i campi ridondanti dell'utente che ora sono nell'oggetto dedicato
+    if (utente) {
+      delete result.utente_id;
+      delete result.utente_nome;
+      delete result.utente_cognome;
+      delete result.utente_email;
+      delete result.utente_ruolo;
+    }
     
     res.json(result);
   } catch (error) {
@@ -479,8 +501,8 @@ const createPrenotazione = async (req, res, next) => {
       );
       
       // Nel sistema centralizzato, non abbiamo più bisogno di recuperare info sul centro origine
-      // Aggiungiamo il campo centro_origine_id come null per mantenere compatibilità
-      prenotazione.centro_origine_id = null;
+      // Aggiungiamo il campo tipo_utente_origine_id come null per mantenere compatibilità
+      prenotazione.tipo_utente_origine_id = null;
       
       if (!prenotazione) {
         console.error(`Prenotazione creata (ID: ${prenotazioneId}) ma impossibile recuperare i dettagli`);
@@ -609,7 +631,7 @@ const updatePrenotazione = async (req, res, next) => {
        FROM Attori u
        JOIN AttoriTipoUtente uc ON u.id = uc.attore_id
        WHERE uc.tipo_utente_id = ?`,
-      [prenotazione.tipo_utente_destinazione_id]
+      [prenotazione.tipo_utente_ricevente_id]
     );
     
     // Aggiungi gli operatori ai destinatari
@@ -1300,6 +1322,317 @@ const cleanupDuplicatePrenotazioni = async (req, res, next) => {
   }
 };
 
+/**
+ * Segna una prenotazione come pronta per il ritiro
+ * @param {Object} req - Request object
+ * @param {Object} res - Response object
+ * @param {Function} next - Next middleware function
+ */
+const segnaComeProntoPerRitiro = async (req, res, next) => {
+  try {
+    const prenotazioneId = parseInt(req.params.id);
+    const { note } = req.body;
+    
+    // Recupera la prenotazione corrente
+    const prenotazione = await db.get('SELECT * FROM Prenotazioni WHERE id = ?', [prenotazioneId]);
+    
+    if (!prenotazione) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Prenotazione non trovata'
+      });
+    }
+    
+    // Verifica che lo stato attuale sia "Confermato"
+    if (prenotazione.stato !== 'Confermato') {
+      return res.status(400).json({
+        status: 'error',
+        message: `Impossibile segnare come pronta per il ritiro una prenotazione nello stato ${prenotazione.stato}`
+      });
+    }
+    
+    // Prepara il nuovo stato e la transizione
+    const nuovoStato = 'ProntoPerRitiro';
+    const timestamp = new Date().toISOString();
+    
+    // Costruisci o aggiorna l'array delle transizioni
+    let transizioni = [];
+    if (prenotazione.transizioni_stato) {
+      try {
+        transizioni = JSON.parse(prenotazione.transizioni_stato);
+      } catch (e) {
+        console.error('Errore nel parsing delle transizioni di stato:', e);
+      }
+    }
+    
+    // Aggiungi la nuova transizione
+    transizioni.push({
+      da: prenotazione.stato,
+      a: nuovoStato,
+      timestamp,
+      utente_id: req.user.id,
+      note: note || null
+    });
+    
+    // Aggiorna la prenotazione
+    await db.run(
+      `UPDATE Prenotazioni 
+       SET stato = ?, 
+           updated_at = ?, 
+           note = CASE WHEN ? IS NOT NULL THEN ? ELSE note END,
+           transizioni_stato = ?
+       WHERE id = ?`,
+      [
+        nuovoStato,
+        timestamp,
+        note,
+        note,
+        JSON.stringify(transizioni),
+        prenotazioneId
+      ]
+    );
+    
+    // Recupera la prenotazione aggiornata per la risposta
+    const prenotazioneAggiornata = await db.get('SELECT * FROM Prenotazioni WHERE id = ?', [prenotazioneId]);
+    
+    // Genera notifiche
+    await generaNotificheProntoPerRitiro(prenotazioneId, prenotazioneAggiornata, note || '');
+    
+    return res.status(200).json({
+      status: 'success',
+      message: 'Prenotazione segnata come pronta per il ritiro',
+      data: prenotazioneAggiornata
+    });
+  } catch (err) {
+    console.error('Errore durante l\'aggiornamento della prenotazione a pronta per ritiro:', err);
+    next(err);
+  }
+};
+
+/**
+ * Genera notifiche per la transizione a "Pronto per Ritiro"
+ * @param {number} id - ID della prenotazione
+ * @param {Object} prenotazione - Oggetto prenotazione
+ * @param {string} note - Note aggiuntive
+ */
+async function generaNotificheProntoPerRitiro(id, prenotazione, note) {
+  try {
+    // Recupera informazioni sul lotto
+    const lotto = await db.get('SELECT * FROM Lotti WHERE id = ?', [prenotazione.lotto_id]);
+    if (!lotto) {
+      console.error(`Lotto non trovato per la prenotazione ${id}`);
+      return;
+    }
+    
+    // Recupera informazioni sui centri
+    const centroOrigine = await db.get('SELECT * FROM Tipo_Utente WHERE id = ?', [lotto.tipo_utente_origine_id]);
+    const centroRicevente = await db.get('SELECT * FROM Tipo_Utente WHERE id = ?', [prenotazione.tipo_utente_ricevente_id]);
+    
+    if (!centroOrigine || !centroRicevente) {
+      console.error(`Informazioni centro mancanti per la prenotazione ${id}`);
+      return;
+    }
+    
+    // Crea una notifica per il centro ricevente
+    if (centroRicevente.attore_id) {
+      await db.run(
+        `INSERT INTO Notifiche (tipo, utente_id, titolo, descrizione, data_creazione, letto, azione_richiesta, riferimento_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          'prenotazione_pronta',
+          centroRicevente.attore_id,
+          'Prenotazione pronta per il ritiro',
+          `Il lotto "${lotto.prodotto}" è ora pronto per essere ritirato da ${centroOrigine.tipo}. ${note ? `Note: ${note}` : ''}`,
+          new Date().toISOString(),
+          0,
+          'visualizza_prenotazione',
+          id
+        ]
+      );
+      
+      console.log(`Notifica "pronto per ritiro" creata per centro ricevente ${centroRicevente.tipo}`);
+    } else {
+      console.warn(`Nessun attore associato al centro ricevente ID: ${centroRicevente.id}`);
+    }
+    
+  } catch (err) {
+    console.error('Errore nella generazione delle notifiche "pronto per ritiro":', err);
+  }
+}
+
+// Aggiungi la funzione di registrazione del ritiro
+/**
+ * Registra il ritiro effettivo di un lotto prenotato
+ * @param {Object} req - Request object
+ * @param {Object} res - Response object
+ * @param {Function} next - Next middleware function
+ */
+const registraRitiro = async (req, res, next) => {
+  try {
+    const prenotazioneId = parseInt(req.params.id);
+    const { ritirato_da, documento_ritiro, note_ritiro } = req.body;
+    
+    // Validazione dati minimi richiesti
+    if (!ritirato_da) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'È necessario specificare il nome di chi ritira il lotto'
+      });
+    }
+    
+    // Recupera la prenotazione corrente
+    const prenotazione = await db.get('SELECT * FROM Prenotazioni WHERE id = ?', [prenotazioneId]);
+    
+    if (!prenotazione) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Prenotazione non trovata'
+      });
+    }
+    
+    // Verifica che lo stato attuale permetta il ritiro (ProntoPerRitiro o Confermato)
+    if (prenotazione.stato !== 'ProntoPerRitiro' && prenotazione.stato !== 'Confermato') {
+      return res.status(400).json({
+        status: 'error',
+        message: `Impossibile registrare il ritiro di una prenotazione nello stato ${prenotazione.stato}`
+      });
+    }
+    
+    // Prepara il nuovo stato e la transizione
+    const nuovoStato = 'Consegnato'; // Modificato: cambiamo direttamente a Consegnato invece di InTransito
+    const timestamp = new Date().toISOString();
+    
+    // Costruisci o aggiorna l'array delle transizioni
+    let transizioni = [];
+    if (prenotazione.transizioni_stato) {
+      try {
+        transizioni = JSON.parse(prenotazione.transizioni_stato);
+      } catch (e) {
+        console.error('Errore nel parsing delle transizioni di stato:', e);
+      }
+    }
+    
+    // Aggiungi la nuova transizione
+    transizioni.push({
+      da: prenotazione.stato,
+      a: nuovoStato,
+      timestamp,
+      utente_id: req.user.id,
+      operazione: 'ritiro',
+      ritirato_da,
+      documento_ritiro,
+      note: note_ritiro || null
+    });
+    
+    // Aggiorna la prenotazione
+    await db.run(
+      `UPDATE Prenotazioni 
+       SET stato = ?, 
+           updated_at = ?, 
+           data_ritiro_effettivo = ?,
+           ritirato_da = ?,
+           documento_ritiro = ?,
+           note_ritiro = ?,
+           operatore_ritiro = ?,
+           transizioni_stato = ?,
+           data_consegna = ?  /* Aggiungiamo la data di consegna che corrisponde alla data di ritiro effettivo */
+       WHERE id = ?`,
+      [
+        nuovoStato,
+        timestamp,
+        timestamp,
+        ritirato_da,
+        documento_ritiro || null,
+        note_ritiro || null,
+        req.user.id,
+        JSON.stringify(transizioni),
+        timestamp,  /* Nuova data di consegna */
+        prenotazioneId
+      ]
+    );
+    
+    // Recupera la prenotazione aggiornata per la risposta
+    const prenotazioneAggiornata = await db.get('SELECT * FROM Prenotazioni WHERE id = ?', [prenotazioneId]);
+    
+    // Genera notifiche
+    await generaNotificheRitiro(prenotazioneId, prenotazioneAggiornata, note_ritiro || '');
+    
+    return res.status(200).json({
+      status: 'success',
+      message: 'Ritiro del lotto completato con successo',
+      data: prenotazioneAggiornata
+    });
+  } catch (err) {
+    console.error('Errore durante la registrazione del ritiro:', err);
+    next(err);
+  }
+};
+
+/**
+ * Genera notifiche per il ritiro di una prenotazione
+ * @param {number} id - ID della prenotazione
+ * @param {Object} prenotazione - Oggetto prenotazione
+ * @param {string} note - Note aggiuntive
+ */
+async function generaNotificheRitiro(id, prenotazione, note) {
+  try {
+    // Recupera informazioni sul lotto
+    const lotto = await db.get('SELECT * FROM Lotti WHERE id = ?', [prenotazione.lotto_id]);
+    if (!lotto) {
+      console.error(`Lotto non trovato per la prenotazione ${id}`);
+      return;
+    }
+    
+    // Recupera informazioni sui centri
+    const centroOrigine = await db.get('SELECT * FROM Tipo_Utente WHERE id = ?', [lotto.tipo_utente_origine_id]);
+    const centroRicevente = await db.get('SELECT * FROM Tipo_Utente WHERE id = ?', [prenotazione.tipo_utente_ricevente_id]);
+    
+    if (!centroOrigine || !centroRicevente) {
+      console.error(`Informazioni centro mancanti per la prenotazione ${id}`);
+      return;
+    }
+    
+    // Crea una notifica per il centro di origine
+    await db.run(
+      `INSERT INTO Notifiche (tipo, utente_id, titolo, descrizione, data_creazione, letto, azione_richiesta, riferimento_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        'prenotazione_consegnata', // Modificato da "prenotazione_ritirata" a "prenotazione_consegnata"
+        centroOrigine.attore_id,
+        'Lotto consegnato', // Modificato da "Prenotazione ritirata" a "Lotto consegnato"
+        `Il lotto "${lotto.prodotto}" è stato consegnato a ${prenotazione.ritirato_da} per conto di ${centroRicevente.tipo}. ${note ? `Note: ${note}` : ''}`,
+        new Date().toISOString(),
+        0,
+        'visualizza_prenotazione',
+        id
+      ]
+    );
+    
+    console.log(`Notifica "consegna" creata per centro origine ${centroOrigine.tipo}`);
+    
+    // Crea anche una notifica per l'amministratore del centro ricevente
+    if (centroRicevente.attore_id) {
+      await db.run(
+        `INSERT INTO Notifiche (tipo, utente_id, titolo, descrizione, data_creazione, letto, azione_richiesta, riferimento_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          'prenotazione_consegnata', // Modificato da "prenotazione_ritirata" a "prenotazione_consegnata"
+          centroRicevente.attore_id,
+          'Lotto ricevuto', // Modificato da "Lotto ritirato" a "Lotto ricevuto"
+          `Il lotto "${lotto.prodotto}" è stato ricevuto da ${prenotazione.ritirato_da}. ${note ? `Note: ${note}` : ''}`,
+          new Date().toISOString(),
+          0,
+          'visualizza_prenotazione',
+          id
+        ]
+      );
+    }
+    
+  } catch (err) {
+    console.error('Errore nella generazione delle notifiche di ritiro:', err);
+  }
+}
+
 module.exports = {
   getPrenotazioni,
   getPrenotazioneById,
@@ -1310,5 +1643,7 @@ module.exports = {
   getPrenotazioniByTipoUtente,
   accettaPrenotazione,
   rifiutaPrenotazione,
-  cleanupDuplicatePrenotazioni
+  cleanupDuplicatePrenotazioni,
+  segnaComeProntoPerRitiro,
+  registraRitiro
 }; 
