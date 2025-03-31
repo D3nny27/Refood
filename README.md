@@ -23,13 +23,16 @@ Il progetto è diviso in due parti principali:
 - **Sistema di Registrazione**: Implementato endpoint completo per la registrazione di nuovi utenti
 - **Gestione Notifiche Migliorata**: Supporto per notifiche push e tracciamento lettura
 - **Statistiche Ambientali**: Calcolo dell'impatto positivo in termini di CO2 risparmiata
+- **Sistema di Manutenzione Automatica**: Script di manutenzione automatizzati per il database
 
 ## Documentazione
 
 Il progetto include documentazione dettagliata:
 
-### Panoramica Tecnica
-- [Panoramica Tecnica Generale](docs/technical_overview.md) - Visione d'insieme del progetto
+### Documentazione Principale
+- [Documentazione Completa](docs/documentazione_completa.md) - Documentazione completa del progetto
+- [File Inutili e Implementazioni Future](docs/file_inutili_e_implementazioni_future.md) - Analisi dei file ridondanti e proposte di sviluppo
+- [Panoramica Tecnica](docs/technical_overview.md) - Visione d'insieme del progetto
 - [Guida Utente](docs/user_guide.md) - Manuale d'uso per utenti finali
 
 ### Documentazione Backend
@@ -45,6 +48,8 @@ Il progetto include documentazione dettagliata:
 - [Servizi API](docs/frontend/api-services.md) - Interazione con il backend
 - [WebSocket Service](docs/frontend/websocket-service.md) - Comunicazione real-time
 - [Notifiche Context](docs/frontend/notifiche-context.md) - Sistema di notifiche
+
+L'indice completo della documentazione è disponibile in [docs/INDEX.md](docs/INDEX.md).
 
 ## Requisiti Tecnici
 
@@ -71,6 +76,11 @@ npx expo start
 cd backend
 npm install
 npm run dev
+```
+
+### Manutenzione Automatica
+```bash
+./install_maintenance_cron.sh
 ```
 
 ## Variabili d'Ambiente
@@ -103,6 +113,10 @@ Se desideri contribuire al progetto:
 4. Pusha il branch (`git push origin feature/nome-feature`)
 5. Apri una Pull Request verso il branch `develop`
 6. Dopo la review, le modifiche verranno integrate in `develop` e successivamente in `main` per il rilascio
+
+## Implementazioni Future
+
+Per conoscere le possibili implementazioni future e miglioramenti pianificati, consulta il documento [File Inutili e Implementazioni Future](docs/file_inutili_e_implementazioni_future.md).
 
 ## Licenza
 

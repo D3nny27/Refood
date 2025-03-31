@@ -1407,10 +1407,11 @@ const styles = StyleSheet.create({
   prenotazioneDialog: {
     backgroundColor: 'white',
     borderRadius: 8,
-    margin: 0,
+    margin: 20,
     padding: 0,
     width: '100%',
-    maxWidth: Platform.OS === 'web' ? 500 : '95%',
+    maxWidth: Platform.OS === 'web' ? 500 : '90%',
+    maxHeight: Platform.OS === 'ios' || Platform.OS === 'android' ? '80%' : 'auto',
   },
   dialogTitle: {
     fontSize: 20,
@@ -1420,7 +1421,7 @@ const styles = StyleSheet.create({
   },
   dialogScrollArea: {
     paddingHorizontal: 0,
-    maxHeight: 400,
+    maxHeight: Platform.OS === 'ios' || Platform.OS === 'android' ? '60%' : 400,
   },
   dialogContent: {
     padding: 16,

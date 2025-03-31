@@ -1,63 +1,54 @@
-# Documentazione ReFood
+# Indice della Documentazione ReFood
 
-Benvenuti nella documentazione del progetto ReFood. Questa guida fornisce una panoramica completa dell'architettura, delle funzionalità e delle linee guida di implementazione del sistema.
+Questa pagina serve come indice per tutta la documentazione disponibile per il progetto ReFood.
 
-## Indice
+## Documentazione Principale
 
-### Panoramica
+- [Documentazione Completa](documentazione_completa.md) - Documentazione completa del progetto, architettura e funzionalità
+- [File Inutili e Implementazioni Future](file_inutili_e_implementazioni_future.md) - Analisi dei file ridondanti e proposte di sviluppo futuro
+- [Panoramica Tecnica](technical_overview.md) - Visione d'insieme del progetto
+- [Guida Utente](user_guide.md) - Manuale d'uso per utenti finali
 
-- [Panoramica Tecnica](technical_overview.md) - Visione d'insieme dell'architettura e stack tecnologico
-- [Guida Utente](user_guide.md) - Manuale d'uso per utenti finali dell'applicazione
+## Backend e Database
 
-### Backend
-
-- [Architettura Backend](backend_architecture.md) - Struttura e componenti principali del backend
-- [API Endpoints](api_endpoints.md) - Documentazione dettagliata delle API REST
-- [Sistema di Autenticazione JWT](jwt_authentication.md) - Implementazione dell'autenticazione e autorizzazione
+- [Architettura Backend](backend_architecture.md) - Struttura e componenti del backend
+- [API Endpoints](api_endpoints.md) - Descrizione dettagliata delle API
+- [JWT Authentication](jwt_authentication.md) - Sistema di autenticazione
+- [Schema Database](schema_description.md) - Struttura del database
 - [Sistema di Registrazione](auth_registration.md) - Dettagli sull'implementazione della registrazione utenti
-- [Schema del Database](schema_description.md) - Descrizione delle tabelle e relazioni
-- [Query di Esempio](queries_example.sql) - Query SQL di esempio per operazioni comuni
+- [Query di Esempio](queries_example.sql) - Esempi di query SQL per il database
 
-### Frontend
+## Frontend
 
-- [Architecture Overview](./frontend/architecture.md) - Panoramica dell'architettura frontend
-- [Screens](./frontend/screens.md) - Documentazione delle schermate
-- [API Services](./frontend/api-services.md) - Documentazione dei servizi API
-- [WebSocket Service](./frontend/websocket-service.md) - Documentazione del sistema di comunicazione in tempo reale
-- [Notifiche Context](./frontend/notifiche-context.md) - Documentazione del context per la gestione delle notifiche
-- [Gestione Prenotazioni Duplicate](./frontend/duplicate-prenotazioni.md) - Documentazione sulla prevenzione delle prenotazioni duplicate
+- [Architettura Frontend](frontend/architecture.md) - Struttura e componenti del frontend
+- [Guida alle Schermate](frontend/screens.md) - Descrizione delle principali schermate
+- [Servizi API](frontend/api-services.md) - Interazione con il backend
+- [WebSocket Service](frontend/websocket-service.md) - Comunicazione real-time
+- [Notifiche Context](frontend/notifiche-context.md) - Sistema di notifiche
 
-### Diagrammi
+## Manutenzione e Monitoraggio
 
-- [Diagramma ER](../er_diagram.mermaid) - Diagramma Entity-Relationship del database
+- [README Manutenzione](../README_MANUTENZIONE.md) - Guida alla manutenzione del sistema
+- [Sistema di Autoconfigurazione](sistema_autoconfigurazione.md) - Documentazione del sistema di autoconfigurazione
+- [Soluzione Prevenzione Problemi Schema](soluzione_prevenzione_problemi_schema.md) - Strategie per prevenire problemi di schema
+- [Report Modifica Schema Prezzo](report_modifica_schema_prezzo.md) - Documentazione sulla modifica dello schema per il prezzo
+- [Aggiunta Campo Prezzo](aggiunta_campo_prezzo.md) - Guida all'aggiunta del campo prezzo
 
-### Sviluppo
+## Script e Tool
 
-- [Guida al Contributo](CONTRIBUTING.md) - Linee guida per contribuire al progetto
-- [Standard di Codice](CODING_STANDARDS.md) - Convenzioni e best practices
+- [Script di Installazione Schema](../install_schema_monitoring.sh) - Script per installare e monitorare lo schema
+- [Script di Esecuzione Sicura Schema](../safe_schema_exec.sh) - Script per l'esecuzione sicura dello schema
+- [Script di Installazione Cron](../install_maintenance_cron.sh) - Script per installare i job cron di manutenzione
 
-## Novità e Aggiornamenti
+## Come Navigare la Documentazione
 
-### 26 Marzo 2025
-- Implementato sistema di registrazione utenti completo
-- Aggiornata documentazione API per includere l'endpoint di registrazione
-- Aggiunta guida utente completa per l'applicazione
+1. **Nuovi Utenti**: Iniziate con la [Documentazione Completa](documentazione_completa.md) e la [Guida Utente](user_guide.md).
+2. **Sviluppatori**: Consultate la [Panoramica Tecnica](technical_overview.md), [Architettura Backend](backend_architecture.md) e [Architettura Frontend](frontend/architecture.md).
+3. **Amministratori di Sistema**: La [README Manutenzione](../README_MANUTENZIONE.md) è il documento principale per la gestione del sistema.
+4. **Sviluppo Futuro**: Consultate [File Inutili e Implementazioni Future](file_inutili_e_implementazioni_future.md) per idee su miglioramenti futuri.
 
-## Come Utilizzare la Documentazione
+## Aggiornamento Documentazione
 
-La documentazione è organizzata per permettere diversi approcci di lettura:
+Questa documentazione viene aggiornata regolarmente con le nuove funzionalità e i miglioramenti del sistema. Se notate mancanze o incongruenze, siete invitati a segnalarle o contribuire con aggiornamenti.
 
-1. **Per sviluppatori frontend**: Iniziate con l'architettura frontend e i servizi API
-2. **Per sviluppatori backend**: Concentratevi sull'architettura backend e sugli endpoint API
-3. **Per amministratori di sistema**: Revisionate l'architettura tecnica e i requisiti di sistema
-4. **Per nuovi membri del team**: Seguite la documentazione in ordine, iniziando dalla panoramica tecnica
-5. **Per utenti finali**: Consultate la guida utente per istruzioni operative
-
-## Mantenere la Documentazione Aggiornata
-
-La documentazione deve essere aggiornata ogni volta che vengono apportate modifiche significative al codice. Seguire queste linee guida:
-
-1. Aggiornare la documentazione corrispondente insieme alle modifiche del codice
-2. Assicurarsi che gli esempi siano funzionanti e aggiornati
-3. Verificare che i diagrammi riflettano l'architettura attuale
-4. Mantenere un linguaggio chiaro e conciso 
+Ultimo aggiornamento: 31/03/2025 

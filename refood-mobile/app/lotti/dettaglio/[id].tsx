@@ -1059,68 +1059,70 @@ const DettaglioLottoScreen = () => {
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Prenota lotto</Text>
             </View>
-            <View style={styles.modalBody}>
-              <Text style={styles.prenotazioneInfo}>
-                Stai per prenotare il lotto <Text style={styles.boldText}>{lotto?.nome}</Text>
-              </Text>
-              
-              <Divider style={styles.divider} />
-              
-              <Text style={styles.prenotazioneLabel}>Data di prelievo prevista:</Text>
-              <Pressable 
-                onPress={() => setShowDatePicker(true)}
-                style={({ pressed }) => [
-                  styles.dateSelector,
-                  { opacity: pressed ? 0.9 : 1 }
-                ]}
-              >
-                <Surface style={styles.dateSurface}>
-                  <Ionicons name="calendar" size={24} color={PRIMARY_COLOR} style={styles.dateIcon} />
-                  <View style={styles.dateTextContainer}>
-                    <Text style={styles.dateValue}>{formatDate(dataRitiroPrevista)}</Text>
-                  </View>
-                  <MaterialCommunityIcons name="chevron-right" size={24} color="#aaa" />
-                </Surface>
-              </Pressable>
-              
-              {/* Selezione metodo di pagamento per lotti verdi e utenti privati */}
-              {lotto?.stato?.toUpperCase() === 'VERDE' && user?.tipo_utente?.toUpperCase() === 'PRIVATO' && (
-                <>
-                  <Text style={styles.prenotazioneLabel}>Metodo di pagamento:</Text>
-                  <View style={styles.paymentMethodContainer}>
-                    <View style={styles.radioButtonRow}>
-                      <RadioButton
-                        value="contanti"
-                        status={tipoPagamento === 'contanti' ? 'checked' : 'unchecked'}
-                        onPress={() => setTipoPagamento('contanti')}
-                        color={theme.colors.primary}
-                      />
-                      <Text style={styles.radioButtonLabel} onPress={() => setTipoPagamento('contanti')}>Contanti</Text>
+            <ScrollView style={styles.modalScrollView}>
+              <View style={styles.modalBody}>
+                <Text style={styles.prenotazioneInfo}>
+                  Stai per prenotare il lotto <Text style={styles.boldText}>{lotto?.nome}</Text>
+                </Text>
+                
+                <Divider style={styles.divider} />
+                
+                <Text style={styles.prenotazioneLabel}>Data di prelievo prevista:</Text>
+                <Pressable 
+                  onPress={() => setShowDatePicker(true)}
+                  style={({ pressed }) => [
+                    styles.dateSelector,
+                    { opacity: pressed ? 0.9 : 1 }
+                  ]}
+                >
+                  <Surface style={styles.dateSurface}>
+                    <Ionicons name="calendar" size={24} color={PRIMARY_COLOR} style={styles.dateIcon} />
+                    <View style={styles.dateTextContainer}>
+                      <Text style={styles.dateValue}>{formatDate(dataRitiroPrevista)}</Text>
                     </View>
-                    <View style={styles.radioButtonRow}>
-                      <RadioButton
-                        value="bonifico"
-                        status={tipoPagamento === 'bonifico' ? 'checked' : 'unchecked'}
-                        onPress={() => setTipoPagamento('bonifico')}
-                        color={theme.colors.primary}
-                      />
-                      <Text style={styles.radioButtonLabel} onPress={() => setTipoPagamento('bonifico')}>Bonifico</Text>
+                    <MaterialCommunityIcons name="chevron-right" size={24} color="#aaa" />
+                  </Surface>
+                </Pressable>
+                
+                {/* Selezione metodo di pagamento per lotti verdi e utenti privati */}
+                {lotto?.stato?.toUpperCase() === 'VERDE' && user?.tipo_utente?.toUpperCase() === 'PRIVATO' && (
+                  <>
+                    <Text style={styles.prenotazioneLabel}>Metodo di pagamento:</Text>
+                    <View style={styles.paymentMethodContainer}>
+                      <View style={styles.radioButtonRow}>
+                        <RadioButton
+                          value="contanti"
+                          status={tipoPagamento === 'contanti' ? 'checked' : 'unchecked'}
+                          onPress={() => setTipoPagamento('contanti')}
+                          color={theme.colors.primary}
+                        />
+                        <Text style={styles.radioButtonLabel} onPress={() => setTipoPagamento('contanti')}>Contanti</Text>
+                      </View>
+                      <View style={styles.radioButtonRow}>
+                        <RadioButton
+                          value="bonifico"
+                          status={tipoPagamento === 'bonifico' ? 'checked' : 'unchecked'}
+                          onPress={() => setTipoPagamento('bonifico')}
+                          color={theme.colors.primary}
+                        />
+                        <Text style={styles.radioButtonLabel} onPress={() => setTipoPagamento('bonifico')}>Bonifico</Text>
+                      </View>
                     </View>
-                  </View>
-                </>
-              )}
-              
-              <Text style={styles.prenotazioneLabel}>Note (opzionale):</Text>
-              <TextInput
-                value={notePrenotazione}
-                onChangeText={setNotePrenotazione}
-                style={styles.noteInput}
-                placeholder="Inserisci eventuali note per la prenotazione"
-                multiline
-                numberOfLines={3}
-                mode="outlined"
-              />
-            </View>
+                  </>
+                )}
+                
+                <Text style={styles.prenotazioneLabel}>Note (opzionale):</Text>
+                <TextInput
+                  value={notePrenotazione}
+                  onChangeText={setNotePrenotazione}
+                  style={styles.noteInput}
+                  placeholder="Inserisci eventuali note per la prenotazione"
+                  multiline
+                  numberOfLines={3}
+                  mode="outlined"
+                />
+              </View>
+            </ScrollView>
             <Divider />
             <View style={styles.prenotazioneModalFooter}>
               <Button
@@ -1300,8 +1302,12 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     margin: 20,
+    marginTop: 40,
+    marginBottom: 40,
     borderRadius: 8,
     overflow: 'hidden',
+    zIndex: 1000,
+    maxHeight: '90%',
   } as any,
   modalContent: {
     backgroundColor: '#fff',
@@ -1446,9 +1452,12 @@ const styles = StyleSheet.create({
   },
   prenotazioneModalContainer: {
     margin: 20,
+    marginTop: 40,
+    marginBottom: 40,
     borderRadius: 8,
     overflow: 'hidden',
     zIndex: 1000,
+    maxHeight: '90%',
   },
   prenotazioneModalContent: {
     backgroundColor: '#fff',
@@ -1479,6 +1488,9 @@ const styles = StyleSheet.create({
   radioButtonLabel: {
     marginLeft: 8,
     fontSize: 16,
+  },
+  modalScrollView: {
+    maxHeight: '80%',
   },
 });
 
