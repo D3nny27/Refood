@@ -106,13 +106,18 @@ const getPrenotazioneById = async (req, res, next) => {
       SELECT 
         p.*,
         l.prodotto, l.quantita, l.unita_misura, l.data_scadenza, l.stato AS stato_lotto,
+        l.tipo_utente_origine_id,
         cr.tipo AS centro_ricevente_nome, cr.indirizzo AS indirizzo_ricevente, cr.telefono AS telefono_ricevente,
+        cr.email AS email_ricevente,
         a.nome AS creatore_nome, a.cognome AS creatore_cognome,
         u.id AS utente_id, u.nome AS utente_nome, u.cognome AS utente_cognome,
-        u.email AS utente_email, u.ruolo AS utente_ruolo
+        u.email AS utente_email, u.ruolo AS utente_ruolo,
+        tuo.tipo AS tipo_utente_origine_tipo, tuo.indirizzo AS tipo_utente_origine_indirizzo, 
+        tuo.telefono AS tipo_utente_origine_telefono, tuo.email AS tipo_utente_origine_email
       FROM Prenotazioni p
       JOIN Lotti l ON p.lotto_id = l.id
       JOIN Tipo_Utente cr ON p.tipo_utente_ricevente_id = cr.id
+      LEFT JOIN Tipo_Utente tuo ON l.tipo_utente_origine_id = tuo.id
       LEFT JOIN Attori a ON l.inserito_da = a.id
       LEFT JOIN Attori u ON p.attore_id = u.id
       WHERE p.id = ?
@@ -158,10 +163,30 @@ const getPrenotazioneById = async (req, res, next) => {
       ruolo: prenotazione.utente_ruolo
     } : null;
     
+    // Aggiungi informazioni più complete sul centro ricevente
+    const centroRicevente = {
+      id: prenotazione.tipo_utente_ricevente_id,
+      nome: prenotazione.centro_ricevente_nome,
+      indirizzo: prenotazione.indirizzo_ricevente,
+      telefono: prenotazione.telefono_ricevente,
+      email: prenotazione.email_ricevente
+    };
+    
+    // Aggiungi informazioni sul tipo_utente che ha originato il lotto
+    const tipo_utente_origine = prenotazione.tipo_utente_origine_id ? {
+      id: prenotazione.tipo_utente_origine_id,
+      tipo: prenotazione.tipo_utente_origine_tipo,
+      indirizzo: prenotazione.tipo_utente_origine_indirizzo,
+      telefono: prenotazione.tipo_utente_origine_telefono,
+      email: prenotazione.tipo_utente_origine_email
+    } : null;
+    
     // Unifica i risultati
     const result = {
       ...prenotazione,
       utente,
+      centroRicevente,
+      tipo_utente_origine,
       trasporto: trasporto || null
     };
     
@@ -173,6 +198,18 @@ const getPrenotazioneById = async (req, res, next) => {
       delete result.utente_email;
       delete result.utente_ruolo;
     }
+    
+    // Rimuovi i campi ridondanti del centro ricevente
+    delete result.centro_ricevente_nome;
+    delete result.indirizzo_ricevente;
+    delete result.telefono_ricevente;
+    delete result.email_ricevente;
+    
+    // Rimuovi i campi ridondanti del tipo_utente origine
+    delete result.tipo_utente_origine_tipo;
+    delete result.tipo_utente_origine_indirizzo;
+    delete result.tipo_utente_origine_telefono;
+    delete result.tipo_utente_origine_email;
     
     res.json(result);
   } catch (error) {
@@ -460,8 +497,9 @@ const createPrenotazione = async (req, res, next) => {
           stato,
           data_ritiro,
           note,
-          tipo_pagamento
-        ) VALUES (?, ?, ?, ?, ?, ?)
+          tipo_pagamento,
+          attore_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `;
       
       let params = [
@@ -470,10 +508,11 @@ const createPrenotazione = async (req, res, next) => {
         'Prenotato',  // Lo stato iniziale è "Prenotato"
         data_ritiro || null,
         note || null,
-        tipo_pagamento || null
+        tipo_pagamento || null,
+        utente_id     // Usiamo l'ID dell'utente autenticato invece dell'ID fisso dell'amministratore
       ];
       
-      console.log(`Creazione nuova prenotazione con parametri: ${JSON.stringify(params)}`);
+      console.log(`Creazione nuova prenotazione con parametri: ${JSON.stringify(params)} e attore_id: ${utente_id}`);
       
       const result = await db.run(query, params);
       
@@ -1425,7 +1464,7 @@ async function generaNotificheProntoPerRitiro(id, prenotazione, note) {
     }
     
     // Recupera informazioni sui centri
-    const centroOrigine = await db.get('SELECT * FROM Tipo_Utente WHERE id = ?', [lotto.tipo_utente_origine_id]);
+    const centroOrigine = await db.get('SELECT * FROM Tipo_Utente WHERE id = ?', [prenotazione.tipo_utente_origine_id]);
     const centroRicevente = await db.get('SELECT * FROM Tipo_Utente WHERE id = ?', [prenotazione.tipo_utente_ricevente_id]);
     
     if (!centroOrigine || !centroRicevente) {
@@ -1460,7 +1499,6 @@ async function generaNotificheProntoPerRitiro(id, prenotazione, note) {
   }
 }
 
-// Aggiungi la funzione di registrazione del ritiro
 /**
  * Registra il ritiro effettivo di un lotto prenotato
  * @param {Object} req - Request object
@@ -1470,7 +1508,7 @@ async function generaNotificheProntoPerRitiro(id, prenotazione, note) {
 const registraRitiro = async (req, res, next) => {
   try {
     const prenotazioneId = parseInt(req.params.id);
-    const { ritirato_da, documento_ritiro, note_ritiro } = req.body;
+    const { ritirato_da, documento_ritiro, note_ritiro, indirizzo_ritiro, telefono_ritiro, email_ritiro } = req.body;
     
     // Validazione dati minimi richiesti
     if (!ritirato_da) {
@@ -1521,6 +1559,9 @@ const registraRitiro = async (req, res, next) => {
       operazione: 'ritiro',
       ritirato_da,
       documento_ritiro,
+      indirizzo_ritiro,
+      telefono_ritiro,
+      email_ritiro,
       note: note_ritiro || null
     });
     
@@ -1533,6 +1574,9 @@ const registraRitiro = async (req, res, next) => {
            ritirato_da = ?,
            documento_ritiro = ?,
            note_ritiro = ?,
+           indirizzo_ritiro = ?,
+           telefono_ritiro = ?,
+           email_ritiro = ?,
            operatore_ritiro = ?,
            transizioni_stato = ?,
            data_consegna = ?  /* Aggiungiamo la data di consegna che corrisponde alla data di ritiro effettivo */
@@ -1544,6 +1588,9 @@ const registraRitiro = async (req, res, next) => {
         ritirato_da,
         documento_ritiro || null,
         note_ritiro || null,
+        indirizzo_ritiro || null,
+        telefono_ritiro || null,
+        email_ritiro || null,
         req.user.id,
         JSON.stringify(transizioni),
         timestamp,  /* Nuova data di consegna */
@@ -1584,7 +1631,7 @@ async function generaNotificheRitiro(id, prenotazione, note) {
     }
     
     // Recupera informazioni sui centri
-    const centroOrigine = await db.get('SELECT * FROM Tipo_Utente WHERE id = ?', [lotto.tipo_utente_origine_id]);
+    const centroOrigine = await db.get('SELECT * FROM Tipo_Utente WHERE id = ?', [prenotazione.tipo_utente_origine_id]);
     const centroRicevente = await db.get('SELECT * FROM Tipo_Utente WHERE id = ?', [prenotazione.tipo_utente_ricevente_id]);
     
     if (!centroOrigine || !centroRicevente) {

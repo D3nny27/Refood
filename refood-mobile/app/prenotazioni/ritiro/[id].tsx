@@ -4,7 +4,8 @@ import { Text, Card, Button, TextInput, Appbar, Divider, Surface, Portal, Dialog
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Toast from 'react-native-toast-message';
-import { getPrenotazioneById, registraRitiro } from '../../../src/services/prenotazioniService';
+import { getPrenotazioneById } from '../../../src/services/prenotazioniService';
+import registraRitiro from '../../../src/services/registraRitiro';
 import { useAuth } from '../../../src/context/AuthContext';
 import { PRIMARY_COLOR } from '../../../src/config/constants';
 import { format } from 'date-fns';
@@ -26,6 +27,17 @@ const RegistraRitiroScreen = () => {
   const [ritiroDa, setRitiroDa] = useState('');
   const [documentoRitiro, setDocumentoRitiro] = useState('');
   const [noteRitiro, setNoteRitiro] = useState('');
+  const [indirizzo, setIndirizzo] = useState('');
+  const [telefono, setTelefono] = useState('');
+  const [email, setEmail] = useState('');
+  
+  // Stato per tracciare se i campi del form sono stati modificati manualmente
+  const [campiModificati, setCampiModificati] = useState({
+    ritiroDa: false,
+    indirizzo: false,
+    telefono: false,
+    email: false
+  });
   
   // Stati per il dialog di conferma
   const [confirmDialogVisible, setConfirmDialogVisible] = useState(false);
@@ -44,6 +56,27 @@ const RegistraRitiroScreen = () => {
     }
   };
   
+  // Handler per aggiornare i campi e tenere traccia delle modifiche manuali
+  const handleRitiroDaChange = (value: string) => {
+    setRitiroDa(value);
+    setCampiModificati({...campiModificati, ritiroDa: true});
+  };
+  
+  const handleIndirizzoChange = (value: string) => {
+    setIndirizzo(value);
+    setCampiModificati({...campiModificati, indirizzo: true});
+  };
+  
+  const handleTelefonoChange = (value: string) => {
+    setTelefono(value);
+    setCampiModificati({...campiModificati, telefono: true});
+  };
+  
+  const handleEmailChange = (value: string) => {
+    setEmail(value);
+    setCampiModificati({...campiModificati, email: true});
+  };
+  
   // Recupero i dettagli della prenotazione all'avvio
   useEffect(() => {
     const fetchPrenotazione = async () => {
@@ -54,6 +87,19 @@ const RegistraRitiroScreen = () => {
         console.log(`Recupero dettagli prenotazione ${id} per registrazione ritiro...`);
         const data = await getPrenotazioneById(parseInt(id as string, 10));
         
+        // Log dettagliato per debug
+        console.log('--------- DATI PRENOTAZIONE COMPLETI ---------');
+        console.log(JSON.stringify(data, null, 2));
+        console.log('--------- STRUTTURA OGGETTO UTENTE ---------');
+        console.log('utente:', data.utente);
+        console.log('attore_id:', data.attore_id);
+        console.log('--------- STRUTTURA OGGETTO TIPO_UTENTE_ORIGINE ---------');
+        console.log('tipo_utente_origine:', data.tipo_utente_origine);
+        console.log('tipo_utente_origine_id:', data.tipo_utente_origine_id);
+        console.log('--------- STRUTTURA OGGETTO CENTRO_RICEVENTE ---------');
+        console.log('centroRicevente:', data.centroRicevente);
+        console.log('---------------------------------------------');
+        
         setPrenotazione(data);
         
         // Verifica che lo stato sia valido per il ritiro
@@ -61,14 +107,33 @@ const RegistraRitiroScreen = () => {
           setError(`Questa prenotazione è in stato "${data.stato}" e non può essere ritirata. Solo prenotazioni "Pronte per il ritiro" o "Confermate" possono essere ritirate.`);
         } else {
           // Precompilazione dei campi con i dati dell'utente che ha fatto la prenotazione
+          // Prioritizzare l'utente collegato alla prenotazione
           if (data.utente) {
-            // Se abbiamo i dati dell'utente che ha fatto la prenotazione, li usiamo
-            console.log(`Precompilazione nome con dati utente: ${data.utente.nome} ${data.utente.cognome}`);
-            setRitiroDa(`${data.utente.nome} ${data.utente.cognome}`.trim());
-          } else if (data.centro_ricevente_nome) {
-            // Altrimenti usiamo il nome del centro ricevente
-            console.log(`Precompilazione nome con centro ricevente: ${data.centro_ricevente_nome}`);
-            setRitiroDa(data.centro_ricevente_nome);
+            const utente = data.utente;
+            console.log(`Precompilazione con dati utente: ${utente.nome} ${utente.cognome || ''}`);
+            // Per il nome, usiamo nome + cognome per privati, solo nome per altri tipi
+            setRitiroDa(utente.ruolo === 'Privato' 
+              ? `${utente.nome || ''} ${utente.cognome || ''}`.trim() 
+              : utente.nome || '');
+            setIndirizzo(data.tipo_utente_origine?.indirizzo || '');
+            setTelefono(data.tipo_utente_origine?.telefono || '');
+            setEmail(utente.email || '');
+          } else if (data.tipo_utente_origine) {
+            const tipoUtente = data.tipo_utente_origine;
+            console.log(`Precompilazione con dati tipo_utente_origine: ${tipoUtente.tipo}`);
+            // Non mostrare "Privato" ma il nome effettivo se disponibile
+            setRitiroDa(tipoUtente.nome || tipoUtente.tipo || '');
+            setIndirizzo(tipoUtente.indirizzo || '');
+            setTelefono(tipoUtente.telefono || '');
+            setEmail(tipoUtente.email || '');
+          } else if (data.centroRicevente) {
+            // Fallback ai dati del centro ricevente
+            const nomeRicevente = data.centroRicevente.nome || '';
+            console.log(`Precompilazione con dati centro ricevente: ${nomeRicevente}`);
+            setRitiroDa(nomeRicevente);
+            setIndirizzo(data.centroRicevente.indirizzo || '');
+            setTelefono(data.centroRicevente.telefono || '');
+            setEmail(data.centroRicevente.email || '');
           }
         }
       } catch (err: any) {
@@ -89,15 +154,7 @@ const RegistraRitiroScreen = () => {
   
   // Validazione del form
   const validateForm = () => {
-    if (!ritiroDa.trim()) {
-      Toast.show({
-        type: 'error',
-        text1: 'Errore',
-        text2: 'Il nome di chi ritira è obbligatorio',
-      });
-      return false;
-    }
-    
+    // La validazione è opzionale poiché tutti i campi sono ora opzionali
     return true;
   };
   
@@ -120,7 +177,10 @@ const RegistraRitiroScreen = () => {
         parseInt(id as string, 10),
         ritiroDa,
         documentoRitiro,
-        noteRitiro
+        noteRitiro,
+        indirizzo,
+        telefono,
+        email
       );
       
       if (response.success) {
@@ -217,38 +277,132 @@ const RegistraRitiroScreen = () => {
               )}
             </Surface>
             
-            {/* Informazioni su chi ha prenotato */}
-            {prenotazione?.utente && (
-              <Surface style={[styles.prenotazioneInfo, { marginTop: 12 }]}>
-                <Text style={styles.infoTitle}>Prenotato da:</Text>
-                <Text style={styles.infoText}>
-                  <Text style={styles.infoBold}>{prenotazione.utente.nome} {prenotazione.utente.cognome}</Text>
+            {/* Informazioni su chi ha prenotato - verifica tipo_utente_origine */}
+            <Surface style={[styles.prenotazioneInfo, { marginTop: 12 }]}>
+              <Text style={styles.infoTitle}>Prenotato da:</Text>
+              
+              {/* DEBUG - Mostra tutte le informazioni disponibili per il debug */}
+              <ScrollView style={{ maxHeight: 100, marginVertical: 4, display: 'none' }}>
+                <Text style={{ fontSize: 8 }}>
+                  {JSON.stringify(prenotazione, null, 2)}
                 </Text>
-                {prenotazione.utente.email && (
+              </ScrollView>
+              
+              {/* Mostra le informazioni dell'utente che ha effettuato la prenotazione */}
+              {prenotazione?.utente ? (
+                <>
                   <Text style={styles.infoText}>
-                    Email: <Text style={styles.infoBold}>{prenotazione.utente.email}</Text>
+                    <Text style={styles.infoBold}>
+                      {prenotazione.utente.ruolo === 'Privato' 
+                        ? `${prenotazione.utente.nome || ''} ${prenotazione.utente.cognome || ''}`.trim()
+                        : prenotazione.utente.nome || ''}
+                    </Text>
                   </Text>
-                )}
-                <Text style={styles.infoNote}>
-                  I dati del prenotante sono stati utilizzati per precompilare il campo "Nome e cognome di chi ritira"
+                  {prenotazione.utente.email && (
+                    <Text style={styles.infoText}>
+                      Email: <Text style={styles.infoBold}>{prenotazione.utente.email}</Text>
+                    </Text>
+                  )}
+                </>
+              ) : prenotazione?.tipo_utente_origine ? (
+                <>
+                  <Text style={styles.infoText}>
+                    <Text style={styles.infoBold}>
+                      {prenotazione.tipo_utente_origine.tipo === 'Privato'
+                        ? `${prenotazione.tipo_utente_origine.nome || ''} ${prenotazione.tipo_utente_origine.cognome || ''}`.trim()
+                        : prenotazione.tipo_utente_origine.tipo || ''}
+                    </Text>
+                  </Text>
+                  {prenotazione.tipo_utente_origine.email && (
+                    <Text style={styles.infoText}>
+                      Email: <Text style={styles.infoBold}>{prenotazione.tipo_utente_origine.email}</Text>
+                    </Text>
+                  )}
+                  {prenotazione.tipo_utente_origine.telefono && (
+                    <Text style={styles.infoText}>
+                      Telefono: <Text style={styles.infoBold}>{prenotazione.tipo_utente_origine.telefono}</Text>
+                    </Text>
+                  )}
+                </>
+              ) : (
+                <Text style={styles.infoText}>
+                  <Text style={styles.infoBold}>Informazioni non disponibili</Text>
                 </Text>
-              </Surface>
-            )}
+              )}
+            </Surface>
+            
+            {/* Informazioni su chi ritira il lotto */}
+            <Surface style={[styles.prenotazioneInfo, { marginTop: 12 }]}>
+              <Text style={styles.infoTitle}>Ritirato da:</Text>
+              <Text style={styles.infoText}>
+                <Text style={styles.infoBold}>{ritiroDa || 'Da specificare'}</Text>
+              </Text>
+              <Text style={styles.infoText}>
+                Indirizzo: <Text style={styles.infoBold}>{indirizzo || 'Non specificato'}</Text>
+              </Text>
+              <Text style={styles.infoText}>
+                Telefono: <Text style={styles.infoBold}>{telefono || 'Non specificato'}</Text>
+              </Text>
+              <Text style={styles.infoText}>
+                Email: <Text style={styles.infoBold}>{email || 'Non specificato'}</Text>
+              </Text>
+              <Text style={styles.infoNote}>
+                Puoi modificare questi dati usando il form qui sotto
+              </Text>
+            </Surface>
             
             <Divider style={styles.divider} />
             
             {/* Form per la registrazione del ritiro */}
-            <Text style={styles.formTitle}>Dati di chi ritira</Text>
+            <Text style={styles.formTitle}>Modifica dati di chi ritira</Text>
             
             <TextInput
-              label="Nome e cognome di chi ritira *"
+              label="Nome di chi ritira"
               value={ritiroDa}
-              onChangeText={setRitiroDa}
+              onChangeText={handleRitiroDaChange}
               mode="outlined"
               style={styles.input}
               placeholder="Inserisci il nome completo"
               autoCapitalize="words"
               autoCorrect={false}
+              disabled={false} // Questo campo può essere modificato
+            />
+            
+            <TextInput
+              label="Indirizzo"
+              value={indirizzo}
+              onChangeText={handleIndirizzoChange}
+              mode="outlined"
+              style={styles.input}
+              placeholder="Inserisci l'indirizzo"
+              autoCapitalize="words"
+              autoCorrect={false}
+              disabled={false} // Questo campo può essere modificato
+            />
+            
+            <TextInput
+              label="Telefono"
+              value={telefono}
+              onChangeText={handleTelefonoChange}
+              mode="outlined"
+              style={styles.input}
+              placeholder="Inserisci il numero di telefono"
+              keyboardType="phone-pad"
+              autoCorrect={false}
+              disabled={false} // Questo campo può essere modificato
+            />
+            
+            <TextInput
+              label="Email"
+              value={email}
+              onChangeText={handleEmailChange}
+              mode="outlined"
+              style={styles.input}
+              placeholder="Inserisci l'email"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              disabled={false} // Questo campo può essere modificato
             />
             
             <TextInput
@@ -273,14 +427,12 @@ const RegistraRitiroScreen = () => {
               numberOfLines={3}
             />
             
-            <Text style={styles.requiredText}>* Campo obbligatorio</Text>
-            
             <Button
               mode="contained"
               onPress={handleSubmit}
               style={styles.submitButton}
               loading={sending}
-              disabled={sending || !ritiroDa.trim()}
+              disabled={sending}
               icon="check-circle"
             >
               Conferma Ritiro
@@ -305,6 +457,24 @@ const RegistraRitiroScreen = () => {
           <Dialog.Content>
             <Text>Stai registrando il ritiro del lotto da parte di:</Text>
             <Text style={styles.dialogHighlight}>{ritiroDa}</Text>
+            {indirizzo && (
+              <>
+                <Text style={styles.dialogLabel}>Indirizzo:</Text>
+                <Text style={styles.dialogText}>{indirizzo}</Text>
+              </>
+            )}
+            {telefono && (
+              <>
+                <Text style={styles.dialogLabel}>Telefono:</Text>
+                <Text style={styles.dialogText}>{telefono}</Text>
+              </>
+            )}
+            {email && (
+              <>
+                <Text style={styles.dialogLabel}>Email:</Text>
+                <Text style={styles.dialogText}>{email}</Text>
+              </>
+            )}
             {documentoRitiro.trim() && (
               <>
                 <Text style={styles.dialogLabel}>Documento:</Text>
@@ -455,6 +625,10 @@ const styles = StyleSheet.create({
     color: '#666',
     fontStyle: 'italic',
     marginTop: 8,
+  },
+  infoRole: {
+    fontStyle: 'italic',
+    color: '#666'
   },
 });
 
