@@ -1,16 +1,18 @@
 import { View, Text, StyleSheet, ScrollView, Platform } from 'react-native';
-import { Button, Card, Avatar, List, Divider, useTheme, Dialog, Portal, Paragraph } from 'react-native-paper';
+import { Button, Card, Avatar, List, Divider, useTheme, Dialog, Portal, Paragraph, Switch } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../src/context/AuthContext';
 import { RUOLI, PRIMARY_COLOR } from '../../src/config/constants';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../../src/config/constants';
-import { useState } from 'react';
+import { useState, useContext } from 'react';
+import { ThemeContext } from '../_layout';
 
 export default function ProfiloScreen() {
   const { user, logout, forceAuthUpdate } = useAuth();
   const theme = useTheme();
+  const { isDarkMode, toggleTheme } = useContext(ThemeContext);
   const [logoutDialogVisible, setLogoutDialogVisible] = useState(false);
   const [developmentDialogVisible, setDevelopmentDialogVisible] = useState(false);
 
@@ -81,7 +83,7 @@ export default function ProfiloScreen() {
   const isAdmin = user?.ruolo === RUOLI.AMMINISTRATORE;
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={[styles.container, isDarkMode && styles.containerDark]}>
       <Card style={styles.profileCard}>
         <Card.Content style={styles.profileContent}>
           <Avatar.Icon 
@@ -91,8 +93,8 @@ export default function ProfiloScreen() {
             color="#fff" 
           />
           <View style={styles.profileInfo}>
-            <Text style={styles.name}>{user?.nome} {user?.cognome}</Text>
-            <Text style={styles.email}>{user?.email}</Text>
+            <Text style={[styles.name, isDarkMode && styles.textLight]}>{user?.nome} {user?.cognome}</Text>
+            <Text style={[styles.email, isDarkMode && styles.textLightSecondary]}>{user?.email}</Text>
             <View style={styles.roleContainer}>
               {user?.ruolo === RUOLI.AMMINISTRATORE ? (
                 <View style={styles.userTypeContainer}>
@@ -161,6 +163,29 @@ export default function ProfiloScreen() {
         </Card.Content>
       </Card>
 
+      {/* Impostazioni app */}
+      <Card style={styles.sectionCard}>
+        <Card.Title 
+          title="Impostazioni App" 
+          left={(props) => <MaterialCommunityIcons name="cellphone-cog" size={24} color={theme.colors.primary} />} 
+        />
+        <Card.Content>
+          <List.Item
+            title="Tema Scuro"
+            description={isDarkMode ? "Attivato" : "Disattivato"}
+            left={props => <List.Icon {...props} icon={isDarkMode ? "weather-night" : "weather-sunny"} />}
+            right={() => (
+              <Switch
+                value={isDarkMode}
+                onValueChange={toggleTheme}
+                color={theme.colors.primary}
+              />
+            )}
+            style={styles.listItem}
+          />
+        </Card.Content>
+      </Card>
+
       {/* Pulsante di logout */}
       <Button 
         mode="contained" 
@@ -175,7 +200,7 @@ export default function ProfiloScreen() {
         Logout
       </Button>
 
-      <Text style={styles.version}>ReFood v1.0.0</Text>
+      <Text style={[styles.version, isDarkMode && styles.textLightSecondary]}>ReFood v1.0.0</Text>
 
       {/* Dialog di conferma logout - compatibile con web e mobile */}
       <Portal>
@@ -220,6 +245,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
+  containerDark: {
+    backgroundColor: '#121212',
+  },
   profileCard: {
     margin: 16,
     elevation: 4,
@@ -244,6 +272,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     marginTop: 4,
+  },
+  textLight: {
+    color: '#FFFFFF',
+  },
+  textLightSecondary: {
+    color: '#AEAEAE',
   },
   roleContainer: {
     flexDirection: 'row',

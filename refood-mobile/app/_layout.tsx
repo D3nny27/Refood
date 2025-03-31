@@ -1,28 +1,48 @@
-import { Stack, useRouter, useSegments } from 'expo-router';
-import React, { useEffect } from 'react';
+import { Stack } from 'expo-router/stack';
+import { router, useSegments } from 'expo-router';
+import React, { useEffect, useState } from 'react';
 import { Platform } from 'react-native';
-import { PaperProvider, MD3LightTheme as DefaultTheme } from 'react-native-paper';
+import { PaperProvider, MD3LightTheme, MD3DarkTheme } from 'react-native-paper';
 import { PRIMARY_COLOR } from '../src/config/constants';
 import { AuthProvider, useAuth } from '../src/context/AuthContext';
 import { NotificheProvider } from '../src/context/NotificheContext';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Toast from 'react-native-toast-message';
 import logger from '../src/utils/logger';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Definizione del tema personalizzato per react-native-paper
-const theme = {
-  ...DefaultTheme,
+// Chiave per la preferenza del tema
+const THEME_PREFERENCE_KEY = 'theme_mode';
+
+// Tema chiaro personalizzato
+const lightTheme = {
+  ...MD3LightTheme,
   colors: {
-    ...DefaultTheme.colors,
+    ...MD3LightTheme.colors,
     primary: PRIMARY_COLOR,
     secondary: '#FF9800',
   },
 };
 
+// Tema scuro personalizzato
+const darkTheme = {
+  ...MD3DarkTheme,
+  colors: {
+    ...MD3DarkTheme.colors,
+    primary: PRIMARY_COLOR,
+    secondary: '#FF9800',
+  },
+};
+
+// Creiamo un contesto React per il tema
+export const ThemeContext = React.createContext({
+  isDarkMode: false,
+  toggleTheme: () => {},
+});
+
 // Componente per proteggere le route autenticate
 function RootLayoutNav() {
   const segments = useSegments();
-  const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
   
   useEffect(() => {
@@ -46,7 +66,7 @@ function RootLayoutNav() {
       logger.log('RootLayoutNav - Utente già autenticato, reindirizzamento alla home');
       router.replace('/(tabs)');
     }
-  }, [isAuthenticated, segments, isLoading, router]);
+  }, [isAuthenticated, segments, isLoading]);
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
@@ -60,6 +80,37 @@ function RootLayoutNav() {
 
 // Componente con i provider
 export default function RootLayout() {
+  // Stato per il tema
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  // Carica la preferenza del tema all'avvio
+  useEffect(() => {
+    const loadThemePreference = async () => {
+      try {
+        const savedTheme = await AsyncStorage.getItem(THEME_PREFERENCE_KEY);
+        if (savedTheme === 'dark') {
+          setIsDarkMode(true);
+        }
+      } catch (error) {
+        console.error('Errore nel caricamento della preferenza del tema:', error);
+      }
+    };
+
+    loadThemePreference();
+  }, []);
+
+  // Funzione per alternare il tema
+  const toggleTheme = async () => {
+    const newIsDarkMode = !isDarkMode;
+    setIsDarkMode(newIsDarkMode);
+    
+    try {
+      await AsyncStorage.setItem(THEME_PREFERENCE_KEY, newIsDarkMode ? 'dark' : 'light');
+    } catch (error) {
+      console.error('Errore nel salvataggio della preferenza del tema:', error);
+    }
+  };
+
   // Ignora warning di useLayoutEffect per il web
   React.useEffect(() => {
     // Soluzione per l'avviso useLayoutEffect sul SSR
@@ -75,15 +126,17 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <PaperProvider theme={theme}>
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <AuthProvider>
-          <NotificheProvider>
-            <RootLayoutNav />
-            <Toast />
-          </NotificheProvider>
-        </AuthProvider>
-      </GestureHandlerRootView>
-    </PaperProvider>
+    <ThemeContext.Provider value={{ isDarkMode, toggleTheme }}>
+      <PaperProvider theme={isDarkMode ? darkTheme : lightTheme}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <AuthProvider>
+            <NotificheProvider>
+              <RootLayoutNav />
+              <Toast />
+            </NotificheProvider>
+          </AuthProvider>
+        </GestureHandlerRootView>
+      </PaperProvider>
+    </ThemeContext.Provider>
   );
 }
