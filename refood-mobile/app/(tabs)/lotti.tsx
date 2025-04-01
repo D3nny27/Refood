@@ -331,12 +331,15 @@ export default function LottiScreen() {
         return;
       }
       
+      // Imposta esplicitamente il tipo di pagamento a null se non è utente privato o lotto verde
+      const tipoPagamentoToSend = (isLottoVerde && isUtenteTipoPrivato) ? tipoPagamento : null;
+      
       // Prepara l'oggetto prenotazione
       const prenotazione = {
         lottoId: selectedLotto.id,
         note: notePrenotazione,
         dataPrelievo: dataRitiro,
-        tipoPagamento: isLottoVerde && isUtenteTipoPrivato ? tipoPagamento : null
+        tipoPagamento: tipoPagamentoToSend
       };
       
       // Chiama il servizio di prenotazione
@@ -344,7 +347,7 @@ export default function LottiScreen() {
         selectedLotto.id,
         dataRitiro,
         notePrenotazione || null,
-        isLottoVerde && isUtenteTipoPrivato ? tipoPagamento : null
+        tipoPagamentoToSend
       );
       
       if (result.success) {

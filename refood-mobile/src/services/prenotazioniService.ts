@@ -155,6 +155,20 @@ export const prenotaLotto = async (
       const lotto = lottoResponse.data;
       console.log(`Stato attuale del lotto: "${lotto.stato || 'Non specificato'}"`);
       
+      // Verifica per il tipo di pagamento
+      const isLottoVerde = lotto.stato?.toUpperCase() === 'VERDE';
+      
+      // Recupera il tipo di utente corrente
+      const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+      const user = userData ? JSON.parse(userData) : null;
+      const isUtenteTipoPrivato = user?.tipo_utente?.toUpperCase() === 'PRIVATO';
+      
+      // Se non è un utente privato che prenota un lotto verde, imposta il tipo di pagamento a null
+      if (!isLottoVerde || !isUtenteTipoPrivato) {
+        console.log('Utente non privato o lotto non verde, imposto tipo_pagamento a null');
+        tipo_pagamento = null;
+      }
+      
       // Verifica se esistono già prenotazioni attive per questo lotto
       console.log(`Verifico se esistono già prenotazioni per il lotto ${lotto_id}...`);
       const prenotazioniResponse = await axios.get(`${API_URL}/prenotazioni`, {
@@ -229,12 +243,16 @@ export const prenotaLotto = async (
     }
     
     // Costruisci il payload con solo i dati realmente necessari
-    const payload = {
+    const payload: Record<string, any> = {
       lotto_id,
       data_ritiro: data_ritiro_prevista,
-      note: note || '', // Garantisce che note sia sempre una stringa, anche quando è vuoto o null
-      tipo_pagamento: tipo_pagamento || null // Aggiungiamo il tipo di pagamento
+      note: note || '' // Garantisce che note sia sempre una stringa, anche quando è vuoto o null
     };
+    
+    // Aggiungi il tipo_pagamento solo se è definito (non null)
+    if (tipo_pagamento) {
+      payload.tipo_pagamento = tipo_pagamento;
+    }
     
     console.log('Invio richiesta di prenotazione con payload:', payload);
     

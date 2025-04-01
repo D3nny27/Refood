@@ -145,7 +145,7 @@ export const getLotti = async (filtri: LottoFiltri = {}, forceRefresh = false, m
             headers,
             params: { 
               // Filtro solo per prenotazioni in stati attivi
-              stato: 'Prenotato,Confermato,InAttesa,InTransito' 
+              stato: 'Prenotato,Confermato,InAttesa,InTransito,ProntoPerRitiro' 
             },
             timeout: 15000
           });
@@ -594,7 +594,7 @@ export const getLottiDisponibili = async (filtri?: LottoFiltri, forceRefresh = f
           headers,
           params: { 
             // Filtro solo per prenotazioni in stati attivi
-            stato: 'Prenotato,Confermato,InAttesa,InTransito' 
+            stato: 'Prenotato,Confermato,InAttesa,InTransito,ProntoPerRitiro' 
           },
           timeout: 15000
         });

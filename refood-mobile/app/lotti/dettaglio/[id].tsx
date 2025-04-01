@@ -589,12 +589,15 @@ const DettaglioLottoScreen = () => {
         return;
       }
       
+      // Imposta esplicitamente il tipo di pagamento a null se non è utente privato o lotto verde
+      const tipoPagamentoToSend = (isLottoVerde && isUtenteTipoPrivato) ? tipoPagamento : null;
+      
       // Effettua la prenotazione
       const result = await prenotaLotto(
         lotto?.id || 0,
         dataRitiroFormatted,
         notePrenotazione || null,
-        isLottoVerde && isUtenteTipoPrivato ? tipoPagamento : null
+        tipoPagamentoToSend
       );
       
       if (result.success) {

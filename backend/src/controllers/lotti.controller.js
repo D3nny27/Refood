@@ -74,7 +74,7 @@ exports.getLotti = async (req, res, next) => {
         LEFT JOIN (
           SELECT lotto_id, 'Prenotato' AS stato_prenotazione
           FROM Prenotazioni 
-          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO')
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONFERMATO', 'PRONTOPERRITIRO')
         ) p ON l.id = p.lotto_id
       `;
       
@@ -96,7 +96,7 @@ exports.getLotti = async (req, res, next) => {
       whereConditions.push(`
         l.id NOT IN (
           SELECT lotto_id FROM Prenotazioni 
-          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONFERMATO', 'PRONTOPERRITIRO', 'CONSEGNATO')
         )
       `);
     }
@@ -163,7 +163,7 @@ exports.getLotti = async (req, res, next) => {
       const prenotazioniQuery = `
         SELECT lotto_id
         FROM Prenotazioni
-        WHERE stato IN ('Prenotato', 'InTransito')
+        WHERE stato IN ('Prenotato', 'InTransito', 'Confermato', 'ProntoPerRitiro')
       `;
       
       const prenotazioni = await db.all(prenotazioniQuery);
@@ -244,7 +244,7 @@ exports.getLottoById = async (req, res, next) => {
         LEFT JOIN (
           SELECT lotto_id, 'Prenotato' AS stato_prenotazione
           FROM Prenotazioni 
-          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO')
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONFERMATO', 'PRONTOPERRITIRO')
         ) p ON l.id = p.lotto_id
         WHERE l.id = ?
         GROUP BY l.id
@@ -260,7 +260,7 @@ exports.getLottoById = async (req, res, next) => {
         WHERE l.id = ?
         AND l.id NOT IN (
           SELECT lotto_id FROM Prenotazioni 
-          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONFERMATO', 'PRONTOPERRITIRO', 'CONSEGNATO')
         )
         GROUP BY l.id
       `;
@@ -1122,7 +1122,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
         LEFT JOIN (
           SELECT lotto_id, 'Prenotato' AS stato_prenotazione
           FROM Prenotazioni 
-          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO')
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONFERMATO', 'PRONTOPERRITIRO')
         ) p ON l.id = p.lotto_id
       `;
       
@@ -1144,7 +1144,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
       whereConditions.push(`
         l.id NOT IN (
           SELECT lotto_id FROM Prenotazioni 
-          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONSEGNATO')
+          WHERE UPPER(stato) IN ('PRENOTATO', 'INTRANSITO', 'CONFERMATO', 'PRONTOPERRITIRO', 'CONSEGNATO')
         )
       `);
     }
@@ -1228,7 +1228,7 @@ exports.getLottiDisponibili = async (req, res, next) => {
       const prenotazioniQuery = `
         SELECT lotto_id
         FROM Prenotazioni
-        WHERE stato IN ('Prenotato', 'InTransito')
+        WHERE stato IN ('Prenotato', 'InTransito', 'Confermato', 'ProntoPerRitiro')
       `;
       
       const prenotazioni = await db.all(prenotazioniQuery);

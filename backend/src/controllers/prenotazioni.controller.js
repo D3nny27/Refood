@@ -367,10 +367,11 @@ const createPrenotazione = async (req, res, next) => {
     
     const { lotto_id, data_ritiro, note, tipo_pagamento } = req.body;
     const utente_id = req.user.id;
+    const tipo_utente = req.user.tipo_utente;
     
     // PROBLEMA IDENTIFICATO: req.user.centro_id è undefined
     // SOLUZIONE: Recuperiamo il tipo_utente_id direttamente dalla tabella AttoriTipoUtente
-    console.log(`⭐ CREAZIONE PRENOTAZIONE - Dati ricevuti: lotto_id=${lotto_id}, utente_id=${utente_id}`);
+    console.log(`⭐ CREAZIONE PRENOTAZIONE - Dati ricevuti: lotto_id=${lotto_id}, utente_id=${utente_id}, tipo_utente=${tipo_utente}`);
     
     // Ottieni il tipo_utente_id dalla tabella AttoriTipoUtente
     let centro_id = null;
@@ -432,6 +433,34 @@ const createPrenotazione = async (req, res, next) => {
       }
       
       console.log(`Lotto ID ${lotto_id} trovato: ${JSON.stringify(lotto)}`);
+      
+      // Verifica se il tipo di pagamento è richiesto (solo per utenti privati con lotti verdi)
+      const isLottoVerde = lotto.stato.toUpperCase() === 'VERDE';
+      const isUtentePrivato = tipo_utente && tipo_utente.toUpperCase() === 'PRIVATO';
+      
+      // Se l'utente è privato e sta prenotando un lotto verde, il tipo di pagamento è obbligatorio
+      if (isLottoVerde && isUtentePrivato) {
+        if (!tipo_pagamento) {
+          console.error('Tipo di pagamento mancante per un utente privato che prenota un lotto verde');
+          return res.status(400).json({
+            status: 'error',
+            message: 'Per i lotti verdi prenotati da utenti privati è necessario specificare un metodo di pagamento'
+          });
+        }
+        
+        // Verifica che il tipo di pagamento sia valido
+        if (tipo_pagamento !== 'contanti' && tipo_pagamento !== 'bonifico') {
+          console.error(`Tipo di pagamento non valido: ${tipo_pagamento}`);
+          return res.status(400).json({
+            status: 'error',
+            message: 'Tipo pagamento deve essere \'contanti\' o \'bonifico\''
+          });
+        }
+      } else {
+        // Per tutti gli altri utenti e tipi di lotti, il tipo di pagamento deve essere null
+        console.log('Utente non privato o lotto non verde, imposto tipo_pagamento a null');
+        tipo_pagamento = null;
+      }
       
       // Sistema centralizzato: non verifichiamo più il centro di origine
       // Verifichiamo solo che il lotto non sia già prenotato
@@ -520,13 +549,16 @@ const createPrenotazione = async (req, res, next) => {
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `;
       
+      // Imposta il tipo di pagamento solo per utenti privati che prenotano lotti verdi
+      const tipoPagamentoFinal = (isLottoVerde && isUtentePrivato) ? tipo_pagamento : null;
+      
       let params = [
         lotto_id, 
         centro_id, 
         'Prenotato',  // Lo stato iniziale è "Prenotato"
         data_ritiro || null,
         note || null,
-        tipo_pagamento || null,
+        tipoPagamentoFinal,
         utente_id     // Usiamo l'ID dell'utente autenticato invece dell'ID fisso dell'amministratore
       ];
       
