@@ -2,29 +2,162 @@
 
 ## Sommario
 1. [Introduzione](#introduzione)
-2. [Panoramica del Progetto](#panoramica-del-progetto)
-3. [Architettura del Sistema](#architettura-del-sistema)
-4. [Tecnologie Utilizzate](#tecnologie-utilizzate)
-5. [Schema del Database](#schema-del-database)
-6. [Setup e Installazione](#setup-e-installazione)
-7. [API e Endpoints](#api-e-endpoints)
-8. [Flussi Applicativi](#flussi-applicativi)
-9. [Sistema di Autenticazione](#sistema-di-autenticazione)
-10. [Gestione Lotti](#gestione-lotti)
-11. [Sistema di Prenotazioni](#sistema-di-prenotazioni)
-12. [Notifiche e WebSockets](#notifiche-e-websockets)
-13. [Manutenzione Automatica](#manutenzione-automatica)
-14. [Migrazioni del Database](#migrazioni-del-database)
-15. [Frontend - Struttura e Componenti](#frontend---struttura-e-componenti)
-16. [Test e Debug](#test-e-debug)
-17. [Implementazioni Future](#implementazioni-future)
-18. [Risoluzione Problemi Comuni](#risoluzione-problemi-comuni)
+2. [Setup Dopo Git Clone](#setup-dopo-git-clone)
+3. [Panoramica del Progetto](#panoramica-del-progetto)
+4. [Architettura del Sistema](#architettura-del-sistema)
+5. [Tecnologie Utilizzate](#tecnologie-utilizzate)
+6. [Schema del Database](#schema-del-database)
+7. [Setup e Installazione](#setup-e-installazione)
+8. [API e Endpoints](#api-e-endpoints)
+9. [Flussi Applicativi](#flussi-applicativi)
+10. [Sistema di Autenticazione](#sistema-di-autenticazione)
+11. [Gestione Lotti](#gestione-lotti)
+12. [Sistema di Prenotazioni](#sistema-di-prenotazioni)
+13. [Notifiche e WebSockets](#notifiche-e-websockets)
+14. [Manutenzione Automatica](#manutenzione-automatica)
+15. [Migrazioni del Database](#migrazioni-del-database)
+16. [Frontend - Struttura e Componenti](#frontend---struttura-e-componenti)
+17. [Test e Debug](#test-e-debug)
+18. [Implementazioni Future](#implementazioni-future)
+19. [Risoluzione Problemi Comuni](#risoluzione-problemi-comuni)
 
 ## Introduzione
 
 Refood è un'applicazione completa per la gestione e la distribuzione delle eccedenze alimentari, sviluppata con l'obiettivo di ridurre lo spreco alimentare e supportare le organizzazioni sociali. Il sistema consente di tracciare il ciclo di vita dei prodotti alimentari invenduti, dalla loro identificazione fino alla destinazione finale, sia essa il consumo o il riciclo, seguendo i principi dell'economia circolare.
 
 Questo documento fornisce una documentazione tecnica dettagliata del progetto Refood, coprendo tutti gli aspetti dell'implementazione, dalla struttura del database all'architettura dell'applicazione, fino ai dettagli specifici di implementazione di ogni componente.
+
+## Setup Dopo Git Clone
+
+Questa sezione fornisce una guida passo-passo per rendere funzionante l'applicazione Refood dopo aver eseguito un clone della repository Git su un nuovo dispositivo.
+
+### Setup del Backend
+
+1. **Installazione delle dipendenze**
+   ```bash
+   cd /percorso/della/repository
+   npm install
+   ```
+
+2. **Configurazione del database**
+   ```bash
+   # Creazione e inizializzazione del database
+   mkdir -p database
+   cd database
+   
+   # Se il database non esiste già
+   sqlite3 refood.db
+   
+   # Esci da sqlite3 (Ctrl+D) e torna alla directory principale
+   cd ..
+   
+   # Applica lo schema iniziale
+   sqlite3 database/refood.db < schema.sql
+   
+   # Configurazione funzioni personalizzate e viste
+   sqlite3 database/refood.db < custom_sqlite_functions.sql
+   sqlite3 database/refood.db < setup_database_views.sql
+   ```
+
+3. **Configurazione dell'ambiente**
+   ```bash
+   # Crea il file .env nella root del progetto
+   touch .env
+   
+   # Aggiungi le seguenti variabili (modifica secondo le tue esigenze)
+   echo "PORT=3000" >> .env
+   echo "JWT_SECRET=il_tuo_secret_key_complesso" >> .env
+   echo "JWT_EXPIRATION=24h" >> .env
+   echo "DATABASE_PATH=database/refood.db" >> .env
+   echo "NODE_ENV=development" >> .env
+   ```
+
+4. **Avvio del backend**
+   ```bash
+   # Avvio del server in modalità sviluppo
+   npm run dev
+   
+   # Oppure in produzione
+   npm start
+   ```
+
+### Setup dell'Applicazione Mobile
+
+1. **Installazione delle dipendenze**
+   ```bash
+   cd refood-mobile
+   npm install
+   ```
+
+2. **Configurazione dell'ambiente**
+   ```bash
+   # Crea il file .env nella directory refood-mobile
+   touch .env
+   
+   # Aggiungi l'URL del backend (sostituisci con l'indirizzo IP del tuo server)
+   echo "API_URL=http://192.168.1.x:3000/api/v1" >> .env
+   ```
+
+3. **Avvio dell'app in modalità sviluppo**
+   ```bash
+   # Con Expo
+   npx expo start
+   ```
+
+4. **Test dell'applicazione**
+   - Scansiona il QR code con l'app Expo Go sul tuo smartphone
+   - Oppure premi 'a' nel terminale per aprire l'app in un emulatore Android
+   - Oppure premi 'i' per avviare l'app in un simulatore iOS
+
+### Configurazione della Manutenzione Automatica
+
+1. **Setup degli script di manutenzione**
+   ```bash
+   # Rendi eseguibili gli script di manutenzione
+   chmod +x install_maintenance_cron.sh
+   chmod +x safe_schema_exec.sh
+   chmod +x install_schema_monitoring.sh
+   
+   # Installa i job cron per la manutenzione automatica
+   ./install_maintenance_cron.sh
+   ```
+
+2. **Verifica dell'installazione**
+   ```bash
+   # Verifica che i job cron siano stati installati correttamente
+   crontab -l
+   ```
+
+### Risoluzione dei Problemi Comuni di Setup
+
+- **Errori di permessi**: Assicurati che l'utente corrente abbia permessi di lettura/scrittura sulla directory del database.
+  ```bash
+  sudo chown -R $USER:$USER database/
+  ```
+
+- **Errori di connessione al backend**: Verifica che il firewall permetta le connessioni sulla porta configurata.
+  ```bash
+  sudo ufw status
+  sudo ufw allow 3000/tcp  # Se necessario
+  ```
+
+- **Node.js versione errata**: Verifica che la versione di Node.js sia compatibile (v18.x o superiore).
+  ```bash
+  node -v
+  # Se necessario, installa la versione corretta con nvm
+  # nvm install 18
+  # nvm use 18
+  ```
+
+- **SQLite mancante**: Verifica che SQLite sia installato sul sistema.
+  ```bash
+  sqlite3 --version
+  # Se mancante, installalo
+  # sudo apt install sqlite3  # Ubuntu/Debian
+  # brew install sqlite  # macOS
+  ```
+
+Con questi passaggi, l'applicazione Refood dovrebbe essere funzionante sul nuovo dispositivo. Per ulteriori dettagli sulla configurazione avanzata, consultare la sezione [Setup e Installazione](#setup-e-installazione).
 
 ## Panoramica del Progetto
 
