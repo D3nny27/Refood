@@ -40,8 +40,18 @@ Questa sezione fornisce una guida passo-passo per rendere funzionante l'applicaz
    ```
 
 2. **Configurazione del database**
+
+   Il progetto include uno script di automazione che può creare e configurare il database automaticamente:
+   
    ```bash
-   # Creazione e inizializzazione del database
+   # Creazione e inizializzazione automatica del database
+   npm run init-db
+   ```
+   
+   In alternativa, puoi eseguire manualmente i seguenti comandi:
+   
+   ```bash
+   # Creazione e inizializzazione manuale del database
    mkdir -p database
    cd database
    
@@ -111,22 +121,32 @@ Questa sezione fornisce una guida passo-passo per rendere funzionante l'applicaz
 
 ### Configurazione della Manutenzione Automatica
 
-1. **Setup degli script di manutenzione**
-   ```bash
-   # Rendi eseguibili gli script di manutenzione
-   chmod +x install_maintenance_cron.sh
-   chmod +x safe_schema_exec.sh
-   chmod +x install_schema_monitoring.sh
-   
-   # Installa i job cron per la manutenzione automatica
-   ./install_maintenance_cron.sh
-   ```
+Il progetto include script che configurano automaticamente il sistema di manutenzione del database. Questi script, quando eseguiti, creano job cron e configurano il sistema per la gestione automatica di:
+- Aggiornamento dello stato dei lotti in base alle date di scadenza
+- Pulizia dei token scaduti
+- Generazione di statistiche settimanali
+- Monitoraggio dell'integrità dello schema del database
 
-2. **Verifica dell'installazione**
-   ```bash
-   # Verifica che i job cron siano stati installati correttamente
-   crontab -l
-   ```
+Per installare il sistema di manutenzione automatica:
+
+```bash
+# Rendi eseguibili gli script
+chmod +x install_maintenance_cron.sh
+chmod +x safe_schema_exec.sh
+chmod +x install_schema_monitoring.sh
+
+# Installa il sistema di monitoraggio dello schema
+./install_schema_monitoring.sh
+
+# Installa i job cron per la manutenzione automatica
+./install_maintenance_cron.sh
+```
+
+Questi script sono interattivi e:
+- Creano automaticamente tutte le directory necessarie
+- Generano gli script SQL e bash richiesti
+- Configurano i job cron con le corrette pianificazioni
+- Ti chiederanno conferma prima di applicare le modifiche
 
 ### Risoluzione dei Problemi Comuni di Setup
 
