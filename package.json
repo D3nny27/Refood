@@ -1,15 +1,18 @@
 {
-  "devDependencies": {
-    "@types/axios": "^0.14.4",
-    "@types/react": "^19.0.12",
-    "@types/react-native": "^0.73.0"
+  "name": "refood-performance-tests",
+  "version": "1.0.0",
+  "description": "Test di performance per l'applicazione Refood",
+  "main": "index.js",
+  "scripts": {
+    "test": "sh run-all-tests.sh",
+    "test:realistic": "k6 run realistic-journey.js",
+    "test:critical": "k6 run critical-paths-test.js",
+    "generate-data": "node test-data-generator.js"
   },
+  "author": "AI Assistant",
+  "license": "ISC",
   "dependencies": {
-    "@react-native-async-storage/async-storage": "^2.1.2",
-    "body-parser": "^1.20.3",
-    "cors": "^2.8.5",
-    "express": "^4.21.2",
-    "react-native-paper": "^5.13.1",
-    "ws": "^8.18.1"
+    "@faker-js/faker": "^8.0.0",
+    "axios": "^1.4.0"
   }
 }
