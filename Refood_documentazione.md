@@ -547,6 +547,9 @@ git --version
   ```bash
   # Pulisci la cache e reinstalla
   npx expo start --clear
+
+  #se il server non finisce la build, prova a lanciare questo comando:
+  npm install expo-router@latest expo@latest
   
   # Se persiste, installa manualmente il modulo mancante
   npm install [nome-modulo-mancante]
