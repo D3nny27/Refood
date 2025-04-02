@@ -174,10 +174,13 @@ git --version
    
    # Inizializza il database con lo schema
    cd backend
-   sqlite3 ../database/refood.db < schema.sql
-   sqlite3 ../database/refood.db < custom_sqlite_functions.sql
-   sqlite3 ../database/refood.db < setup_database_views.sql
-   ```
+  ```batch
+    ..\database\sqlite3.exe ..\database\refood.db < schema_tables.sql
+    ..\database\sqlite3.exe ..\database\refood.db < schema_indexes.sql
+    ..\database\sqlite3.exe ..\database\refood.db < schema_triggers.sql
+    ..\database\sqlite3.exe ..\database\refood.db < custom_sqlite_functions.sql
+    ..\database\sqlite3.exe ..\database\refood.db < setup_database_views.sql
+  ```
 
 3. **Configurazione dell'ambiente**
    ```bash
@@ -232,10 +235,13 @@ git --version
    
    # Inizializza il database con lo schema
    cd backend
-   sqlite3 ../database/refood.db < schema.sql
-   sqlite3 ../database/refood.db < custom_sqlite_functions.sql
-   sqlite3 ../database/refood.db < setup_database_views.sql
-   ```
+   ```bash
+    sqlite3 ../database/refood.db < schema_tables.sql
+    sqlite3 ../database/refood.db < schema_indexes.sql
+    sqlite3 ../database/refood.db < schema_triggers.sql
+    sqlite3 ../database/refood.db < custom_sqlite_functions.sql
+    sqlite3 ../database/refood.db < setup_database_views.sql
+  ```
 
 3. **Configurazione dell'ambiente**
    ```bash
@@ -627,8 +633,22 @@ cd refood
 
 #### Su Windows:
 
+1. Assicurati che SQLite sia installato e nel PATH del sistema o nella directory del progetto.
+
+2. Esegui lo script batch:
+   ```cmd
+   setup_db_refood.bat
+   ```
+
+Su Linux/macOS:
+
+Eseguire lo script:
+'setup_db_refood.sh'
+
+
 ```bash
-setup_windows.bat
+chmod +x setup_unix.sh
+./setup_unix.sh
 ```
 
 #### Su Linux/macOS:
@@ -738,6 +758,42 @@ Dopo l'installazione, puoi configurare la manutenzione automatica eseguendo:
 ```
 
 Oppure su Windows puoi usare Task Scheduler come descritto nella documentazione completa.
+
+### Test su Dispositivi Fisici con Expo Go
+
+Quando esegui il test dell'applicazione su dispositivi fisici tramite Expo Go, ci sono due requisiti fondamentali da considerare:
+
+#### 1. Requisiti di Rete
+
+**IMPORTANTE**: Il dispositivo mobile e il computer che esegue il backend **DEVONO** essere collegati alla stessa rete Wi-Fi.
+
+- Le connessioni tra reti diverse non funzioneranno senza configurazioni di rete avanzate
+- Se stai utilizzando VPN su uno dei dispositivi, potresti riscontrare problemi di connettività
+- Verifica che eventuali firewall non blocchino le connessioni sulle porte 3000 (backend) e 19000 (Expo)
+
+#### 2. Configurazione dell'Indirizzo IP
+
+Per consentire al dispositivo di comunicare con il server backend, è necessario configurare correttamente l'indirizzo IP nel file `refood-mobile/src/config/constants.ts`:
+
+```typescript
+// refood-mobile/src/config/constants.ts
+// Imposta qui l'IP del tuo computer nella rete locale per i test su dispositivi fisici
+const LOCAL_IP = '192.168.22.160'; // <-- MODIFICA QUESTO VALORE con il tuo IP locale
+```
+
+##### Come trovare l'indirizzo IP del tuo computer:
+
+- **Windows**: Esegui `ipconfig` nel prompt dei comandi e cerca "IPv4 Address"
+- **macOS**: Vai in Preferenze di Sistema > Rete e guarda l'indirizzo IP
+- **Linux**: Esegui `ip addr` o `ifconfig` nel terminale e cerca l'indirizzo dopo "inet"
+
+Se l'app si avvia ma non riesce a connettersi al backend, verifica sempre:
+- Che l'indirizzo IP sia configurato correttamente
+- Che entrambi i dispositivi siano sulla stessa rete
+- Che il backend sia in esecuzione
+- Che non ci siano firewall che bloccano la connessione
+
+Puoi anche utilizzare la modalità "Tunnel" di Expo (anziché "LAN") per bypassare alcuni problemi di rete, ma questo potrebbe rallentare la connessione. 
 
 Se segui questi passaggi specifici per il tuo sistema operativo, dovresti essere in grado di avviare correttamente l'applicazione Refood. In caso di problemi persistenti, prova le soluzioni indicate nella sezione Risoluzione dei Problemi Comuni. 
 
