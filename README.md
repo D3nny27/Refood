@@ -31,9 +31,6 @@ Il progetto include documentazione dettagliata:
 
 ### Documentazione Principale
 - [Refood Documentazione Completa](Refood_documentazione.md) - Guida dettagliata all'installazione e utilizzo del sistema
-- [Documentazione Completa](docs/documentazione_completa.md) - Documentazione completa del progetto
-- [File Inutili e Implementazioni Future](docs/file_inutili_e_implementazioni_future.md) - Analisi dei file ridondanti e proposte di sviluppo
-- [Panoramica Tecnica](docs/technical_overview.md) - Visione d'insieme del progetto
 - [Guida Utente](docs/user_guide.md) - Manuale d'uso per utenti finali
 
 ### Documentazione Backend
