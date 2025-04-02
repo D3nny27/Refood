@@ -28,62 +28,118 @@ Refood è un'applicazione completa per la gestione e la distribuzione delle ecce
 Questo documento fornisce una documentazione tecnica dettagliata del progetto Refood, coprendo tutti gli aspetti dell'implementazione, dalla struttura del database all'architettura dell'applicazione, fino ai dettagli specifici di implementazione di ogni componente.
 
 ## Setup Dopo Git Clone
+# Setup dell'Applicazione Refood
 
-Questa sezione fornisce una guida passo-passo per rendere funzionante l'applicazione Refood dopo aver eseguito un clone della repository Git su un nuovo dispositivo.
+Questa guida fornisce istruzioni dettagliate per configurare e avviare correttamente l'applicazione Refood su Windows, Linux e macOS dopo aver eseguito un clone del repository.
 
-### Setup del Backend
+## Indice
+1. [Prerequisiti Comuni](#prerequisiti-comuni)
+2. [Setup del Backend](#setup-del-backend)
+   - [Windows](#windows-backend)
+   - [Linux](#linux-backend)
+   - [macOS](#macos-backend)
+3. [Setup dell'Applicazione Mobile](#setup-dellapplicazione-mobile)
+   - [Windows](#windows-mobile)
+   - [Linux/macOS](#linuxmacos-mobile)
+4. [Configurazione della Manutenzione Automatica](#configurazione-della-manutenzione-automatica)
+5. [Risoluzione dei Problemi Comuni](#risoluzione-dei-problemi-comuni)
+
+## Prerequisiti Comuni
+
+Prima di procedere con l'installazione, assicurati di avere installati i seguenti strumenti:
+
+- **Node.js**: versione 18.x o superiore (consigliata 20.x)
+- **npm**: versione 8.x o superiore
+- **Git**: ultima versione stabile
+
+Per verificare le versioni installate, esegui:
+```bash
+node -v
+npm -v
+git --version
+```
+
+## Setup del Backend
+
+### Windows (Backend)
 
 1. **Installazione delle dipendenze**
-   ```bash
-   cd /percorso/della/repository
+   ```powershell
+   # Naviga alla directory del progetto dopo il clone
+   cd C:\path\to\repository
+   
+   # Installa le dipendenze globali necessarie
+   npm install -g nodemon
+   
+   # Installa le dipendenze del progetto
    npm install
+   
+   # Esegui un'installazione forzata di bcrypt (spesso causa problemi su Windows)
+   npm uninstall bcrypt
+   npm install bcrypt --build-from-source
+   
+   # In caso di errori con bcrypt, prova con bcryptjs (più compatibile con Windows)
+   npm uninstall bcrypt
+   npm install bcryptjs
+   
+   # Se sono presenti altri errori di moduli nativi, prova:
+   npm install -g windows-build-tools
    ```
 
-2. **Configurazione del database**
-
-   Il progetto include uno script di automazione che può creare e configurare il database automaticamente:
+2. **Installazione di SQLite su Windows**
+   ```powershell
+   # Opzione 1: Installa da PowerShell usando winget
+   winget install -e --id SQLite.SQLite
    
-   ```bash
-   # Creazione e inizializzazione automatica del database
-   npm run init-db
+   # Opzione 2: Download manuale
+   # Scarica SQLite da https://www.sqlite.org/download.html
+   # Scegli "Precompiled Binaries for Windows" > SQLite tools
+   # Estrai nella cartella C:\sqlite
+   # Aggiungi C:\sqlite alla variabile di ambiente PATH
    ```
+
+3. **Configurazione del database**
+   ```powershell
+   # Crea la directory database se non esiste
+   if (-not (Test-Path -Path "database")) {
+       New-Item -Path "database" -ItemType Directory
+   }
    
-   In alternativa, puoi eseguire manualmente i seguenti comandi:
-   
-   ```bash
-   # Creazione e inizializzazione manuale del database
-   mkdir -p database
-   cd database
-   
-   # Se il database non esiste già
-   sqlite3 refood.db
-   
-   # Esci da sqlite3 (Ctrl+D) e torna alla directory principale
+   # Inizializza il database con lo schema
+   # Nota: questo presuppone che sqlite3.exe sia nel PATH
+   cd backend
+   sqlite3.exe ..\database\refood.db < schema.sql
+   sqlite3.exe ..\database\refood.db < custom_sqlite_functions.sql
+   sqlite3.exe ..\database\refood.db < setup_database_views.sql
    cd ..
    
-   # Applica lo schema iniziale
-   sqlite3 database/refood.db < schema.sql
-   
-   # Configurazione funzioni personalizzate e viste
-   sqlite3 database/refood.db < custom_sqlite_functions.sql
-   sqlite3 database/refood.db < setup_database_views.sql
+   # Alternativa se hai problemi con il reindirizzamento:
+   # Copia e incolla il contenuto dei file SQL direttamente nell'interfaccia SQLite
+   sqlite3.exe database\refood.db
+   # (all'interno di sqlite, usa .read schema.sql)
    ```
 
-3. **Configurazione dell'ambiente**
-   ```bash
+4. **Configurazione dell'ambiente**
+   ```powershell
    # Crea il file .env nella root del progetto
-   touch .env
+   $envContent = @"
+   PORT=3000
+   JWT_SECRET=il_tuo_secret_key_complesso
+   JWT_EXPIRATION=24h
+   DATABASE_PATH=database/refood.db
+   NODE_ENV=development
+   API_PREFIX=/api/v1
+   LOG_LEVEL=info
+   "@
    
-   # Aggiungi le seguenti variabili (modifica secondo le tue esigenze)
-   echo "PORT=3000" >> .env
-   echo "JWT_SECRET=il_tuo_secret_key_complesso" >> .env
-   echo "JWT_EXPIRATION=24h" >> .env
-   echo "DATABASE_PATH=database/refood.db" >> .env
-   echo "NODE_ENV=development" >> .env
+   Set-Content -Path "backend\.env" -Value $envContent
    ```
 
-4. **Avvio del backend**
-   ```bash
+5. **Avvio del backend**
+   ```powershell
+   # Naviga alla directory del backend
+   cd backend
+   
    # Avvio del server in modalità sviluppo
    npm run dev
    
@@ -91,93 +147,463 @@ Questa sezione fornisce una guida passo-passo per rendere funzionante l'applicaz
    npm start
    ```
 
-### Setup dell'Applicazione Mobile
+### Linux (Backend)
 
 1. **Installazione delle dipendenze**
    ```bash
-   cd refood-mobile
+   # Naviga alla directory del progetto dopo il clone
+   cd /path/to/repository
+   
+   # Installa le dipendenze di sistema necessarie
+   sudo apt-get update
+   sudo apt-get install -y sqlite3 build-essential python3 libsqlite3-dev
+   
+   # Installa nodemon globalmente
+   npm install -g nodemon
+   
+   # Vai alla directory del backend e installa le dipendenze npm
+   cd backend
    npm install
+   ```
+
+2. **Configurazione del database**
+   ```bash
+   # Torna alla directory principale e crea la directory database
+   cd ..
+   mkdir -p database
+   
+   # Inizializza il database con lo schema
+   cd backend
+   sqlite3 ../database/refood.db < schema.sql
+   sqlite3 ../database/refood.db < custom_sqlite_functions.sql
+   sqlite3 ../database/refood.db < setup_database_views.sql
+   ```
+
+3. **Configurazione dell'ambiente**
+   ```bash
+   # Crea il file .env nella directory backend
+   cat > .env << EOL
+   PORT=3000
+   JWT_SECRET=il_tuo_secret_key_complesso
+   JWT_EXPIRATION=24h
+   DATABASE_PATH=../database/refood.db
+   NODE_ENV=development
+   API_PREFIX=/api/v1
+   LOG_LEVEL=info
+   EOL
+   ```
+
+4. **Avvio del backend**
+   ```bash
+   # Assicurati di essere nella directory backend
+   # Avvio del server in modalità sviluppo
+   npm run dev
+   
+   # Oppure in produzione
+   npm start
+   ```
+
+### macOS (Backend)
+
+1. **Installazione delle dipendenze**
+   ```bash
+   # Naviga alla directory del progetto dopo il clone
+   cd /path/to/repository
+   
+   # Installa Homebrew se non è già installato
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+   
+   # Installa le dipendenze di sistema necessarie
+   brew install sqlite3 node
+   
+   # Installa nodemon globalmente
+   npm install -g nodemon
+   
+   # Vai alla directory del backend e installa le dipendenze npm
+   cd backend
+   npm install
+   ```
+
+2. **Configurazione del database**
+   ```bash
+   # Torna alla directory principale e crea la directory database
+   cd ..
+   mkdir -p database
+   
+   # Inizializza il database con lo schema
+   cd backend
+   sqlite3 ../database/refood.db < schema.sql
+   sqlite3 ../database/refood.db < custom_sqlite_functions.sql
+   sqlite3 ../database/refood.db < setup_database_views.sql
+   ```
+
+3. **Configurazione dell'ambiente**
+   ```bash
+   # Crea il file .env nella directory backend
+   cat > .env << EOL
+   PORT=3000
+   JWT_SECRET=il_tuo_secret_key_complesso
+   JWT_EXPIRATION=24h
+   DATABASE_PATH=../database/refood.db
+   NODE_ENV=development
+   API_PREFIX=/api/v1
+   LOG_LEVEL=info
+   EOL
+   ```
+
+4. **Avvio del backend**
+   ```bash
+   # Assicurati di essere nella directory backend
+   # Avvio del server in modalità sviluppo
+   npm run dev
+   
+   # Oppure in produzione
+   npm start
+   ```
+
+## Setup dell'Applicazione Mobile
+
+### Windows (Mobile)
+
+1. **Installazione delle dipendenze**
+   ```powershell
+   # Naviga alla directory del frontend mobile
+   cd refood-mobile
+   
+   # Installa Expo CLI globalmente
+   npm install -g expo-cli
+   
+   # Installa le dipendenze del progetto
+   npm install
+   
+   # Assicurati che siano installate tutte le dipendenze critiche
+   npm install -E @expo/vector-icons react-native-gesture-handler react-native-reanimated react-native-screens expo-font expo-constants @react-native-async-storage/async-storage
+   
+   # Se hai problemi con le dipendenze native, prova:
+   npx expo install --fix
+   ```
+
+2. **Configurazione dell'ambiente**
+   ```powershell
+   # Crea il file .env nella directory refood-mobile
+   $envContent = @"
+   # Sostituisci con l'IP del tuo computer sulla rete locale
+   # NON usare localhost o 127.0.0.1 se testi su dispositivo fisico
+   API_URL=http://192.168.1.x:3000/api/v1
+   "@
+   
+   Set-Content -Path ".env" -Value $envContent
+   ```
+
+3. **Avvio dell'app in modalità sviluppo**
+   ```powershell
+   # Avvia Expo (assicurati che il backend sia già in esecuzione)
+   npx expo start
+   
+   # Se riscontri problemi, prova con l'opzione --clear-cache
+   npx expo start --clear-cache
+   
+   # Se il metro bundler si blocca o hai altri problemi:
+   npx expo start --no-dev --minify
+   ```
+
+4. **Test sull'emulatore o dispositivo fisico**
+   ```
+   # Per avviare su emulatore Android
+   npx expo start --android
+   
+   # Per avviare su simulatore iOS (solo su macOS)
+   npx expo start --ios
+   
+   # Per testare su dispositivo fisico:
+   # 1. Installa Expo Go sul tuo dispositivo dallo store
+   # 2. Scansiona il QR code che appare nel terminale
+   # 3. Assicurati che il telefono e il computer siano sulla stessa rete WiFi
+   ```
+
+### Linux/macOS (Mobile)
+
+1. **Installazione delle dipendenze**
+   ```bash
+   # Naviga alla directory del frontend mobile
+   cd refood-mobile
+   
+   # Installa Expo CLI globalmente
+   npm install -g expo-cli
+   
+   # Installa le dipendenze del progetto
+   npm install
+   
+   # Assicurati che siano installate tutte le dipendenze critiche
+   npm install -E @expo/vector-icons react-native-gesture-handler react-native-reanimated react-native-screens expo-font expo-constants @react-native-async-storage/async-storage
+   
+   # Se hai problemi con le dipendenze native, prova:
+   npx expo install --fix
    ```
 
 2. **Configurazione dell'ambiente**
    ```bash
    # Crea il file .env nella directory refood-mobile
-   touch .env
-   
-   # Aggiungi l'URL del backend (sostituisci con l'indirizzo IP del tuo server)
-   echo "API_URL=http://192.168.1.x:3000/api/v1" >> .env
+   cat > .env << EOL
+   # Sostituisci con l'IP del tuo computer sulla rete locale
+   # NON usare localhost o 127.0.0.1 se testi su dispositivo fisico
+   API_URL=http://192.168.1.x:3000/api/v1
+   EOL
    ```
 
 3. **Avvio dell'app in modalità sviluppo**
    ```bash
-   # Con Expo
+   # Avvia Expo (assicurati che il backend sia già in esecuzione)
    npx expo start
+   
+   # Se riscontri problemi, prova con l'opzione --clear-cache
+   npx expo start --clear-cache
+   
+   # Se il metro bundler si blocca o hai altri problemi:
+   npx expo start --no-dev --minify
    ```
 
-4. **Test dell'applicazione**
-   - Scansiona il QR code con l'app Expo Go sul tuo smartphone
-   - Oppure premi 'a' nel terminale per aprire l'app in un emulatore Android
-   - Oppure premi 'i' per avviare l'app in un simulatore iOS
+4. **Test sull'emulatore o dispositivo fisico**
+   ```
+   # Per avviare su emulatore Android
+   npx expo start --android
+   
+   # Per avviare su simulatore iOS (solo su macOS)
+   npx expo start --ios
+   
+   # Per testare su dispositivo fisico:
+   # 1. Installa Expo Go sul tuo dispositivo dallo store
+   # 2. Scansiona il QR code che appare nel terminale
+   # 3. Assicurati che il telefono e il computer siano sulla stessa rete WiFi
+   ```
 
-### Configurazione della Manutenzione Automatica
+## Configurazione della Manutenzione Automatica
 
-Il progetto include script che configurano automaticamente il sistema di manutenzione del database. Questi script, quando eseguiti, creano job cron e configurano il sistema per la gestione automatica di:
-- Aggiornamento dello stato dei lotti in base alle date di scadenza
-- Pulizia dei token scaduti
-- Generazione di statistiche settimanali
-- Monitoraggio dell'integrità dello schema del database
+### Windows
 
-Per installare il sistema di manutenzione automatica:
+1. **Installazione del supporto per script bash**
+   ```
+   # Installa Git Bash se non l'hai già fatto (viene con Git per Windows)
+   # oppure installa WSL (Windows Subsystem for Linux) per una compatibilità migliore
+   
+   # Per WSL:
+   # 1. Abilita WSL da PowerShell come amministratore:
+   dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+   dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+   # 2. Riavvia il sistema
+   # 3. Installa Ubuntu da Microsoft Store
+   ```
+
+2. **Esecuzione degli script di manutenzione con Git Bash o WSL**
+   ```bash
+   # Con Git Bash, apri Git Bash nella directory del progetto e esegui:
+   chmod +x install_schema_monitoring.sh
+   chmod +x install_maintenance_cron.sh
+   chmod +x safe_schema_exec.sh
+   
+   # Esegui lo script di monitoraggio schema
+   ./install_schema_monitoring.sh
+   
+   # Esegui lo script di manutenzione
+   ./install_maintenance_cron.sh
+   ```
+
+3. **Configurazione di Task Scheduler (alternativa a cron su Windows)**
+   ```
+   # Per configurare lavori pianificati in Windows:
+   
+   # 1. Crea script batch per eseguire le attività di manutenzione
+   # Esempio (aggiornamento_lotti.bat):
+   @echo off
+   cd C:\path\to\repository
+   sqlite3.exe database\refood.db < maintenance_scripts\update_lotti_status.sql
+   
+   # 2. Apri Task Scheduler dal menu Start
+   # 3. Seleziona "Crea attività base..." dal pannello Azioni
+   # 4. Dai un nome all'attività, ad esempio "RefoodLottiUpdate"
+   # 5. Imposta il trigger (giornaliero alle 00:00)
+   # 6. Seleziona "Avvia un programma"
+   # 7. Sfoglia e seleziona lo script batch creato
+   # 8. Completa la procedura guidata
+   # 9. Ripeti per altri script di manutenzione
+   ```
+
+### Linux/macOS
+
+1. **Configurazione degli script di manutenzione**
+   ```bash
+   # Rendi eseguibili gli script
+   chmod +x install_maintenance_cron.sh
+   chmod +x safe_schema_exec.sh
+   chmod +x install_schema_monitoring.sh
+   
+   # Installa il sistema di monitoraggio dello schema
+   ./install_schema_monitoring.sh
+   
+   # Installa i job cron per la manutenzione automatica
+   ./install_maintenance_cron.sh
+   ```
+
+2. **Verifica dell'installazione**
+   ```bash
+   # Verifica che i job cron siano stati installati correttamente
+   crontab -l
+   
+   # Dovresti vedere qualcosa come:
+   # 0 0 * * * /path/to/maintenance_scripts/update_lotti_status.sh
+   # 0 2 * * * /path/to/maintenance_scripts/cleanup_tokens.sh
+   # 0 3 * * 0 /path/to/maintenance_scripts/weekly_statistics.sh
+   # 0 * * * * /path/to/maintenance_scripts/update_prenotazioni_status.sh
+   ```
+
+## Risoluzione dei Problemi Comuni
+
+### Problemi relativi a SQLite
+
+#### Windows
+- **Errore "sqlite3 non è riconosciuto come comando"**
+  ```powershell
+  # Soluzione 1: Aggiungi SQLite al PATH (temporaneamente)
+  $env:PATH += ";C:\path\to\sqlite3"
+  
+  # Soluzione 2: Usa il percorso completo
+  C:\path\to\sqlite3.exe database\refood.db < schema.sql
+  
+  # Soluzione 3: Usa l'interfaccia interattiva
+  sqlite3.exe database\refood.db
+  .read schema.sql
+  .exit
+  ```
+
+- **Errore "Impossibile trovare il database" o percorsi errati**
+  ```powershell
+  # Attenzione ai percorsi relativi su Windows
+  # Usa il percorso completo
+  sqlite3.exe "C:\path\to\repository\database\refood.db" < "C:\path\to\repository\schema.sql"
+  ```
+
+#### Linux/macOS
+- **Errore "command not found: sqlite3"**
+  ```bash
+  # Linux
+  sudo apt-get install sqlite3
+  
+  # macOS
+  brew install sqlite3
+  ```
+
+- **Errore di permessi per il database**
+  ```bash
+  # Verifica e correggi i permessi della directory
+  sudo chown -R $USER:$USER database/
+  chmod 755 database/
+  ```
+
+### Problemi con Node.js e npm
+
+- **Errore "Module not found" o dipendenze mancanti**
+  ```bash
+  # Verifica che tutte le dipendenze siano installate
+  npm install
+  
+  # Se non funziona, elimina node_modules e reinstalla
+  rm -rf node_modules
+  npm cache clean --force
+  npm install
+  ```
+
+- **Errori di compilazione con moduli nativi (come bcrypt)**
+  ```bash
+  # Windows
+  npm install --global windows-build-tools
+  npm rebuild bcrypt --build-from-source
+  
+  # Linux
+  sudo apt-get install build-essential python3
+  
+  # macOS
+  xcode-select --install
+  ```
+
+- **Errore "Cannot find module 'sqlite3'"**
+  ```bash
+  # Reinstalla specificamente il modulo sqlite3
+  npm uninstall sqlite3
+  npm install sqlite3
+  
+  # Se continua a non funzionare, installa una versione specifica
+  npm install sqlite3@5.1.6
+  ```
+
+### Problemi con Expo/React Native
+
+- **Errore "Unable to resolve module"**
+  ```bash
+  # Pulisci la cache e reinstalla
+  npx expo start --clear
+  
+  # Se persiste, installa manualmente il modulo mancante
+  npm install [nome-modulo-mancante]
+  ```
+
+- **Errore "Metro Bundler process exited"**
+  ```bash
+  # Arresta tutti i processi node in esecuzione
+  # Windows
+  taskkill /F /IM node.exe
+  
+  # Linux/macOS
+  killall node
+  
+  # Avvia con metro disabilitato inizialmente
+  npx expo start --dev-client
+  ```
+
+- **Errore di connessione con il backend**
+  ```
+  1. Assicurati che l'indirizzo nel file .env sia corretto
+  2. Verifica che il backend sia in esecuzione
+  3. Controlla che il firewall non blocchi le connessioni alla porta 3000
+  4. Se utilizzi un dispositivo fisico, assicurati che sia sulla stessa rete WiFi
+  5. Prova a usare l'indirizzo IP esatto del computer anziché localhost
+  ```
+
+### Verifica dell'Installazione
+
+Ecco alcuni comandi utili per verificare che tutto sia configurato correttamente:
 
 ```bash
-# Rendi eseguibili gli script
-chmod +x install_maintenance_cron.sh
-chmod +x safe_schema_exec.sh
-chmod +x install_schema_monitoring.sh
+# Controlla che SQLite sia installato e funzionante
+sqlite3 --version
 
-# Installa il sistema di monitoraggio dello schema
-./install_schema_monitoring.sh
+# Verifica che il database sia stato creato con la struttura corretta
+sqlite3 database/refood.db "SELECT name FROM sqlite_master WHERE type='table';"
 
-# Installa i job cron per la manutenzione automatica
-./install_maintenance_cron.sh
+# Controlla che il server Node.js sia in esecuzione e in ascolto
+# Windows
+netstat -an | findstr 3000
+
+# Linux/macOS
+netstat -an | grep 3000
+
+# Verifica che i file .env esistano
+# Windows
+Get-Content backend\.env
+Get-Content refood-mobile\.env
+
+# Linux/macOS
+cat backend/.env
+cat refood-mobile/.env
+
+# Controlla i log per gli errori
+# Windows
+type logs\combined.log
+
+# Linux/macOS
+cat logs/combined.log
 ```
 
-Questi script sono interattivi e:
-- Creano automaticamente tutte le directory necessarie
-- Generano gli script SQL e bash richiesti
-- Configurano i job cron con le corrette pianificazioni
-- Ti chiederanno conferma prima di applicare le modifiche
-
-### Risoluzione dei Problemi Comuni di Setup
-
-- **Errori di permessi**: Assicurati che l'utente corrente abbia permessi di lettura/scrittura sulla directory del database.
-  ```bash
-  sudo chown -R $USER:$USER database/
-  ```
-
-- **Errori di connessione al backend**: Verifica che il firewall permetta le connessioni sulla porta configurata.
-  ```bash
-  sudo ufw status
-  sudo ufw allow 3000/tcp  # Se necessario
-  ```
-
-- **Node.js versione errata**: Verifica che la versione di Node.js sia compatibile (v18.x o superiore).
-  ```bash
-  node -v
-  # Se necessario, installa la versione corretta con nvm
-  # nvm install 18
-  # nvm use 18
-  ```
-
-- **SQLite mancante**: Verifica che SQLite sia installato sul sistema.
-  ```bash
-  sqlite3 --version
-  # Se mancante, installalo
-  # sudo apt install sqlite3  # Ubuntu/Debian
-  # brew install sqlite  # macOS
-  ```
-
-Con questi passaggi, l'applicazione Refood dovrebbe essere funzionante sul nuovo dispositivo. Per ulteriori dettagli sulla configurazione avanzata, consultare la sezione [Setup e Installazione](#setup-e-installazione).
+Se segui questi passaggi specifici per il tuo sistema operativo, dovresti essere in grado di avviare correttamente l'applicazione Refood. In caso di problemi persistenti, prova le soluzioni indicate nella sezione Risoluzione dei Problemi Comuni. 
 
 ## Panoramica del Progetto
 
