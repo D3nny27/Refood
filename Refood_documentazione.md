@@ -602,6 +602,142 @@ type logs\combined.log
 # Linux/macOS
 cat logs/combined.log
 ```
+# Setup Semplificato di Refood
+
+Questo documento spiega come installare e configurare rapidamente l'intero progetto Refood, eliminando la necessità di eseguire numerosi comandi manuali.
+
+## Prerequisiti
+
+Prima di iniziare, assicurati di avere installati:
+
+- **Node.js** (versione 18.x o superiore consigliata)
+- **npm** (viene installato automaticamente con Node.js)
+- **Git** (per clonare il repository)
+
+## Installazione rapida in 3 passaggi
+
+### 1. Clona il repository
+
+```bash
+git clone https://url-del-repository/refood.git
+cd refood
+```
+
+### 2. Esegui lo script di installazione automatico
+
+#### Su Windows:
+
+```bash
+setup_windows.bat
+```
+
+#### Su Linux/macOS:
+
+```bash
+chmod +x setup_unix.sh
+./setup_unix.sh
+```
+
+### 3. Avvia l'applicazione
+
+**Per avviare il backend:**
+
+```bash
+cd backend
+npm run dev
+```
+
+**Per avviare il frontend mobile:**
+
+```bash
+cd refood-mobile
+npx expo start
+```
+
+Segui le istruzioni a schermo per aprire l'app su un emulatore o dispositivo fisico:
+- Premi `a` per aprire su emulatore Android
+- Premi `i` per aprire su simulatore iOS (solo su macOS)
+- Scansiona il QR code con l'app Expo Go sul tuo dispositivo fisico
+
+## Cosa fa lo script di installazione
+
+Gli script di installazione automatizzata eseguono tutte le seguenti operazioni:
+
+1. **Verifica dei prerequisiti**
+   - Controlla che Node.js e npm siano installati correttamente
+
+2. **Installazione delle dipendenze globali**
+   - Installa nodemon e expo-cli necessari per lo sviluppo
+
+3. **Installazione delle dipendenze del progetto backend**
+   - Installa tutte le librerie necessarie per il backend
+
+4. **Configurazione automatica del database**
+   - Installa SQLite se non è presente nel sistema
+   - Crea la directory database
+   - Inizializza il database con lo schema, le funzioni personalizzate e le viste
+
+5. **Configurazione dell'ambiente backend**
+   - Crea il file .env con le variabili di ambiente necessarie
+
+6. **Installazione delle dipendenze del frontend mobile**
+   - Installa tutte le librerie necessarie per l'app mobile
+
+7. **Configurazione dell'ambiente frontend**
+   - Rileva automaticamente l'indirizzo IP della macchina
+   - Crea il file .env per il frontend con l'URL corretto dell'API
+
+8. **Preparazione della manutenzione automatica**
+   - Crea le directory necessarie per gli script di manutenzione
+
+## Risoluzione dei problemi comuni
+
+### Se la rilevazione automatica dell'IP non funziona
+
+Se utilizzi un dispositivo fisico per testare l'app mobile e il backend non è raggiungibile, modifica il file `refood-mobile/.env`:
+
+```
+# Sostituisci con l'IP corretto della tua macchina sulla rete locale
+API_URL=http://192.168.1.x:3000/api/v1
+```
+
+### Se lo script di installazione fallisce
+
+1. **Problemi con SQLite**:
+   - Assicurati di avere i permessi di amministratore
+   - Installa SQLite manualmente seguendo le istruzioni sul [sito ufficiale](https://www.sqlite.org/download.html)
+
+2. **Problemi con le dipendenze Node.js**:
+   - Prova a eliminare la cartella `node_modules` e reinstallare:
+     ```bash
+     rm -rf node_modules
+     npm cache clean --force
+     npm install
+     ```
+
+3. **Problemi con Expo**:
+   - Assicurati di avere l'ultima versione di Expo CLI:
+     ```bash
+     npm install -g expo-cli@latest
+     ```
+   - Pulisci la cache di Expo:
+     ```bash
+     expo r -c
+     ```
+
+### Per eseguire la manutenzione automatica del database
+
+Dopo l'installazione, puoi configurare la manutenzione automatica eseguendo:
+
+```bash
+# Su Linux/macOS
+./install_maintenance_cron.sh
+
+# Su Windows (tramite Git Bash o WSL)
+./install_maintenance_cron.sh
+```
+
+Oppure su Windows puoi usare Task Scheduler come descritto nella documentazione completa.
 
 Se segui questi passaggi specifici per il tuo sistema operativo, dovresti essere in grado di avviare correttamente l'applicazione Refood. In caso di problemi persistenti, prova le soluzioni indicate nella sezione Risoluzione dei Problemi Comuni. 
 
