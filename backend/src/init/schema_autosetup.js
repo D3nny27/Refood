@@ -13,8 +13,12 @@ const { exec } = require('child_process');
 const db = require('../config/database');
 const config = require('../config/config');
 const logger = require('../utils/logger');
+const os = require('os'); // Aggiungo il modulo os per verificare il sistema operativo
 
 const execPromise = promisify(exec);
+
+// Determina il sistema operativo
+const isWindows = os.platform() === 'win32';
 
 // Percorsi dei file di configurazione
 const ROOT_DIR = path.resolve(__dirname, '../../../');
@@ -24,6 +28,11 @@ const SAFE_SCHEMA_EXEC = path.join(ROOT_DIR, 'safe_schema_exec.sh');
 const MAINTENANCE_DIR = path.join(ROOT_DIR, 'maintenance_scripts');
 const LOGS_DIR = path.join(MAINTENANCE_DIR, 'logs');
 const BACKUP_DIR = path.join(ROOT_DIR, 'backup');
+
+// Percorso script di verifica (specifico per piattaforma)
+const VERIFY_SCRIPT_PATH = isWindows 
+  ? path.join(MAINTENANCE_DIR, 'verify_schema.bat')
+  : path.join(MAINTENANCE_DIR, 'verify_schema.sh');
 
 /**
  * Verifica se il sistema di monitoraggio è già configurato
@@ -327,11 +336,101 @@ async function populateReferenceSchema() {
 async function setupCronJob() {
   try {
     // Crea il file di verifica schema
-    const verifySchemaPath = path.join(MAINTENANCE_DIR, 'verify_schema.sh');
     const dbPath = path.join(ROOT_DIR, 'database/refood.db');
     
-    if (!fs.existsSync(verifySchemaPath)) {
-      const verifySchemaContent = `#!/bin/bash
+    if (isWindows) {
+      // Configurazione Task Scheduler per Windows
+      if (!fs.existsSync(VERIFY_SCRIPT_PATH)) {
+        // Crea lo script batch di verifica
+        const verifyScriptContent = `@echo off
+setlocal
+set DB_PATH=${dbPath.replace(/\\/g, '\\\\')}
+set LOG_DIR=${LOGS_DIR.replace(/\\/g, '\\\\')}
+set TIMESTAMP=%date:~-4%%date:~3,2%%date:~0,2%_%time:~0,2%%time:~3,2%%time:~6,2%
+set TIMESTAMP=%TIMESTAMP: =0%
+set LOG_FILE=%LOG_DIR%\\schema_verify_%TIMESTAMP%.log
+
+echo Avvio verifica schema database [%date% %time%] > %LOG_FILE%
+sqlite3 %DB_PATH% ".schema" >> %LOG_FILE% 2>&1
+
+REM Verifica se ci sono discrepanze (implementabile con query specifiche)
+echo Verifica schema completata [%date% %time%] >> %LOG_FILE%
+endlocal`;
+
+        fs.writeFileSync(VERIFY_SCRIPT_PATH, verifyScriptContent);
+        logger.info(`File creato: ${VERIFY_SCRIPT_PATH}`);
+      }
+
+      // Tentativo di configurare Task Scheduler
+      try {
+        // Genera un file XML temporaneo per la definizione dell'attività
+        const taskName = 'Refood_Schema_Monitor';
+        const taskXmlPath = path.join(ROOT_DIR, 'task_config.xml');
+        const taskXmlContent = `<?xml version="1.0"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Monitora lo schema del database Refood</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2022-01-01T02:30:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByWeek>
+        <WeeksInterval>1</WeeksInterval>
+        <DaysOfWeek>
+          <Sunday />
+        </DaysOfWeek>
+      </ScheduleByWeek>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>${VERIFY_SCRIPT_PATH.replace(/\\/g, '\\\\')}</Command>
+      <WorkingDirectory>${MAINTENANCE_DIR.replace(/\\/g, '\\\\')}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>`;
+
+        fs.writeFileSync(taskXmlPath, taskXmlContent);
+        
+        // Prova a creare l'attività pianificata
+        await execPromise(`schtasks /create /tn "${taskName}" /xml "${taskXmlPath}" /f`);
+        
+        // Rimuovi il file XML temporaneo
+        if (fs.existsSync(taskXmlPath)) {
+          fs.unlinkSync(taskXmlPath);
+        }
+        
+        logger.info('Task Scheduler configurato con successo per il monitoraggio dello schema');
+      } catch (error) {
+        logger.error(`Impossibile configurare Task Scheduler: ${error.message}`);
+        logger.info('Puoi configurare manualmente Task Scheduler per eseguire il file: ' + VERIFY_SCRIPT_PATH);
+      }
+    } else {
+      // Configurazione cron per Linux/macOS
+      if (!fs.existsSync(VERIFY_SCRIPT_PATH)) {
+        const verifyScriptContent = `#!/bin/bash
 # Script di verifica periodica dello schema database
 # Generato automaticamente alla prima esecuzione dell'applicazione
 
@@ -342,64 +441,71 @@ SCHEMA_FIX="${SCHEMA_FIX_SQL}"
 LOG_DIR="${LOGS_DIR}"
 
 # Timestamp
-TIMESTAMP=\$(date +"%Y%m%d_%H%M%S")
-LOG_FILE="$LOG_DIR/schema_verify_\$TIMESTAMP.log"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+LOG_FILE="$LOG_DIR/schema_verify_$TIMESTAMP.log"
 
 # Creazione directory log
 mkdir -p "$LOG_DIR"
 
-echo "\$(date): Avvio verifica schema database" | tee -a "\$LOG_FILE"
+echo "$(date): Avvio verifica schema database" | tee -a "$LOG_FILE"
 
 # Verifica dello schema
-RISULTATO=\$(sqlite3 "$DB_PATH" < "$SCHEMA_MONITOR" 2>&1)
-echo "\$RISULTATO" | tee -a "\$LOG_FILE"
+RISULTATO=$(sqlite3 "$DB_PATH" < "$SCHEMA_MONITOR" 2>&1)
+echo "$RISULTATO" | tee -a "$LOG_FILE"
 
 # Controlla se ci sono discrepanze
-if echo "\$RISULTATO" | grep -q "Trovate discrepanze"; then
-  echo "\$(date): Rilevate discrepanze nello schema. Avvio correzione automatica." | tee -a "\$LOG_FILE"
+if echo "$RISULTATO" | grep -q "Trovate discrepanze"; then
+  echo "$(date): Rilevate discrepanze nello schema. Avvio correzione automatica." | tee -a "$LOG_FILE"
   
   # Esegui lo script di correzione
-  sqlite3 "$DB_PATH" < "$SCHEMA_FIX" 2>&1 | tee -a "\$LOG_FILE"
+  sqlite3 "$DB_PATH" < "$SCHEMA_FIX" 2>&1 | tee -a "$LOG_FILE"
   
   # Notifica amministratore
-  echo "\$(date): Notifica correzione schema inviata all'amministratore" | tee -a "\$LOG_FILE"
+  echo "$(date): Notifica correzione schema inviata all'amministratore" | tee -a "$LOG_FILE"
   
   # Qui potrebbe essere implementata una notifica via email o altro sistema
 else
-  echo "\$(date): Nessuna discrepanza rilevata nello schema" | tee -a "\$LOG_FILE"
+  echo "$(date): Nessuna discrepanza rilevata nello schema" | tee -a "$LOG_FILE"
 fi
 
-echo "\$(date): Verifica schema completata" | tee -a "\$LOG_FILE"
-`;
-      fs.writeFileSync(verifySchemaPath, verifySchemaContent);
-      fs.chmodSync(verifySchemaPath, '755'); // Rendi eseguibile lo script
-      logger.info(`File creato: ${verifySchemaPath}`);
-    }
+echo "$(date): Verifica schema completata" | tee -a "$LOG_FILE"`;
+
+        fs.writeFileSync(VERIFY_SCRIPT_PATH, verifyScriptContent);
+        fs.chmodSync(VERIFY_SCRIPT_PATH, '755'); // Rendi eseguibile lo script
+        logger.info(`File creato: ${VERIFY_SCRIPT_PATH}`);
+      }
     
-    // Controlla se il cron job esiste già (tenta di non duplicare i job)
-    const cronExists = await execPromise('crontab -l | grep verify_schema.sh || echo "no cron"')
-      .then(({ stdout }) => !stdout.includes('no cron'))
-      .catch(() => false);
-    
-    if (!cronExists) {
-      // Aggiungi il job cron per l'esecuzione settimanale
-      const tmpCronFile = path.join(ROOT_DIR, 'tmp_cron');
-      await execPromise('crontab -l > ' + tmpCronFile + ' 2>/dev/null || echo "" > ' + tmpCronFile);
+      // Configurazione crontab (solo per Linux/macOS)
+      try {
+        // Controlla se il cron job esiste già (tenta di non duplicare i job)
+        const cronExists = await execPromise('crontab -l | grep verify_schema.sh || echo "no cron"')
+          .then(({ stdout }) => !stdout.includes('no cron'))
+          .catch(() => false);
       
-      // Aggiungi il job cron: ogni domenica alle 2:30 AM
-      fs.appendFileSync(tmpCronFile, `30 2 * * 0 ${verifySchemaPath} >> ${LOGS_DIR}/cron_verify_schema.log 2>&1\n`);
-      
-      await execPromise('crontab ' + tmpCronFile);
-      fs.unlinkSync(tmpCronFile);
-      
-      logger.info('Job cron per la verifica dello schema configurato con successo');
-    } else {
-      logger.info('Job cron per la verifica dello schema già configurato');
+        if (!cronExists) {
+          // Aggiungi il job cron per l'esecuzione settimanale
+          const tmpCronFile = path.join(ROOT_DIR, 'tmp_cron');
+          await execPromise('crontab -l > ' + tmpCronFile + ' 2>/dev/null || echo "" > ' + tmpCronFile);
+          
+          // Aggiungi il job cron: ogni domenica alle 2:30 AM
+          fs.appendFileSync(tmpCronFile, `30 2 * * 0 ${VERIFY_SCRIPT_PATH} >> ${LOGS_DIR}/cron_verify_schema.log 2>&1\n`);
+          
+          await execPromise('crontab ' + tmpCronFile);
+          fs.unlinkSync(tmpCronFile);
+          
+          logger.info('Job cron per la verifica dello schema configurato con successo');
+        } else {
+          logger.info('Job cron per la verifica dello schema già configurato');
+        }
+      } catch (error) {
+        logger.error(`Errore nella configurazione del job cron: ${error.message}`);
+        logger.info('Puoi configurare manualmente il cron job con: crontab -e');
+      }
     }
     
     return true;
   } catch (error) {
-    logger.error(`Errore nella configurazione del job cron: ${error.message}`);
+    logger.error(`Errore nella configurazione del job di monitoraggio: ${error.message}`);
     return false;
   }
 }

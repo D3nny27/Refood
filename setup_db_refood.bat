@@ -83,6 +83,93 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo Trigger creati con successo.
 
+REM 4. Configura il monitoraggio dello schema usando Task Scheduler per Windows invece di crontab
+echo.
+echo Configurazione monitoraggio automatico dello schema...
+if not exist "maintenance_scripts" mkdir maintenance_scripts
+if not exist "maintenance_scripts\logs" mkdir maintenance_scripts\logs
+
+REM Crea lo script di verifica per Windows
+set VERIFY_SCRIPT=maintenance_scripts\verify_schema.bat
+echo @echo off > %VERIFY_SCRIPT%
+echo setlocal >> %VERIFY_SCRIPT%
+echo set DB_PATH=%CD%\database\refood.db >> %VERIFY_SCRIPT%
+echo set LOG_DIR=%CD%\maintenance_scripts\logs >> %VERIFY_SCRIPT%
+echo set TIMESTAMP=%%date:~-4%%%%date:~3,2%%%%date:~0,2%%_%%time:~0,2%%%%time:~3,2%%%%time:~6,2%% >> %VERIFY_SCRIPT%
+echo set TIMESTAMP=%%TIMESTAMP: =0%% >> %VERIFY_SCRIPT%
+echo set LOG_FILE=%%LOG_DIR%%\schema_verify_%%TIMESTAMP%%.log >> %VERIFY_SCRIPT%
+echo echo Avvio verifica schema database [%%date%% %%time%%] ^> %%LOG_FILE%% >> %VERIFY_SCRIPT%
+echo sqlite3 %%DB_PATH%% ".schema" ^>^> %%LOG_FILE%% 2^>^&1 >> %VERIFY_SCRIPT%
+echo echo Verifica schema completata [%%date%% %%time%%] ^>^> %%LOG_FILE%% >> %VERIFY_SCRIPT%
+echo endlocal >> %VERIFY_SCRIPT%
+
+echo Script di verifica creato: %VERIFY_SCRIPT%
+
+REM Crea l'attività pianificata in Windows Task Scheduler
+echo Configurazione Task Scheduler...
+set TASK_NAME=Refood_Schema_Monitor
+set TASK_FILE=maintenance_scripts\task_config.xml
+
+echo ^<?xml version="1.0"?^> > %TASK_FILE%
+echo ^<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"^> >> %TASK_FILE%
+echo   ^<RegistrationInfo^> >> %TASK_FILE%
+echo     ^<Description^>Monitora lo schema del database Refood^</Description^> >> %TASK_FILE%
+echo   ^</RegistrationInfo^> >> %TASK_FILE%
+echo   ^<Triggers^> >> %TASK_FILE%
+echo     ^<CalendarTrigger^> >> %TASK_FILE%
+echo       ^<StartBoundary^>2022-01-01T02:30:00^</StartBoundary^> >> %TASK_FILE%
+echo       ^<Enabled^>true^</Enabled^> >> %TASK_FILE%
+echo       ^<ScheduleByWeek^> >> %TASK_FILE%
+echo         ^<WeeksInterval^>1^</WeeksInterval^> >> %TASK_FILE%
+echo         ^<DaysOfWeek^> >> %TASK_FILE%
+echo           ^<Sunday /^> >> %TASK_FILE%
+echo         ^</DaysOfWeek^> >> %TASK_FILE%
+echo       ^</ScheduleByWeek^> >> %TASK_FILE%
+echo     ^</CalendarTrigger^> >> %TASK_FILE%
+echo   ^</Triggers^> >> %TASK_FILE%
+echo   ^<Principals^> >> %TASK_FILE%
+echo     ^<Principal id="Author"^> >> %TASK_FILE%
+echo       ^<LogonType^>InteractiveToken^</LogonType^> >> %TASK_FILE%
+echo       ^<RunLevel^>HighestAvailable^</RunLevel^> >> %TASK_FILE%
+echo     ^</Principal^> >> %TASK_FILE%
+echo   ^</Principals^> >> %TASK_FILE%
+echo   ^<Settings^> >> %TASK_FILE%
+echo     ^<MultipleInstancesPolicy^>IgnoreNew^</MultipleInstancesPolicy^> >> %TASK_FILE%
+echo     ^<DisallowStartIfOnBatteries^>false^</DisallowStartIfOnBatteries^> >> %TASK_FILE%
+echo     ^<StopIfGoingOnBatteries^>false^</StopIfGoingOnBatteries^> >> %TASK_FILE%
+echo     ^<AllowHardTerminate^>true^</AllowHardTerminate^> >> %TASK_FILE%
+echo     ^<StartWhenAvailable^>true^</StartWhenAvailable^> >> %TASK_FILE%
+echo     ^<RunOnlyIfNetworkAvailable^>false^</RunOnlyIfNetworkAvailable^> >> %TASK_FILE%
+echo     ^<AllowStartOnDemand^>true^</AllowStartOnDemand^> >> %TASK_FILE%
+echo     ^<Enabled^>true^</Enabled^> >> %TASK_FILE%
+echo     ^<Hidden^>false^</Hidden^> >> %TASK_FILE%
+echo     ^<RunOnlyIfIdle^>false^</RunOnlyIfIdle^> >> %TASK_FILE%
+echo     ^<WakeToRun^>false^</WakeToRun^> >> %TASK_FILE%
+echo     ^<ExecutionTimeLimit^>PT1H^</ExecutionTimeLimit^> >> %TASK_FILE%
+echo     ^<Priority^>7^</Priority^> >> %TASK_FILE%
+echo   ^</Settings^> >> %TASK_FILE%
+echo   ^<Actions Context="Author"^> >> %TASK_FILE%
+echo     ^<Exec^> >> %TASK_FILE%
+echo       ^<Command^>%CD%\%VERIFY_SCRIPT%^</Command^> >> %TASK_FILE%
+echo       ^<WorkingDirectory^>%CD%^</WorkingDirectory^> >> %TASK_FILE%
+echo     ^</Exec^> >> %TASK_FILE%
+echo   ^</Actions^> >> %TASK_FILE%
+echo ^</Task^> >> %TASK_FILE%
+
+schtasks /create /tn %TASK_NAME% /xml %TASK_FILE% /f >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    echo Attività pianificata creata con successo: %TASK_NAME%
+    echo Verrà eseguita automaticamente ogni domenica alle 2:30
+) else (
+    echo NOTA: Impossibile configurare automaticamente l'attività pianificata.
+    echo Per configurarla manualmente:
+    echo 1. Apri Task Scheduler ^(taskschd.msc^)
+    echo 2. Importa il file %TASK_FILE%
+    echo 3. Segui le istruzioni a schermo
+)
+
+del %TASK_FILE% >nul 2>&1
+
 REM Verifica la creazione del database
 echo.
 echo Verifica della struttura del database...
