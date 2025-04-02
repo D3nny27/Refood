@@ -1,5 +1,5 @@
 -- ***********************************************************************
--- TRIGGER
+-- TRIGGER - VERSIONE COMPATIBILE
 -- ***********************************************************************
 
 -- Trigger per garantire che solo attori con ruolo 'Utente' possano essere associati a un Tipo_Utente
@@ -16,10 +16,10 @@ END;
 CREATE TRIGGER IF NOT EXISTS check_attore_ruolo_before_update
 BEFORE UPDATE ON AttoriTipoUtente
 FOR EACH ROW
-WHEN OLD.attore_id != NEW.attore_id
 BEGIN
+    -- Verifichiamo la condizione nel corpo del trigger invece di usare WHEN
     SELECT CASE
-        WHEN (SELECT ruolo FROM Attori WHERE id = NEW.attore_id) != 'Utente'
+        WHEN OLD.attore_id != NEW.attore_id AND (SELECT ruolo FROM Attori WHERE id = NEW.attore_id) != 'Utente'
         THEN RAISE(ABORT, 'Solo attori con ruolo Utente possono essere associati a un Tipo_Utente')
     END;
 END;
@@ -33,25 +33,27 @@ BEGIN
 END;
 
 -- Trigger per registrare automaticamente i cambi di stato dei lotti nella tabella LogCambioStato
--- Corretto per utilizzare un ID di sistema valido se manca un operatore
 CREATE TRIGGER IF NOT EXISTS log_cambio_stato_lotti
 AFTER UPDATE OF stato ON Lotti
 FOR EACH ROW
-WHEN OLD.stato != NEW.stato
 BEGIN
-    -- Utilizza l'ID di un amministratore di sistema predefinito (in genere ID 1) se
-    -- l'inserito_da è NULL o non valido
-    INSERT INTO LogCambioStato (lotto_id, stato_precedente, stato_nuovo, cambiato_da)
-    VALUES (
-        NEW.id, 
-        OLD.stato, 
-        NEW.stato, 
-        CASE 
-            WHEN (SELECT COUNT(*) FROM Attori WHERE id = NEW.inserito_da) > 0 THEN NEW.inserito_da
-            WHEN (SELECT COUNT(*) FROM Attori WHERE ruolo = 'Amministratore' LIMIT 1) > 0 THEN (SELECT id FROM Attori WHERE ruolo = 'Amministratore' LIMIT 1)
-            ELSE 1 -- Fallback su ID 1 se non ci sono amministratori
-        END
-    );
+    -- Verifichiamo la condizione nel corpo del trigger
+    SELECT CASE
+        WHEN OLD.stato = NEW.stato THEN 0  -- Non fare nulla se lo stato non è cambiato
+        ELSE (
+            INSERT INTO LogCambioStato (lotto_id, stato_precedente, stato_nuovo, cambiato_da)
+            VALUES (
+                NEW.id, 
+                OLD.stato, 
+                NEW.stato, 
+                CASE 
+                    WHEN (SELECT COUNT(*) FROM Attori WHERE id = NEW.inserito_da) > 0 THEN NEW.inserito_da
+                    WHEN (SELECT COUNT(*) FROM Attori WHERE ruolo = 'Amministratore' LIMIT 1) > 0 THEN (SELECT id FROM Attori WHERE ruolo = 'Amministratore' LIMIT 1)
+                    ELSE 1 -- Fallback su ID 1 se non ci sono amministratori
+                END
+            )
+        )
+    END;
 END;
 
 -- Trigger per impedire la modifica di lotti già prenotati
@@ -67,7 +69,6 @@ BEGIN
 END;
 
 -- Trigger per aggiornare automaticamente lo stato di un lotto in base alla data di scadenza
--- Ottimizzato per evitare conflitti con altre operazioni
 CREATE TRIGGER IF NOT EXISTS update_lotto_stato_by_scadenza
 AFTER UPDATE OF data_scadenza ON Lotti
 FOR EACH ROW
@@ -100,22 +101,31 @@ END;
 CREATE TRIGGER IF NOT EXISTS track_prenotazione_state_changes
 AFTER UPDATE OF stato ON Prenotazioni
 FOR EACH ROW
-WHEN OLD.stato != NEW.stato
 BEGIN
-    UPDATE Prenotazioni
-    SET transizioni_stato = CASE
-        WHEN transizioni_stato IS NULL THEN json('{"transizioni": [{"da": "' || OLD.stato || '", "a": "' || NEW.stato || '", "timestamp": "' || datetime('now') || '"}]}')
-        ELSE json_insert(transizioni_stato, '$.transizioni[#]', json('{"da": "' || OLD.stato || '", "a": "' || NEW.stato || '", "timestamp": "' || datetime('now') || '"}'))
-    END
-    WHERE id = NEW.id;
+    -- Verifichiamo la condizione nel corpo del trigger
+    SELECT CASE
+        WHEN OLD.stato = NEW.stato THEN 0  -- Non fare nulla se lo stato non è cambiato
+        ELSE (
+            UPDATE Prenotazioni
+            SET transizioni_stato = CASE
+                WHEN transizioni_stato IS NULL THEN json('{"transizioni": [{"da": "' || OLD.stato || '", "a": "' || NEW.stato || '", "timestamp": "' || datetime('now') || '"}]}')
+                ELSE json_insert(transizioni_stato, '$.transizioni[#]', json('{"da": "' || OLD.stato || '", "a": "' || NEW.stato || '", "timestamp": "' || datetime('now') || '"}'))
+            END
+            WHERE id = NEW.id
+        )
+    END;
 END;
 
 -- Trigger per registrare l'attore che ha effettuato la prenotazione
 CREATE TRIGGER IF NOT EXISTS set_prenotazione_attore
 BEFORE INSERT ON Prenotazioni
 FOR EACH ROW
-WHEN NEW.attore_id IS NULL
 BEGIN
+    -- Verifichiamo la condizione nel corpo del trigger
+    SELECT CASE
+        WHEN NEW.attore_id IS NULL THEN 0  -- Qui dovrebbe impostare l'ID dell'attore
+        ELSE 0 -- Non fare nulla se l'ID è già impostato
+    END;
     -- Questo trigger deve essere implementato insieme a una funzione di autenticazione
     -- che fornisce l'ID dell'attore corrente. Per ora, è un segnaposto.
     -- SET NEW.attore_id = current_user_id();
