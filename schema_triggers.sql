@@ -108,15 +108,4 @@ BEGIN
         ELSE json_insert(transizioni_stato, '$.transizioni[#]', json('{"da": "' || OLD.stato || '", "a": "' || NEW.stato || '", "timestamp": "' || datetime('now') || '"}'))
     END
     WHERE id = NEW.id;
-END;
-
--- Trigger per registrare l'attore che ha effettuato la prenotazione
-CREATE TRIGGER IF NOT EXISTS set_prenotazione_attore
-BEFORE INSERT ON Prenotazioni
-FOR EACH ROW
-WHEN NEW.attore_id IS NULL
-BEGIN
-    -- Questo trigger deve essere implementato insieme a una funzione di autenticazione
-    -- che fornisce l'ID dell'attore corrente. Per ora, è un segnaposto.
-    -- SET NEW.attore_id = current_user_id();
 END; 
