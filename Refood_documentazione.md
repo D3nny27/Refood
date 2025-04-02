@@ -550,6 +550,7 @@ git --version
   
   # Se persiste, installa manualmente il modulo mancante
   npm install [nome-modulo-mancante]
+  Controlla sempre i log per vedere se mancano moduli o bisonga installare versioni nuove
   ```
 
 - **Errore "Metro Bundler process exited"**
