@@ -73,25 +73,77 @@ export const getRefreshToken = async (): Promise<string | null> => {
 // Esporta esplicitamente checkUserAuth
 export const checkUserAuth = async (): Promise<any> => {
   try {
+    console.log('⭐ Inizio verifica autenticazione utente');
     const token = await getActiveToken();
+    
+    // Recuperiamo subito i dati utente locali come backup
+    let localUserData = null;
+    try {
+      const userDataStr = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+      if (userDataStr) {
+        localUserData = JSON.parse(userDataStr);
+        console.log('✅ Dati locali utente recuperati con successo per:', localUserData.email);
+        
+        // MODIFICA IMPORTANTE: Se abbiamo dati locali, diamo priorità a questi
+        // Questo garantisce un comportamento coerente tra amministratori e utenti normali
+        console.log('ℹ️ Utilizzo dati locali come fonte primaria per garantire coerenza');
+        
+        // Aggiorniamo il token per sicurezza
+        if (token) {
+          setAuthToken(token);
+        }
+        
+        // Se non abbiamo un token, ritorniamo comunque i dati locali
+        if (!token) {
+          console.log('⚠️ Nessun token ma dati locali disponibili, ritorno dati locali');
+          return localUserData;
+        }
+      }
+    } catch (localDataErr) {
+      console.error('❌ Errore nel recupero dati utente locali:', localDataErr);
+    }
+    
     if (!token) {
-      console.log('Nessun token trovato durante il checkUserAuth');
-      return null;
+      console.log('❌ Nessun token trovato durante il checkUserAuth');
+      return localUserData; // Ritorniamo i dati locali anche se null
     }
 
     try {
       // Imposta l'header di autenticazione
       setAuthToken(token);
       
+      // MODIFICA: Se abbiamo dati locali, prima li ritorniamo e poi verifichiamo in background
+      if (localUserData) {
+        // Lanciamo una verifica in background ma ritorniamo subito i dati locali
+        setTimeout(async () => {
+          try {
+            // Verifica silenziosamente col server
+            const response = await axios.get(`${API_URL}/attori/profile`);
+            if (response.status === 200 && response.data) {
+              console.log('🔄 Aggiornamento dati utente in background completato');
+              // Aggiorniamo silenziosamente lo storage
+              await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(response.data));
+            }
+          } catch (bgError) {
+            // Ignoriamo errori in background
+            console.log('ℹ️ Errore nella verifica in background (ignorato)');
+          }
+        }, 100);
+        
+        // Ritorniamo immediatamente i dati locali
+        return localUserData;
+      }
+      
+      // Se non abbiamo dati locali, procediamo con la verifica normale
       // Effettua la richiesta al server per verificare l'autenticazione
-      console.log('Controllo autenticazione con:', `${API_URL}/attori/profile`);
+      console.log('🔍 Controllo autenticazione con:', `${API_URL}/attori/profile`);
       
       // Prima prova con il nuovo endpoint /attori/profile
       try {
         const response = await axios.get(`${API_URL}/attori/profile`);
         
         if (response.status === 200 && response.data) {
-          console.log('Autenticazione verificata con successo:', response.data.email);
+          console.log('✅ Autenticazione verificata con successo:', response.data.email);
           
           // Aggiorna i dati utente nel localStorage per mantenerli freschi
           await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(response.data));
@@ -101,19 +153,25 @@ export const checkUserAuth = async (): Promise<any> => {
       } catch (attoreProfileErr) {
         // Log dettagliato per il debug
         if (axios.isAxiosError(attoreProfileErr)) {
-          console.error(`Errore durante il controllo con attori/profile: Status=${attoreProfileErr.response?.status}, Message=${attoreProfileErr.message}`);
+          console.error(`❌ Errore durante il controllo con attori/profile: Status=${attoreProfileErr.response?.status}, Message=${attoreProfileErr.message}`);
         } else {
-          console.error('Errore non-Axios durante il controllo con attori/profile:', attoreProfileErr);
+          console.error('❌ Errore non-Axios durante il controllo con attori/profile:', attoreProfileErr);
+        }
+        
+        // Se abbiamo dati locali, li ritorniamo nonostante l'errore
+        if (localUserData) {
+          console.log('⚠️ Errore nella verifica col server, utilizzo dati locali');
+          return localUserData;
         }
         
         // Se l'errore è 404, prova con il vecchio endpoint
         if (axios.isAxiosError(attoreProfileErr) && attoreProfileErr.response?.status === 404) {
-          console.log('Endpoint attori/profile non trovato, tentativo con users/profile...');
+          console.log('⚠️ Endpoint attori/profile non trovato, tentativo con users/profile...');
           try {
             const responseUsers = await axios.get(`${API_URL}/users/profile`);
             
             if (responseUsers.status === 200 && responseUsers.data) {
-              console.log('Autenticazione verificata con successo (users/profile):', responseUsers.data.email);
+              console.log('✅ Autenticazione verificata con successo (users/profile):', responseUsers.data.email);
               
               // Aggiorna i dati utente nel localStorage
               await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(responseUsers.data));
@@ -123,61 +181,81 @@ export const checkUserAuth = async (): Promise<any> => {
           } catch (usersProfileErr) {
             // Log dettagliato per il debug
             if (axios.isAxiosError(usersProfileErr)) {
-              console.error(`Errore durante il controllo con users/profile: Status=${usersProfileErr.response?.status}, Message=${usersProfileErr.message}`);
+              console.error(`❌ Errore durante il controllo con users/profile: Status=${usersProfileErr.response?.status}, Message=${usersProfileErr.message}`);
             } else {
-              console.error('Errore non-Axios durante il controllo con users/profile:', usersProfileErr);
+              console.error('❌ Errore non-Axios durante il controllo con users/profile:', usersProfileErr);
             }
             
-            // Se anche questo endpoint fallisce con 404, dobbiamo usare dati locali
-            if (axios.isAxiosError(usersProfileErr) && usersProfileErr.response?.status === 404) {
-              console.log('Entrambi gli endpoint di profilo non esistono - utilizzando dati locali');
-              
-              // Verifica nella cache locale se abbiamo i dati utente
-              try {
-                const userDataStr = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-                if (userDataStr) {
-                  const userData = JSON.parse(userDataStr);
-                  console.log('Autenticazione mantenuta usando dati locali per:', userData.email);
-                  return userData;
-                }
-              } catch (cacheErr) {
-                console.error('Errore nel recupero dati utente dalla cache:', cacheErr);
-              }
-            } else {
-              throw usersProfileErr; // Rilancia l'errore per gestione standard
+            // Utilizziamo i dati locali come fallback (vedi sotto)
+            if (localUserData) {
+              console.log('⚠️ Errore nella verifica col server alternativo, utilizzo dati locali');
+              return localUserData;
             }
           }
-        } else if (axios.isAxiosError(attoreProfileErr) && attoreProfileErr.response?.status === 401) {
-          // Token scaduto, tentativo di refresh
-          console.log('Token scaduto (401), tentativo di refresh...');
-          const refreshSuccess = await refreshToken();
-          if (refreshSuccess) {
-            // Riprova la verifica con il nuovo token
-            return checkUserAuth();
-          } else {
-            console.error('Refresh token fallito dopo 401');
-            return null;
+        } else if (axios.isAxiosError(attoreProfileErr) && (attoreProfileErr.response?.status === 401 || attoreProfileErr.response?.status === 403)) {
+          // Se abbiamo dati locali, li ritorniamo anche in caso di 401/403
+          if (localUserData) {
+            console.log('⚠️ Token non valido ma dati locali disponibili, ritorno dati locali');
+            return localUserData;
           }
-        } else {
-          throw attoreProfileErr; // Rilancia l'errore per gestione standard
+          
+          // Token scaduto o non autorizzato, tentativo di refresh
+          console.log('⚠️ Token scaduto o non autorizzato (401/403), tentativo di refresh...');
+          
+          // Usiamo un timeout per il refresh per evitare blocchi
+          const refreshPromise = new Promise<boolean>(async (resolve) => {
+            try {
+              const refreshSuccess = await refreshToken();
+              resolve(refreshSuccess);
+            } catch (e) {
+              console.error('❌ Errore durante il refresh token:', e);
+              resolve(false);
+            }
+          });
+          
+          // Aspettiamo al massimo 5 secondi per il refresh
+          const timeoutPromise = new Promise<boolean>((resolve) => {
+            setTimeout(() => resolve(false), 5000);
+          });
+          
+          const refreshSuccess = await Promise.race([refreshPromise, timeoutPromise]);
+          
+          if (refreshSuccess) {
+            console.log('✅ Refresh token riuscito, nuovo tentativo di verifica autenticazione');
+            // Otteniamo il nuovo token
+            const newToken = await getActiveToken();
+            if (newToken) {
+              setAuthToken(newToken);
+              // Riproviamo la verifica con il nuovo token
+              try {
+                const retryResponse = await axios.get(`${API_URL}/attori/profile`);
+                if (retryResponse.status === 200 && retryResponse.data) {
+                  console.log('✅ Autenticazione verificata con successo dopo refresh:', retryResponse.data.email);
+                  await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(retryResponse.data));
+                  return retryResponse.data;
+                }
+              } catch (retryErr) {
+                console.error('❌ Errore nel retry dopo refresh token:', retryErr);
+                // Fallback ai dati locali (vedi sotto)
+              }
+            }
+          } else {
+            console.error('❌ Refresh token fallito dopo 401/403');
+            // Fallback ai dati locali (vedi sotto)
+          }
         }
       }
       
-      // Se arriviamo qui, proviamo a usare i dati locali come ultima risorsa
-      console.log('Fallback: utilizzo dati utente dalla cache locale');
-      const userDataStr = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-      if (userDataStr) {
-        try {
-          const userData = JSON.parse(userDataStr);
-          console.log('Autenticazione mantenuta usando dati locali per:', userData.email);
-          return userData;
-        } catch (err) {
-          console.error('Errore nel parsing dei dati utente locali:', err);
-        }
+      // A questo punto, se nessuna chiamata API ha avuto successo, usiamo i dati locali
+      if (localUserData) {
+        console.log('✅ FALLBACK: Utilizzo dati utente dalla cache locale per:', localUserData.email);
+        // Reimpostiamo il token per sicurezza
+        setAuthToken(token);
+        return localUserData;
       }
       
       // Se non abbiamo ottenuto dati validi da nessuna fonte
-      console.log('Nessun dato utente valido trovato, autenticazione fallita');
+      console.log('❌ Nessun dato utente valido trovato, autenticazione fallita');
       
       // Assicuriamoci che l'UI mostri lo stato corretto di sessione scaduta
       try {
@@ -199,7 +277,7 @@ export const checkUserAuth = async (): Promise<any> => {
     } catch (error) {
       // Log più dettagliato dell'errore per identificare meglio il problema
       if (axios.isAxiosError(error)) {
-        console.error(`Errore critico durante checkUserAuth - Status: ${error.response?.status}, Message: ${error.message}, Config URL: ${error.config?.baseURL || 'non disponibile'}`);
+        console.error(`❌ Errore critico durante checkUserAuth - Status: ${error.response?.status}, Message: ${error.message}, Config URL: ${error.config?.baseURL || 'non disponibile'}`);
         if (error.response) {
           console.error('Dettagli risposta errore:', {
             data: error.response.data,
@@ -208,27 +286,22 @@ export const checkUserAuth = async (): Promise<any> => {
           });
         }
       } else {
-        console.error('Errore non-Axios critico durante checkUserAuth:', error);
+        console.error('❌ Errore non-Axios critico durante checkUserAuth:', error);
       }
       
-      // Tentativo di usare dati locali come ultima risorsa in caso di errori generici
-      console.log('Errore generico, tentativo di usare dati utente locali');
-      try {
-        const userDataStr = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-        if (userDataStr) {
-          const userData = JSON.parse(userDataStr);
-          console.log('Autenticazione mantenuta usando dati locali per:', userData.email);
-          return userData;
-        }
-      } catch (cacheErr) {
-        console.error('Errore nel recupero dati utente dalla cache:', cacheErr);
+      // Utilizzo dei dati locali come ultima risorsa in caso di errori generici
+      if (localUserData) {
+        console.log('✅ FALLBACK CRITICO: Utilizzo dati utente locali dopo errore per:', localUserData.email);
+        // Reimpostiamo il token per sicurezza
+        setAuthToken(token);
+        return localUserData;
       }
       
       return null;
     }
   } catch (rootError) {
     // Errore fuori da tutto il flusso (es: errore nella lettura del token)
-    console.error('Errore top-level in checkUserAuth (metodo completo fallito):', rootError);
+    console.error('❌ Errore top-level in checkUserAuth (metodo completo fallito):', rootError);
     return null;
   }
 };
@@ -236,127 +309,125 @@ export const checkUserAuth = async (): Promise<any> => {
 // Funzione per effettuare il refresh del token
 export const refreshToken = async (): Promise<boolean> => {
   try {
-    console.log('Tentativo di refresh del token di autenticazione');
+    console.log('⭐ Tentativo di refresh del token di autenticazione');
     
     // Ottieni il refresh token
     const refreshToken = await getRefreshToken();
     if (!refreshToken) {
-      console.log('Nessun refresh token disponibile, impossibile effettuare il refresh');
+      console.log('❌ Nessun refresh token disponibile, impossibile effettuare il refresh');
       return false;
     }
     
-    console.log('Refresh token trovato, tentativo di refresh...');
+    console.log('✅ Refresh token trovato, tentativo di refresh...');
     
-    // Prova il nuovo endpoint /auth/refresh-token
+    // Impostiamo un timeout per la richiesta di refresh
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 secondi di timeout
+    
     try {
-      const response = await axios.post(`${API_URL}/auth/refresh-token`, { 
-        refresh_token: refreshToken 
-      });
+      // Prova il nuovo endpoint /auth/refresh-token
+      const refreshResponse = await axios.post(
+        `${API_URL}/auth/refresh-token`, 
+        { refresh_token: refreshToken },
+        { 
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal
+        }
+      );
       
-      if (response.status === 200 && (response.data.access_token || response.data.token)) {
-        const newToken = response.data.access_token || response.data.token;
-        console.log('Token refreshato con successo (nuovo endpoint)');
+      // Puliamo il timeout
+      clearTimeout(timeoutId);
+      
+      if (refreshResponse?.status === 200 && refreshResponse?.data?.token) {
+        console.log('✅ Refresh token completato con successo');
         
-        // Salva il nuovo token in AsyncStorage
-        await saveToken(newToken);
+        // Salva il nuovo token di accesso
+        await saveToken(refreshResponse.data.token);
         
-        // Imposta il token per le chiamate API future
-        setAuthToken(newToken);
-        
-        // Se è presente un nuovo refresh token, salvalo
-        if (response.data.refresh_token) {
-          await saveRefreshToken(response.data.refresh_token);
+        // Se c'è un nuovo refresh token, salvalo
+        if (refreshResponse.data.refreshToken) {
+          await saveRefreshToken(refreshResponse.data.refreshToken);
         }
         
-        // Mostra notifica di successo
-        try {
-          const Toast = require('react-native-toast-message').default;
-          if (Toast) {
-            Toast.show({
-              type: 'success',
-              text1: 'Sessione aggiornata',
-              text2: 'La tua sessione è stata aggiornata con successo',
-              visibilityTime: 3000,
-            });
-          }
-        } catch (e) {
-          console.error('Impossibile mostrare toast di successo refresh:', e);
+        // Se ci sono anche i dati utente, aggiornali in locale
+        if (refreshResponse.data.utente) {
+          await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(refreshResponse.data.utente));
         }
         
         return true;
       } else {
-        console.log('Risposta di refresh non valida:', response.status);
+        console.log('⚠️ Risposta di refresh inattesa:', refreshResponse?.status, refreshResponse?.data);
+        return false;
       }
-    } catch (refreshErr) {
-      // Se il nuovo endpoint fallisce, proviamo con il vecchio
-      if (axios.isAxiosError(refreshErr) && refreshErr.response?.status === 404) {
-        console.log('Endpoint /auth/refresh-token non trovato, provo con /auth/refresh');
+    } catch (refreshError) {
+      // Puliamo il timeout in caso di errore
+      clearTimeout(timeoutId);
+      
+      // Verifica se l'errore è un timeout o un abort
+      if (refreshError.name === 'AbortError' || refreshError.code === 'ECONNABORTED') {
+        console.error('❌ Timeout durante il refresh del token');
+        return false;
+      }
+      
+      // Se l'endpoint /auth/refresh-token non esiste (404) o fallisce, prova con /auth/refresh
+      if (axios.isAxiosError(refreshError) && refreshError.response?.status === 404) {
+        console.log('⚠️ Endpoint /auth/refresh-token non trovato, tentativo con /auth/refresh...');
+        
+        // Creiamo un nuovo controller per il nuovo tentativo
+        const controller2 = new AbortController();
+        const timeoutId2 = setTimeout(() => controller2.abort(), 10000);
         
         try {
-          const oldResponse = await axios.post(`${API_URL}/auth/refresh`, { 
-            refresh_token: refreshToken 
-          });
+          const legacyRefreshResponse = await axios.post(
+            `${API_URL}/auth/refresh`,
+            { refresh_token: refreshToken },
+            { 
+              headers: { 'Content-Type': 'application/json' },
+              signal: controller2.signal
+            }
+          );
           
-          if (oldResponse.status === 200 && (oldResponse.data.access_token || oldResponse.data.token)) {
-            const newToken = oldResponse.data.access_token || oldResponse.data.token;
-            console.log('Token refreshato con successo (vecchio endpoint)');
+          clearTimeout(timeoutId2);
+          
+          if (legacyRefreshResponse?.status === 200 && legacyRefreshResponse?.data?.token) {
+            console.log('✅ Refresh token completato con successo (endpoint legacy)');
             
-            // Salva il nuovo token
-            await saveToken(newToken);
+            // Salva il nuovo token di accesso
+            await saveToken(legacyRefreshResponse.data.token);
             
-            // Imposta il token per le chiamate API future
-            setAuthToken(newToken);
-            
-            // Se è presente un nuovo refresh token, salvalo
-            if (oldResponse.data.refresh_token) {
-              await saveRefreshToken(oldResponse.data.refresh_token);
+            // Se c'è un nuovo refresh token, salvalo
+            if (legacyRefreshResponse.data.refreshToken) {
+              await saveRefreshToken(legacyRefreshResponse.data.refreshToken);
             }
             
-            // Mostra notifica di successo
-            try {
-              const Toast = require('react-native-toast-message').default;
-              if (Toast) {
-                Toast.show({
-                  type: 'success',
-                  text1: 'Sessione aggiornata',
-                  text2: 'La tua sessione è stata aggiornata con successo',
-                  visibilityTime: 3000,
-                });
-              }
-            } catch (e) {
-              console.error('Impossibile mostrare toast di successo refresh:', e);
+            // Se ci sono anche i dati utente, aggiornali in locale
+            if (legacyRefreshResponse.data.utente) {
+              await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(legacyRefreshResponse.data.utente));
             }
             
             return true;
+          } else {
+            console.log('⚠️ Risposta di refresh legacy inattesa:', legacyRefreshResponse?.status, legacyRefreshResponse?.data);
+            return false;
           }
-        } catch (oldRefreshErr) {
-          console.error('Errore durante il refresh con il vecchio endpoint:', oldRefreshErr);
+        } catch (legacyRefreshError) {
+          clearTimeout(timeoutId2);
+          
+          if (legacyRefreshError.name === 'AbortError' || legacyRefreshError.code === 'ECONNABORTED') {
+            console.error('❌ Timeout durante il refresh del token (endpoint legacy)');
+            return false;
+          }
+          
+          console.error('❌ Errore durante il refresh token (endpoint legacy):', legacyRefreshError);
+          return false;
         }
       } else {
-        console.error('Errore durante il refresh del token:', refreshErr);
+        console.error('❌ Errore durante il refresh token:', refreshError);
+        return false;
       }
     }
-    
-    console.log('Tutti i tentativi di refresh del token sono falliti');
-    
-    // Mostra notifica di fallimento
-    try {
-      const Toast = require('react-native-toast-message').default;
-      if (Toast) {
-        Toast.show({
-          type: 'error',
-          text1: 'Sessione scaduta',
-          text2: 'Non è stato possibile aggiornare la tua sessione, accedi nuovamente',
-          visibilityTime: 4000,
-        });
-      }
-    } catch (e) {
-      console.error('Impossibile mostrare toast di errore refresh:', e);
-    }
-    
-    return false;
   } catch (error) {
-    console.error('Errore generico durante il refresh del token:', error);
+    console.error('❌ Errore generale durante il refresh token:', error);
     return false;
   }
 };

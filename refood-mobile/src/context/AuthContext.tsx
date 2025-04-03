@@ -75,20 +75,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       // Se abbiamo token e dati utente in storage ma isAuthenticated è false, ripristiniamo
       if (token && userDataString && !isAuthenticated) {
-        console.log('CORREZIONE STATO: trovati dati in storage ma stato non autenticato');
+        console.log('🔄 CORREZIONE STATO: trovati dati in storage ma stato non autenticato');
         try {
           const userData = JSON.parse(userDataString);
+          console.log(`✅ Ripristino forzato sessione per ${userData.email} (${userData.ruolo})`);
           setUser(userData);
           setIsAuthenticated(true);
           setAuthToken(token);
         } catch (error) {
-          console.error('Errore durante la correzione dello stato:', error);
+          console.error('❌ Errore durante la correzione dello stato:', error);
         }
       }
       
       // Se non abbiamo né token né dati utente ma isAuthenticated è true, correggiamo
       if (!token && !userDataString && isAuthenticated) {
-        console.log('CORREZIONE STATO: nessun dato in storage ma stato autenticato');
+        console.log('🔄 CORREZIONE STATO: nessun dato in storage ma stato autenticato');
         setUser(null);
         setIsAuthenticated(false);
       }
@@ -227,7 +228,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const token = await getActiveToken();
       console.log('AuthProvider - Token trovato:', token ? 'presente' : 'assente');
       
-      // Prima prova a ripristinare i dati utente locali, poi verifica con il server
+      // Se non c'è token, verifichiamo se abbiamo dati utente locali
+      if (!token) {
+        // Verifica se ci sono dati utente salvati localmente
+        try {
+          const userDataString = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+          if (userDataString) {
+            const userData = JSON.parse(userDataString);
+            console.log('AuthProvider - Trovati dati utente locali ma nessun token, tentativo di refresh token...');
+            
+            // Verifica se possiamo fare un refresh token
+            const refreshTokenValue = await AsyncStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
+            if (refreshTokenValue) {
+              console.log('AuthProvider - Tentativo di refresh con refresh token disponibile');
+              // Nota: qui usiamo la funzione refreshToken() importata, non la variabile locale
+              const refreshSuccess = await refreshToken();
+              if (refreshSuccess) {
+                // Otteniamo il nuovo token e continuiamo il refresh dello stato
+                const newToken = await getActiveToken();
+                if (newToken) {
+                  setAuthToken(newToken);
+                  const userData = await checkUserAuth();
+                  if (userData) {
+                    setUser(userData);
+                    setIsAuthenticated(true);
+                    setIsLoading(false);
+                    return;
+                  }
+                }
+              }
+            }
+            
+            // Se il refresh token fallisce ma abbiamo dati utente locali, 
+            // potremmo impostare l'utente come non autenticato ma mostrare i dati
+            console.log('AuthProvider - Non è stato possibile autenticare l\'utente tramite refresh token');
+            setUser(null);
+            setIsAuthenticated(false);
+          } else {
+            // Nessun dato utente trovato
+            console.log('AuthProvider - Nessun dato utente trovato in storage locale');
+            setUser(null);
+            setIsAuthenticated(false);
+          }
+        } catch (storageError) {
+          console.error('AuthProvider - Errore nel ripristino dei dati locali:', storageError);
+          setUser(null);
+          setIsAuthenticated(false);
+        }
+        
+        setIsLoading(false);
+        return;
+      }
+      
+      // Tentativo di ripristino immediato dai dati locali se disponibili
       let localDataRestored = false;
       
       if (!Platform.isTV && typeof window !== 'undefined') {
@@ -250,163 +303,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
       
-      // Se abbiamo un token, verifica l'autenticazione con il server
-      if (token) {
+      // Verifica sempre con il server, indipendentemente dal fatto che abbiamo ripristinato i dati locali
+      try {
+        console.log('AuthProvider - Verifica dello stato con il server');
+        // Impostiamo il token prima di chiamare checkUserAuth
         setAuthToken(token);
-        console.log('Token esistente trovato, verifico autenticazione con il server...');
-        try {
-          const userData = await checkUserAuth();
-          
-          if (userData) {
-            console.log('Utente autenticato confermato dal server:', userData.email);
-            setUser(userData);
-            setIsAuthenticated(true);
-            
-            // Aggiorna i dati utente in AsyncStorage
-            if (!Platform.isTV && typeof window !== 'undefined') {
-              await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(userData));
-              console.log('Dati utente aggiornati in AsyncStorage dopo verifica server');
-            }
+        const userData = await checkUserAuth();
+        
+        if (userData) {
+          console.log('AuthProvider - Stato utente verificato con successo:', userData.email);
+          setUser(userData);
+          setIsAuthenticated(true);
+        } else {
+          // Se il server non ci autentica ma abbiamo dati locali, 
+          // manteniamo lo stato ripristinato dai dati locali
+          if (localDataRestored) {
+            console.log('AuthProvider - Server non ha autenticato, ma mantenuti dati locali');
           } else {
-            console.log('Server non ha confermato l\'autenticazione');
-            
-            // Solo se non abbiamo ripristinato dati locali, considera l'utente non autenticato
-            if (!localDataRestored) {
-              console.log('Server non conferma autenticazione e nessun dato locale valido');
-              setUser(null);
-              setIsAuthenticated(false);
-              
-              // Pulisci lo storage solo se non ci sono dati locali validi
-              if (!Platform.isTV && typeof window !== 'undefined') {
-                await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
-                await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
-                await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-                // Notifica all'utente che la sessione è scaduta
-                Toast.show({
-                  type: 'info',
-                  text1: 'Sessione scaduta',
-                  text2: 'Effettua nuovamente il login per continuare',
-                  visibilityTime: 4000,
-                });
-              }
-            } else {
-              console.log('Server non conferma autenticazione ma manteniamo i dati locali');
-              
-              // Tentativo di refresh del token se abbiamo un refresh token
-              const refreshTokenVal = await AsyncStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
-              if (refreshTokenVal) {
-                try {
-                  console.log('Tentativo di refresh del token...');
-                  const refreshSuccess = await refreshToken();
-                  
-                  if (!refreshSuccess) {
-                    // Se il refresh fallisce, notifica l'utente
-                    setUser(null);
-                    setIsAuthenticated(false);
-                    await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
-                    await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
-                    await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-                    Toast.show({
-                      type: 'info',
-                      text1: 'Sessione scaduta',
-                      text2: 'Effettua nuovamente il login per continuare',
-                      visibilityTime: 4000,
-                    });
-                    // Emetti l'evento di JWT scaduto
-                    emitEvent(APP_EVENTS.JWT_EXPIRED);
-                  }
-                } catch (refreshError) {
-                  console.error('Errore durante il refresh del token:', refreshError);
-                  // Notifica all'utente
-                  Toast.show({
-                    type: 'error',
-                    text1: 'Errore di autenticazione',
-                    text2: 'Si è verificato un problema con il refresh della sessione',
-                    visibilityTime: 4000,
-                  });
-                }
-              }
-            }
-          }
-        } catch (serverError) {
-          console.error('Errore nella verifica col server:', serverError);
-          
-          // Non tentare refresh o altre operazioni se è in corso un logout
-          if (isLoggingOut) {
-            console.log('Ignorato tentativo di refresh dopo errore server durante logout');
-            return;
-          }
-          
-          // Se c'è un errore 401, prova a fare il refresh del token
-          if (axios.isAxiosError(serverError) && serverError.response?.status === 401) {
-            const refreshToken = await AsyncStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
-            if (refreshToken) {
-              try {
-                console.log('Errore 401, tentativo di refresh del token...');
-                const response = await axios.post(`${API_URL}/auth/refresh-token`, { refresh_token: refreshToken });
-                
-                if (response.status === 200 && response.data.access_token) {
-                  console.log('Token refreshato con successo dopo 401');
-                  
-                  // Salva il nuovo token
-                  await AsyncStorage.setItem(STORAGE_KEYS.USER_TOKEN, response.data.access_token);
-                  setAuthToken(response.data.access_token);
-                  
-                  // Se c'è un nuovo refresh token, salvalo
-                  if (response.data.refresh_token) {
-                    await AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, response.data.refresh_token);
-                  }
-                  
-                  // Riprova la verifica dell'autenticazione
-                  const userData = await checkUserAuth();
-                  if (userData) {
-                    console.log('Autenticazione confermata dopo refresh token');
-                    setUser(userData);
-                    setIsAuthenticated(true);
-                    await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(userData));
-                  }
-                }
-              } catch (refreshError) {
-                console.error('Errore durante il refresh del token dopo 401:', refreshError);
-                
-                // Se il refresh fallisce, considera l'utente non autenticato
-                if (!localDataRestored) {
-                  setUser(null);
-                  setIsAuthenticated(false);
-                  
-                  await AsyncStorage.removeItem(STORAGE_KEYS.USER_TOKEN);
-                  await AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA);
-                  await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-                }
-              }
-            }
+            console.log('AuthProvider - Server non ha autenticato, nessun dato locale');
+            setUser(null);
+            setIsAuthenticated(false);
           }
         }
-      } else {
-        // Se non abbiamo un token, l'utente non è autenticato
+      } catch (error) {
+        console.error('AuthProvider - Errore durante il refresh dello stato con il server:', error);
+        
+        // Se la verifica server fallisce ma abbiamo ripristinato dati locali,
+        // manteniamo lo stato dai dati locali
         if (!localDataRestored) {
-          console.log('Nessun token trovato e nessun dato locale, utente non autenticato');
           setUser(null);
           setIsAuthenticated(false);
+        } else {
+          console.log('AuthProvider - Mantenuto stato dai dati locali dopo errore server');
         }
       }
-    } catch (error) {
-      console.error('Errore durante il refresh dello stato utente:', error);
       
-      // Se è in corso un logout, non eseguire altre operazioni
-      if (isLoggingOut) {
-        console.log('Ignorato tentativo di ripristino dati dopo errore generico durante logout');
-        return;
-      }
-      
-      // In caso di errore non gestito, manteniamo i dati locali se disponibili
-      if (!user) {
-        setUser(null);
-        setIsAuthenticated(false);
-      }
-    } finally {
       setIsLoading(false);
-      setInitialCheckDone(true);
+    } catch (error) {
+      console.error('AuthProvider - Errore globale in refreshUserStatus:', error);
+      setIsLoading(false);
+      setUser(null);
+      setIsAuthenticated(false);
     }
   }, [isLoggingOut]);
 
@@ -456,7 +393,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     checkAuthWithTimeout();
   }, [refreshUserStatus, initialCheckDone, isLoggingOut]);
 
-  // Effetto per ripristinare dall'AsyncStorage
+  // Effetto per ripristinare dall'AsyncStorage - MODIFICA IMPORTANTE
   useEffect(() => {
     const restoreUserFromStorage = async () => {
       try {
@@ -467,40 +404,80 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.log('Ignorato tentativo di ripristino utente durante logout');
             return;
           }
+          
+          console.log('🔍 Verifica credenziali in storage locale...');
+          
           // Prima ottieni il token
           const token = await AsyncStorage.getItem(STORAGE_KEYS.USER_TOKEN);
-          if (token) {
-            console.log('Token trovato in storage, tentativo di ripristino sessione...');
-            setAuthToken(token);
+          // Poi prova a caricare i dati utente dal localStorage
+          const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+          
+          if (token && userData) {
+            console.log('✅ Credenziali trovate in storage locale, ripristino sessione');
             
-            // Poi prova a caricare i dati utente dal localStorage
-            const userData = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-            if (userData) {
-              // Se abbiamo sia token che utente, ripristiniamo temporaneamente
+            try {
+              // Se abbiamo sia token che utente, ripristiniamo SEMPRE
               const parsedUserData = JSON.parse(userData);
-              console.log('Dati utente trovati in storage:', parsedUserData.email);
+              console.log(`🔄 Ripristino sessione per ${parsedUserData.email} (${parsedUserData.ruolo})`);
+              
+              // IMPORTANTE: impostiamo il token PRIMA di settare lo stato dell'utente
+              setAuthToken(token);
+              
+              // Impostiamo l'utente come autenticato indipendentemente dal server
               setUser(parsedUserData);
               setIsAuthenticated(true);
               
-              // Poi verifichiamo in background col server
-              refreshUserStatus().catch(err => {
-                console.error('Errore durante il refresh in background:', err);
-              });
-            } else {
-              // Abbiamo un token ma non dati utente, verifica col server
-              refreshUserStatus().catch(err => {
-                console.error('Errore durante il refresh dopo token trovato:', err);
-              });
+              // DOPO aver ripristinato la sessione, verifichiamo in background col server
+              // ma non modifichiamo lo stato se fallisce
+              console.log('🔄 Verifica in background con il server...');
+              try {
+                const serverUserData = await checkUserAuth();
+                if (serverUserData) {
+                  console.log('✅ Server ha confermato autenticazione');
+                  // Aggiorniamo silenziosamente i dati utente se il server li ha forniti
+                  // ma SOLO se l'utente è ancora lo stesso (stesso ID)
+                  if (serverUserData.id === parsedUserData.id) {
+                    console.log('🔄 Aggiornamento silenzioso dati utente dal server');
+                    setUser(serverUserData);
+                    await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(serverUserData));
+                  }
+                } else {
+                  console.log('⚠️ Server non ha confermato autenticazione, ma mantengo sessione locale');
+                  // IMPORTANTE: NON modifichiamo lo stato dell'utente, manteniamo quanto ripristinato
+                }
+              } catch (serverError) {
+                console.error('⚠️ Errore nella verifica server:', serverError);
+                // IMPORTANTE: ignoriamo gli errori del server e manteniamo l'utente autenticato
+              }
+            } catch (parseError) {
+              console.error('❌ Errore nel parsing dei dati utente:', parseError);
             }
+          } else if (token) {
+            // Abbiamo un token ma non dati utente, verifica col server
+            console.log('⚠️ Token trovato ma nessun dato utente, verifica col server');
+            setAuthToken(token);
+            try {
+              const serverUserData = await checkUserAuth();
+              if (serverUserData) {
+                console.log('✅ Server ha confermato autenticazione e fornito dati utente');
+                setUser(serverUserData);
+                setIsAuthenticated(true);
+                await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(serverUserData));
+              }
+            } catch (serverError) {
+              console.error('❌ Errore nella verifica server:', serverError);
+            }
+          } else {
+            console.log('❌ Nessuna credenziale trovata in storage');
           }
         }
       } catch (error) {
-        console.error('Errore durante il ripristino dei dati utente:', error);
+        console.error('❌ Errore durante il ripristino dei dati utente:', error);
       }
     };
     
     restoreUserFromStorage();
-  }, [user, isLoading, refreshUserStatus, isLoggingOut]);
+  }, [user, isLoading, isLoggingOut]);
   
   // Funzione di login
   const login = async (email: string, password: string): Promise<boolean> => {

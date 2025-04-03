@@ -91,6 +91,15 @@ api.interceptors.response.use(
       // Silenziosamente ignoriamo l'errore di rete
       // console.error('Errore di rete durante la richiesta API');
     } else if (error.response.status === 401) {
+      // MODIFICA: siamo più cauti con i 401 e gestiamo in modo più intelligente
+      
+      // Controlliamo se la richiesta è una verifica di autenticazione
+      const isAuthCheck = error.config.url && (
+        error.config.url.includes('/profile') ||
+        error.config.url.includes('/auth/verify') || 
+        error.config.url.includes('/auth/check')
+      );
+      
       // Verifica se l'errore è dovuto a un token scaduto
       const errorMessage = (error.response.data?.message || '').toLowerCase();
       const errorDesc = (error.response.data?.error || '').toLowerCase();
@@ -104,14 +113,26 @@ api.interceptors.response.use(
         errorDesc.includes('invalid token') ||
         errorDesc.includes('token non valido') ||
         errorMessage.includes('token expired') ||
-        errorDesc.includes('token expired') ||
-        // Aggiungi controllo generico per i 401 senza dettagli specifici
-        (errorMessage === '' && errorDesc === '' && error.response.status === 401)
+        errorDesc.includes('token expired')
       ) {
-        // logger.warn rimosso per evitare log
-        // logger.warn('Rilevato errore di token scaduto:', errorMessage || errorDesc || 'Errore 401 generico');
+        // Eseguiamo logout solo per errori espliciti relativi ai token
+        console.log('Token esplicitamente indicato come scaduto o non valido:', errorMessage || errorDesc);
         handleExpiredToken();
+      } else if (!isAuthCheck) {
+        // Se non è una verifica di autenticazione e non c'è un messaggio esplicito
+        // allora trattiamo il 401 come un errore di autorizzazione normale senza logout
+        console.log('Errore 401 non correlato a token scaduti, non eseguo logout');
+        
+        // Mostriamo un toast ma non disconnettiamo
+        Toast.show({
+          type: 'error',
+          text1: 'Operazione non autorizzata',
+          text2: 'Non hai i permessi necessari per questa operazione',
+          visibilityTime: 3000,
+        });
       }
+      // Per le verifiche di autenticazione con 401 generico, non facciamo nulla
+      // lasciando gestire la situazione al chiamante
     } else if (error.response.status === 403) {
       // Gestisci errori di permessi senza generare log
       // logger.warn('Accesso non autorizzato (403):', error.response.data?.message || 'Permessi insufficienti');
