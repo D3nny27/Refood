@@ -365,7 +365,8 @@ const createPrenotazione = async (req, res, next) => {
     })}`);
     console.log(`🔍 DEBUG PRENOTAZIONE - Body request: ${JSON.stringify(req.body)}`);
     
-    const { lotto_id, data_ritiro, note, tipo_pagamento } = req.body;
+    const { lotto_id, data_ritiro, note } = req.body;
+    let tipo_pagamento = req.body.tipo_pagamento;
     const utente_id = req.user.id;
     const tipo_utente = req.user.tipo_utente;
     
@@ -464,7 +465,7 @@ const createPrenotazione = async (req, res, next) => {
       
       // Sistema centralizzato: non verifichiamo più il centro di origine
       // Verifichiamo solo che il lotto non sia già prenotato
-      if (lotto.stato !== 'Verde' && lotto.stato !== 'Arancione') {
+      if (lotto.stato !== 'Verde' && lotto.stato !== 'Arancione' && lotto.stato !== 'Rosso') {
         console.error(`Il lotto ${lotto_id} non è disponibile per la prenotazione, stato attuale: ${lotto.stato}`);
         return res.status(400).json({
           status: 'error',
